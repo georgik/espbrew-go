@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"codeberg.org/georgik/espbrew-go/internal/cluster"
+	"codeberg.org/georgik/espbrew-go/internal/device"
 	"codeberg.org/georgik/espbrew-go/pkg/protocol"
 	"github.com/gorilla/mux"
 )
@@ -116,6 +117,12 @@ func (h *APIHandler) handleDevices(w http.ResponseWriter, r *http.Request) {
 	devices := make([]map[string]interface{}, 0, len(state.Devices))
 	for _, path := range paths {
 		d := state.Devices[path]
+
+		// Filter to only show ESP devices
+		if !device.IsESPDevice(d.VID, d.PID) {
+			continue
+		}
+
 		dev := map[string]interface{}{
 			"path":    d.Path,
 			"vid":     fmt.Sprintf("0x%04x", d.VID),

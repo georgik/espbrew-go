@@ -68,6 +68,10 @@ func (m *mDNSService) Start() error {
 	m.wg.Add(1)
 	go m.discover()
 
+	// Start entry processor
+	m.wg.Add(1)
+	go m.processEntries()
+
 	// Start peer cleanup
 	m.wg.Add(1)
 	go m.cleanupLoop()

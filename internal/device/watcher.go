@@ -163,8 +163,8 @@ func (pw *pollingWatcher) close() {
 
 func (w *Watcher) isLikelyESP(path string) bool {
 	espPatterns := []string{
-		"usb", "UART", "SLAB", "CP21", "FTDI", "CH340",
-		"ttyUSB", "ttyACM", "cu.usb", "cu.usbserial", "tty.wchusb",
+		"usbmodem", "usbserial", "ttyUSB", "ttyACM", "tty.wchusb",
+		"SLAB", "CP21", "FTDI", "CH340",
 	}
 
 	pathLower := strings.ToLower(path)
@@ -174,9 +174,14 @@ func (w *Watcher) isLikelyESP(path string) bool {
 		}
 	}
 
-	// On macOS/Darwin, check more patterns
-	if strings.Contains(pathLower, "cu.") || strings.Contains(pathLower, "tty.") {
-		return true
+	// Explicit exclusions
+	excludePatterns := []string{
+		"bluetooth", "buds", "debug-console", "incoming",
+	}
+	for _, pattern := range excludePatterns {
+		if strings.Contains(pathLower, pattern) {
+			return false
+		}
 	}
 
 	return false

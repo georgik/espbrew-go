@@ -17,17 +17,18 @@ import (
 
 // PeerNode participates in the cluster, discovers local devices, and executes flash jobs.
 type PeerNode struct {
-	id        string
-	leaderURL string
-	config    *PeerConfig
-	state     *ClusterState
-	mu        sync.RWMutex
-	ctx       context.Context
-	cancel    context.CancelFunc
-	wg        sync.WaitGroup
-	mdns      *mDNSService
-	watcher   *device.Watcher
-	flasher   *flash.Flasher
+	id         string
+	leaderURL  string
+	config     *PeerConfig
+	state      *ClusterState
+	mu         sync.RWMutex
+	ctx        context.Context
+	cancel     context.CancelFunc
+	wg         sync.WaitGroup
+	mdns       *mDNSService
+	watcher    *device.Watcher
+	flasher    *flash.Flasher
+	registered bool // Tracks successful registration with leader
 }
 
 type PeerConfig struct {
@@ -190,31 +191,54 @@ func (p *PeerNode) sendHeartbeatHTTP(payload *protocol.HeartbeatPayload) error {
 		return fmt.Errorf("marshal heartbeat: %w", err)
 	}
 
-	// First heartbeat - register the node
-	registerURL := fmt.Sprintf("%s/api/v1/nodes/register", p.leaderURL)
-	req, err := http.NewRequest("POST", registerURL, bytes.NewReader(body))
-	if err == nil {
+	client := &http.Client{Timeout: 5 * time.Second}
+
+	p.mu.RLock()
+	isRegistered := p.registered
+	p.mu.RUnlock()
+
+	// Register if not already registered
+	if !isRegistered {
+		registerURL := fmt.Sprintf("%s/api/v1/nodes/register", p.leaderURL)
+		req, err := http.NewRequest("POST", registerURL, bytes.NewReader(body))
+		if err != nil {
+			return fmt.Errorf("create register request: %w", err)
+		}
 		req.Header.Set("Content-Type", "application/json")
-		client := &http.Client{Timeout: 5 * time.Second}
+
 		resp, err := client.Do(req)
-		if err == nil {
-			resp.Body.Close()
-			log.Debug().
-				Str("node_id", p.id).
-				Int("status", resp.StatusCode).
-				Msg("Node registration attempted")
+		if err != nil {
+			return fmt.Errorf("register request failed: %w", err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusCreated {
+			p.mu.Lock()
+			p.registered = true
+			p.mu.Unlock()
+			log.Info().Str("node_id", p.id).Msg("Registered with leader")
+		} else {
+			log.Debug().Str("node_id", p.id).Int("status", resp.StatusCode).
+				Msg("Registration attempt failed, will retry")
 		}
 	}
 
-	// Regular heartbeat update
+	// Send heartbeat update (only if registered)
+	p.mu.RLock()
+	isRegistered = p.registered
+	p.mu.RUnlock()
+
+	if !isRegistered {
+		return fmt.Errorf("not registered with leader")
+	}
+
 	heartbeatURL := fmt.Sprintf("%s/api/v1/nodes/%s/heartbeat", p.leaderURL, p.id)
-	req, err = http.NewRequest("POST", heartbeatURL, bytes.NewReader(body))
+	req, err := http.NewRequest("POST", heartbeatURL, bytes.NewReader(body))
 	if err != nil {
-		return fmt.Errorf("create request: %w", err)
+		return fmt.Errorf("create heartbeat request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	client := &http.Client{Timeout: 5 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
 		return fmt.Errorf("send heartbeat: %w", err)
