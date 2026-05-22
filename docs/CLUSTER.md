@@ -1,0 +1,146 @@
+# ESPBrew Cluster Usage
+
+## Starting a Cluster
+
+### Standalone Mode (Single Machine)
+
+```bash
+./espbrew cluster --role standalone --port 8080
+```
+
+Standalone mode runs both leader and peer functionality on a single node. This is useful for:
+- Testing the cluster locally
+- Managing multiple devices on one machine
+- Small deployments without distributed needs
+
+### Leader Mode (Cluster Coordinator)
+
+```bash
+./espbrew cluster --role leader --port 8080
+```
+
+The leader node:
+- Coordinates all cluster operations
+- Manages the job queue
+- Handles device reservations
+- Runs the web dashboard
+- Discovers and aggregates devices from local and peer nodes
+- Distributes work to peer nodes
+
+### Peer Mode (Joins Cluster)
+
+```bash
+./espbrew cluster --role peer --leader <leader-ip>:8080 --port 8081
+```
+
+Peer nodes:
+- Register with the leader via mDNS or explicit address
+- Report local devices to leader
+- Execute flash jobs assigned by leader
+- Send progress updates back
+
+## Cluster Options
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--role` | Node role: leader, peer, standalone | standalone |
+| `--port` | HTTP port | 8080 |
+| `--bind` | Bind address | 0.0.0.0 |
+| `--leader` | Leader address (for peers) | - |
+| `--workers` | Number of flash workers | 2 |
+| `--no-mdns` | Disable mDNS discovery | false |
+| `--log-level` | Log level: debug, info, warn, error | info |
+| `-c, --config` | Config file path | - |
+
+## Remote Flashing
+
+Connect to a cluster from any machine:
+
+```bash
+# List available devices on cluster
+./espbrew --cluster http://leader:8080 devices
+
+# Flash to first available device (auto-select)
+./espbrew --cluster http://leader:8080 flash firmware.bin
+
+# Flash to specific device
+./espbrew --cluster http://leader:8080 flash firmware.bin -p /dev/ttyUSB0
+
+# Flash with progress bar and monitor after
+./espbrew --cluster http://leader:8080 flash firmware.bin --monitor
+```
+
+## Remote Monitor
+
+Monitor device serial output remotely:
+
+```bash
+# Monitor first available device
+./espbrew --cluster http://leader:8080 monitor
+
+# Monitor specific device
+./espbrew --cluster http://leader:8080 monitor -p /dev/ttyUSB0
+
+# Monitor with reset to capture boot logs
+./espbrew --cluster http://leader:8080 monitor --reset
+
+# Exit on pattern (useful for CI/CD)
+./espbrew --cluster http://leader:8080 monitor --exit-on "System ready"
+```
+
+## Device Reservation
+
+Devices are automatically reserved during operations:
+- Flash jobs reserve devices for the duration
+- Monitor sessions reserve devices until closed
+- Reservation prevents concurrent access conflicts
+
+## Web Dashboard
+
+Access the cluster dashboard at:
+```
+http://<node-ip>:8080/
+```
+
+The dashboard shows:
+- Cluster nodes and their status
+- Available devices per node
+- Active and queued jobs
+- Real-time job progress
+
+## mDNS Discovery
+
+Nodes on the same network automatically discover each other via mDNS:
+- Leaders advertise themselves as `_espbrew-leader._tcp`
+- Peers find leaders automatically if not explicitly set
+- Disable with `--no-mdns` for networks without mDNS
+
+## Configuration File
+
+```toml
+# ~/.espbrew.toml or /etc/espbrew/config.toml
+cluster_name = "espbrew-cluster"
+role = "leader"
+bind_address = "0.0.0.0"
+http_port = 8080
+leader_address = ""  # For peer nodes
+heartbeat_interval = "5s"
+node_timeout = "30s"
+log_level = "info"
+```
+
+## Example: Multi-Node Setup
+
+```bash
+# Terminal 1: Start leader
+./espbrew cluster --role leader --port 8080
+
+# Terminal 2: Start peer 1
+./espbrew cluster --role peer --leader localhost:8080 --port 8081
+
+# Terminal 3: Start peer 2
+./espbrew cluster --role peer --leader localhost:8080 --port 8082
+
+# Terminal 4: Flash to cluster (auto-selects available device)
+./espbrew --cluster http://localhost:8080 flash firmware.bin
+```
