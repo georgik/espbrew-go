@@ -12,8 +12,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/georgik/esp-ci-cluster/internal/cluster"
-	"github.com/georgik/esp-ci-cluster/pkg/protocol"
+	"codeberg.org/georgik/espbrew-go/internal/cluster"
+	"codeberg.org/georgik/espbrew-go/pkg/protocol"
 )
 
 func TestFlashHandler_handleUpload(t *testing.T) {

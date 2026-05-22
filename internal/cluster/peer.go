@@ -6,9 +6,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/georgik/esp-ci-cluster/internal/device"
-	"github.com/georgik/esp-ci-cluster/internal/flash"
-	"github.com/georgik/esp-ci-cluster/pkg/protocol"
+	"codeberg.org/georgik/espbrew-go/internal/device"
+	"codeberg.org/georgik/espbrew-go/internal/flash"
+	"codeberg.org/georgik/espbrew-go/pkg/protocol"
 	"github.com/rs/zerolog/log"
 )
 

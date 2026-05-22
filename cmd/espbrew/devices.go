@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/georgik/esp-ci-cluster/internal/cluster"
-	"github.com/georgik/esp-ci-cluster/internal/device"
+	"codeberg.org/georgik/espbrew-go/internal/cluster"
+	"codeberg.org/georgik/espbrew-go/internal/device"
 	"github.com/spf13/cobra"
 )
 

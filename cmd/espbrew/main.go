@@ -8,9 +8,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/georgik/esp-ci-cluster/internal/cluster"
-	"github.com/georgik/esp-ci-cluster/internal/config"
-	httpserver "github.com/georgik/esp-ci-cluster/internal/http"
+	"codeberg.org/georgik/espbrew-go/internal/cluster"
+	"codeberg.org/georgik/espbrew-go/internal/config"
+	httpserver "codeberg.org/georgik/espbrew-go/internal/http"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"

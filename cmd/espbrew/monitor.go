@@ -11,8 +11,8 @@ import (
 	"go.bug.st/serial"
 	"golang.org/x/term"
 
-	"github.com/georgik/esp-ci-cluster/internal/cluster"
-	"github.com/georgik/esp-ci-cluster/internal/device"
+	"codeberg.org/georgik/espbrew-go/internal/cluster"
+	"codeberg.org/georgik/espbrew-go/internal/device"
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
 )

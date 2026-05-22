@@ -6,7 +6,7 @@ import (
 	"os"
 	"sync"
 
-	"github.com/georgik/esp-ci-cluster/internal/flash"
+	"codeberg.org/georgik/espbrew-go/internal/flash"
 	"github.com/rs/zerolog/log"
 )
 

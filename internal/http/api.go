@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/georgik/esp-ci-cluster/internal/cluster"
+	"codeberg.org/georgik/espbrew-go/internal/cluster"
 	"github.com/gorilla/mux"
 )
 

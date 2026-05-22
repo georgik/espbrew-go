@@ -10,7 +10,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/georgik/esp-ci-cluster/internal/cluster"
+	"codeberg.org/georgik/espbrew-go/internal/cluster"
 	"github.com/google/uuid"
 	"github.com/gorilla/mux"
 	"github.com/rs/zerolog/log"

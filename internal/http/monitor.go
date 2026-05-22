@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"sync"
 
-	"github.com/georgik/esp-ci-cluster/internal/monitor"
+	"codeberg.org/georgik/espbrew-go/internal/monitor"
 	"github.com/gorilla/mux"
 	"github.com/gorilla/websocket"
 	"github.com/rs/zerolog/log"

@@ -1,4 +1,4 @@
-module github.com/georgik/esp-ci-cluster
+module codeberg.org/georgik/espbrew-go
 
 go 1.26.2
 

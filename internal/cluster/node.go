@@ -2,7 +2,7 @@ package cluster
 
 import (
 	"context"
-	"github.com/georgik/esp-ci-cluster/pkg/protocol"
+	"codeberg.org/georgik/espbrew-go/pkg/protocol"
 )
 
 type Node interface {
