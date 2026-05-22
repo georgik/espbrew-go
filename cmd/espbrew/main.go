@@ -33,10 +33,7 @@ var cfg struct {
 }
 
 func init() {
-	rootCmd.AddCommand(flashCmd)
-	rootCmd.AddCommand(monitorCmd)
-
-	// Keep server command as cluster subcommand
+	// flashCmd and monitorCmd added by their own init() functions
 	rootCmd.AddCommand(clusterCmd)
 }
 

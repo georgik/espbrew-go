@@ -1,0 +1,434 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ESPBrew Cluster Dashboard</title>
+    <style>
+        :root {
+            --bg-primary: #0f172a;
+            --bg-secondary: #1e293b;
+            --bg-tertiary: #334155;
+            --text-primary: #f8fafc;
+            --text-secondary: #94a3b8;
+            --accent: #3b82f6;
+            --accent-hover: #2563eb;
+            --success: #22c55e;
+            --warning: #f59e0b;
+            --error: #ef4444;
+            --border: #334155;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container { max-width: 1400px; margin: 0 auto; }
+
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 30px;
+            padding-bottom: 20px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        h1 { font-size: 24px; font-weight: 600; }
+
+        .status-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 500;
+        }
+
+        .status-badge.online { background: var(--success); color: white; }
+        .status-badge.offline { background: var(--error); color: white; }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+
+        .card {
+            background: var(--bg-secondary);
+            border-radius: 12px;
+            padding: 20px;
+            border: 1px solid var(--border);
+        }
+
+        .stat-card {
+            text-align: center;
+        }
+
+        .stat-value {
+            font-size: 36px;
+            font-weight: 700;
+            color: var(--accent);
+            line-height: 1.2;
+        }
+
+        .stat-label {
+            font-size: 12px;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-top: 4px;
+        }
+
+        .card-title {
+            font-size: 14px;
+            font-weight: 600;
+            margin-bottom: 16px;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .device-list, .job-list { list-style: none; }
+
+        .device-item, .job-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px 0;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .device-item:last-child, .job-item:last-child { border-bottom: none; }
+
+        .device-info, .job-info {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .device-name, .job-name {
+            font-family: monospace;
+            font-size: 13px;
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+        }
+
+        .status-dot.available { background: var(--success); }
+        .status-dot.busy { background: var(--warning); }
+        .status-dot.offline { background: var(--error); }
+
+        .progress-bar {
+            width: 100%;
+            height: 4px;
+            background: var(--bg-tertiary);
+            border-radius: 2px;
+            overflow: hidden;
+            margin-top: 8px;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: var(--accent);
+            transition: width 0.3s ease;
+        }
+
+        .job-status {
+            font-size: 12px;
+            padding: 2px 8px;
+            border-radius: 4px;
+        }
+
+        .job-status.pending { background: var(--bg-tertiary); }
+        .job-status.running { background: var(--warning); color: white; }
+        .job-status.completed { background: var(--success); color: white; }
+        .job-status.failed { background: var(--error); color: white; }
+
+        .btn {
+            background: var(--accent);
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        .btn:hover { background: var(--accent-hover); }
+        .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+        .form-group { margin-bottom: 16px; }
+
+        .form-group label {
+            display: block;
+            font-size: 12px;
+            color: var(--text-secondary);
+            margin-bottom: 6px;
+        }
+
+        .form-group input, .form-group select {
+            width: 100%;
+            padding: 10px 12px;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            color: var(--text-primary);
+            font-size: 14px;
+        }
+
+        .form-group input:focus, .form-group select:focus {
+            outline: none;
+            border-color: var(--accent);
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 30px;
+            color: var(--text-secondary);
+            font-size: 14px;
+        }
+
+        .log-entry {
+            font-family: monospace;
+            font-size: 12px;
+            padding: 4px 0;
+            color: var(--text-secondary);
+        }
+
+        .log-entry.error { color: var(--error); }
+        .log-entry.success { color: var(--success); }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .connecting { animation: pulse 1.5s infinite; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div>
+                <h1>ESPBrew Cluster</h1>
+                <div id="connection-status" class="status-badge offline connecting">Connecting...</div>
+            </div>
+            <button class="btn" onclick="refreshData()">Refresh</button>
+        </header>
+
+        <div class="grid">
+            <div class="card stat-card">
+                <div class="stat-value" id="stat-nodes">-</div>
+                <div class="stat-label">Nodes</div>
+            </div>
+            <div class="card stat-card">
+                <div class="stat-value" id="stat-devices">-</div>
+                <div class="stat-label">Devices</div>
+            </div>
+            <div class="card stat-card">
+                <div class="stat-value" id="stat-jobs">-</div>
+                <div class="stat-label">Jobs</div>
+            </div>
+            <div class="card stat-card">
+                <div class="stat-value" id="stat-queued">-</div>
+                <div class="stat-label">Queued</div>
+            </div>
+        </div>
+
+        <div class="grid">
+            <div class="card">
+                <div class="card-title">Devices</div>
+                <ul class="device-list" id="device-list">
+                    <li class="empty-state">Loading devices...</li>
+                </ul>
+            </div>
+
+            <div class="card">
+                <div class="card-title">Jobs</div>
+                <ul class="job-list" id="job-list">
+                    <li class="empty-state">Loading jobs...</li>
+                </ul>
+            </div>
+
+            <div class="card">
+                <div class="card-title">Create Job</div>
+                <form id="job-form" onsubmit="createJob(event)">
+                    <div class="form-group">
+                        <label>Firmware File</label>
+                        <input type="text" id="firmware" placeholder="/path/to/firmware.bin" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Target Device</label>
+                        <select id="device" required>
+                            <option value="">Select device...</option>
+                        </select>
+                    </div>
+                    <button type="submit" class="btn" style="width: 100%">Flash Device</button>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let ws;
+        let reconnectInterval;
+
+        function connect() {
+            const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+            ws = new WebSocket(protocol + '//' + location.host + '/api/v1/ws');
+
+            ws.onopen = () => {
+                console.log('WebSocket connected');
+                updateConnectionStatus(true);
+                clearInterval(reconnectInterval);
+            };
+
+            ws.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+                handleUpdate(data);
+            };
+
+            ws.onclose = () => {
+                console.log('WebSocket disconnected');
+                updateConnectionStatus(false);
+                reconnectInterval = setInterval(connect, 3000);
+            };
+
+            ws.onerror = (error) => {
+                console.error('WebSocket error:', error);
+            };
+        }
+
+        function updateConnectionStatus(connected) {
+            const badge = document.getElementById('connection-status');
+            if (connected) {
+                badge.className = 'status-badge online';
+                badge.textContent = 'Connected';
+            } else {
+                badge.className = 'status-badge offline connecting';
+                badge.textContent = 'Connecting...';
+            }
+        }
+
+        function handleUpdate(data) {
+            if (data.type === 'state' || data.type === 'state_update') {
+                document.getElementById('stat-nodes').textContent = data.nodes;
+                document.getElementById('stat-devices').textContent = data.devices;
+                document.getElementById('stat-jobs').textContent = data.jobs;
+                document.getElementById('stat-queued').textContent = data.queue_size || 0;
+            }
+        }
+
+        async function refreshData() {
+            try {
+                const [devices, jobs] = await Promise.all([
+                    fetch('/api/v1/devices').then(r => r.json()),
+                    fetch('/api/v1/jobs').then(r => r.json())
+                ]);
+
+                renderDevices(devices);
+                renderJobs(jobs);
+            } catch (error) {
+                console.error('Failed to refresh:', error);
+            }
+        }
+
+        function renderDevices(devices) {
+            const list = document.getElementById('device-list');
+            const select = document.getElementById('device');
+
+            if (devices.length === 0) {
+                list.innerHTML = '<li class="empty-state">No devices found</li>';
+                select.innerHTML = '<option value="">No devices</option>';
+                return;
+            }
+
+            list.innerHTML = devices.map(d => `
+                <li class="device-item">
+                    <div class="device-info">
+                        <span class="status-dot ${d.status}"></span>
+                        <span class="device-name">${d.path}</span>
+                    </div>
+                    <span style="font-size: 12px; color: var(--text-secondary)">
+                        ${d.node_id || 'local'}
+                    </span>
+                </li>
+            `).join('');
+
+            select.innerHTML = '<option value="">Select device...</option>' +
+                devices.filter(d => d.status === 'available').map(d =>
+                    `<option value="${d.path}">${d.path}</option>`
+                ).join('');
+        }
+
+        function renderJobs(jobs) {
+            const list = document.getElementById('job-list');
+
+            if (jobs.length === 0) {
+                list.innerHTML = '<li class="empty-state">No jobs</li>';
+                return;
+            }
+
+            list.innerHTML = jobs.map(j => `
+                <li class="job-item">
+                    <div class="job-info">
+                        <span class="job-name">${j.id.slice(0, 8)}</span>
+                    </div>
+                    <div style="flex: 1; margin: 0 16px;">
+                        ${j.status === 'running' ? `
+                            <div class="progress-bar">
+                                <div class="progress-fill" style="width: ${j.progress}%"></div>
+                            </div>
+                        ` : ''}
+                    </div>
+                    <span class="job-status ${j.status}">${j.status}</span>
+                </li>
+            `).join('');
+        }
+
+        async function createJob(event) {
+            event.preventDefault();
+
+            const firmware = document.getElementById('firmware').value;
+            const device = document.getElementById('device').value;
+
+            try {
+                const response = await fetch('/api/v1/jobs', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ firmware, device_path: device })
+                });
+
+                if (response.ok) {
+                    document.getElementById('job-form').reset();
+                    refreshData();
+                } else {
+                    const error = await response.json();
+                    alert('Failed to create job: ' + error.error);
+                }
+            } catch (error) {
+                alert('Failed to create job: ' + error.message);
+            }
+        }
+
+        // Initialize
+        connect();
+        refreshData();
+        setInterval(refreshData, 5000);
+    </script>
+</body>
+</html>
