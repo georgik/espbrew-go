@@ -1,12 +1,14 @@
 package http
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/georgik/esp-ci-cluster/internal/cluster"
 	"github.com/google/uuid"
@@ -15,13 +17,13 @@ import (
 )
 
 type FlashHandler struct {
-	master    *cluster.MasterNode
+	leader    *cluster.LeaderNode
 	uploadDir string
 }
 
-func NewFlashHandler(master *cluster.MasterNode, uploadDir string) *FlashHandler {
+func NewFlashHandler(leader *cluster.LeaderNode, uploadDir string) *FlashHandler {
 	return &FlashHandler{
-		master:    master,
+		leader:    leader,
 		uploadDir: uploadDir,
 	}
 }
@@ -52,8 +54,8 @@ type FlashSubmitResponse struct {
 }
 
 func (h *FlashHandler) handleUpload(w http.ResponseWriter, r *http.Request) {
-	if h.master == nil {
-		respondError(w, http.StatusNotImplemented, "Upload only available on master")
+	if h.leader == nil {
+		respondError(w, http.StatusNotImplemented, "Upload only available on leader")
 		return
 	}
 
@@ -95,8 +97,8 @@ func (h *FlashHandler) handleUpload(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *FlashHandler) handleFlashSubmit(w http.ResponseWriter, r *http.Request) {
-	if h.master == nil {
-		respondError(w, http.StatusNotImplemented, "Remote flash only available on master")
+	if h.leader == nil {
+		respondError(w, http.StatusNotImplemented, "Remote flash only available on leader")
 		return
 	}
 
@@ -124,7 +126,7 @@ func (h *FlashHandler) handleFlashSubmit(w http.ResponseWriter, r *http.Request)
 	}
 
 	// Enqueue job
-	job, err := h.master.EnqueueJob(firmwarePath, req.DevicePath)
+	job, err := h.leader.EnqueueJob(firmwarePath, req.DevicePath)
 	if err != nil {
 		respondError(w, http.StatusConflict, err.Error())
 		return
@@ -135,6 +137,119 @@ func (h *FlashHandler) handleFlashSubmit(w http.ResponseWriter, r *http.Request)
 		Str("device", req.DevicePath).
 		Str("client_id", req.ClientID).
 		Msg("Remote flash job created")
+
+	respondJSON(w, FlashSubmitResponse{
+		JobID:      job.ID,
+		Status:     string(job.Status),
+		DevicePath: req.DevicePath,
+	})
+}
+
+// PeerFlashHandler handles flash operations on peer nodes
+type PeerFlashHandler struct {
+	peer      *cluster.PeerNode
+	uploadDir string
+}
+
+func NewPeerFlashHandler(peer *cluster.PeerNode) *PeerFlashHandler {
+	return &PeerFlashHandler{
+		peer:      peer,
+		uploadDir: os.TempDir(),
+	}
+}
+
+func (h *PeerFlashHandler) RegisterRoutes(r *mux.Router) {
+	api := r.PathPrefix("/api/v1").Subrouter()
+	api.HandleFunc("/flash/upload", h.handleUpload).Methods("POST")
+	api.HandleFunc("/flash", h.handleFlashSubmit).Methods("POST")
+}
+
+func (h *PeerFlashHandler) handleUpload(w http.ResponseWriter, r *http.Request) {
+	err := r.ParseMultipartForm(32 << 20) // 32MB max
+	if err != nil {
+		respondError(w, http.StatusBadRequest, fmt.Sprintf("parse form: %v", err))
+		return
+	}
+
+	file, _, err := r.FormFile("firmware")
+	if err != nil {
+		respondError(w, http.StatusBadRequest, fmt.Sprintf("get file: %v", err))
+		return
+	}
+	defer file.Close()
+
+	fileID := uuid.New().String()
+	filePath := filepath.Join(h.uploadDir, fileID+".bin")
+
+	out, err := os.Create(filePath)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, fmt.Sprintf("create file: %v", err))
+		return
+	}
+	defer out.Close()
+
+	size, err := io.Copy(out, file)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, fmt.Sprintf("save file: %v", err))
+		return
+	}
+
+	log.Info().Str("file_id", fileID).Int64("size", size).Msg("Firmware uploaded on peer")
+
+	respondJSON(w, FlashUploadResponse{
+		FileID: fileID,
+		Size:   size,
+	})
+}
+
+func (h *PeerFlashHandler) handleFlashSubmit(w http.ResponseWriter, r *http.Request) {
+	var req FlashSubmitRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, fmt.Sprintf("decode request: %v", err))
+		return
+	}
+
+	// Determine firmware path
+	var firmwarePath string
+	if req.FileID != "" {
+		firmwarePath = filepath.Join(h.uploadDir, req.FileID+".bin")
+		if _, err := os.Stat(firmwarePath); os.IsNotExist(err) {
+			respondError(w, http.StatusNotFound, "uploaded file not found")
+			return
+		}
+	} else {
+		respondError(w, http.StatusBadRequest, "file_id required")
+		return
+	}
+
+	// Check if device exists locally
+	state := h.peer.State()
+	if _, exists := state.Devices[req.DevicePath]; !exists {
+		respondError(w, http.StatusNotFound, fmt.Sprintf("device not found: %s", req.DevicePath))
+		return
+	}
+
+	// Create job and execute directly
+	job := &cluster.Job{
+		ID:         uuid.New().String(),
+		Firmware:   firmwarePath,
+		DevicePath: req.DevicePath,
+		Status:     cluster.JobPending,
+		CreatedAt:  time.Now(),
+	}
+
+	// Execute flash synchronously
+	ctx := context.Background()
+	if err := h.peer.ExecuteJob(ctx, job); err != nil {
+		log.Error().Err(err).Str("job_id", job.ID).Msg("Flash failed on peer")
+		respondError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	log.Info().
+		Str("job_id", job.ID).
+		Str("device", req.DevicePath).
+		Msg("Flash completed on peer")
 
 	respondJSON(w, FlashSubmitResponse{
 		JobID:      job.ID,

@@ -56,8 +56,8 @@ func TestJobExecutor_StartStop(t *testing.T) {
 	assert.False(t, resultsOpen, "results channel should be closed")
 }
 
-func TestMasterNode_JobExecutor(t *testing.T) {
-	master := NewMasterNode("test", &MasterConfig{
+func TestLeaderNode_JobExecutor(t *testing.T) {
+	leader := NewLeaderNode("test", &LeaderConfig{
 		HTTPPort:          8080,
 		DisablemDNS:       true,
 		HeartbeatInterval: time.Second,
@@ -65,11 +65,11 @@ func TestMasterNode_JobExecutor(t *testing.T) {
 	})
 
 	ctx := context.Background()
-	master.Start(ctx)
-	defer master.Stop()
+	leader.Start(ctx)
+	defer leader.Stop()
 
 	// Register device
-	master.RegisterDevice(&protocol.DeviceInfo{
+	leader.RegisterDevice(&protocol.DeviceInfo{
 		Path:   "/dev/ttyUSB0",
 		VID:    0x4348,
 		PID:    0x0027,
@@ -77,10 +77,10 @@ func TestMasterNode_JobExecutor(t *testing.T) {
 	})
 
 	// Start executor
-	master.StartJobExecutor(1)
-	defer master.StopJobExecutor()
+	leader.StartJobExecutor(1)
+	defer leader.StopJobExecutor()
 
-	assert.NotNil(t, master.executor)
+	assert.NotNil(t, leader.executor)
 
 	// Create firmware file
 	firmwarePath := "/tmp/test-firmware.bin"
@@ -88,7 +88,7 @@ func TestMasterNode_JobExecutor(t *testing.T) {
 	defer os.Remove(firmwarePath)
 
 	// Enqueue job
-	job, err := master.EnqueueJob(firmwarePath, "/dev/ttyUSB0")
+	job, err := leader.EnqueueJob(firmwarePath, "/dev/ttyUSB0")
 	assert.NoError(t, err)
 	assert.NotNil(t, job)
 	assert.Equal(t, firmwarePath, job.Firmware)

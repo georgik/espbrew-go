@@ -56,7 +56,7 @@ func TestProgressHub_Broadcast(t *testing.T) {
 }
 
 func TestProgressHandler_WebSocket(t *testing.T) {
-	master := cluster.NewMasterNode("test-master", &cluster.MasterConfig{
+	master := cluster.NewLeaderNode("test-master", &cluster.LeaderConfig{
 		DisablemDNS: true,
 	})
 
@@ -125,7 +125,7 @@ func TestProgressHandler_WebSocket(t *testing.T) {
 }
 
 func TestProgressHandler_JobNotFound(t *testing.T) {
-	master := cluster.NewMasterNode("test-master", &cluster.MasterConfig{
+	master := cluster.NewLeaderNode("test-master", &cluster.LeaderConfig{
 		DisablemDNS: true,
 	})
 
@@ -144,7 +144,7 @@ func TestProgressHandler_JobNotFound(t *testing.T) {
 }
 
 func TestProgressHandler_MultipleSubscribers(t *testing.T) {
-	master := cluster.NewMasterNode("test-master", &cluster.MasterConfig{
+	master := cluster.NewLeaderNode("test-master", &cluster.LeaderConfig{
 		DisablemDNS: true,
 	})
 
@@ -202,7 +202,7 @@ func TestProgressHandler_MultipleSubscribers(t *testing.T) {
 
 func TestClient_ProgressStream(t *testing.T) {
 	// Start a real test server
-	master := cluster.NewMasterNode("test-master", &cluster.MasterConfig{
+	master := cluster.NewLeaderNode("test-master", &cluster.LeaderConfig{
 		DisablemDNS: true,
 	})
 

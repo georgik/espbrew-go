@@ -15,7 +15,7 @@ import (
 )
 
 func TestAPIHandler_HandleStatus(t *testing.T) {
-	master := cluster.NewMasterNode("test", &cluster.MasterConfig{
+	master := cluster.NewLeaderNode("test", &cluster.LeaderConfig{
 		HTTPPort:          8080,
 		DisablemDNS:       true,
 		HeartbeatInterval: time.Second,
@@ -38,12 +38,12 @@ func TestAPIHandler_HandleStatus(t *testing.T) {
 
 	assert.Equal(t, 0.0, resp["nodes_count"])
 	assert.Equal(t, 0.0, resp["devices_count"])
-	assert.Equal(t, "master", resp["role"])
+	assert.Equal(t, "leader", resp["role"])
 	assert.Equal(t, 0.0, resp["queue_size"])
 }
 
 func TestAPIHandler_HandleNodes(t *testing.T) {
-	master := cluster.NewMasterNode("test", &cluster.MasterConfig{
+	master := cluster.NewLeaderNode("test", &cluster.LeaderConfig{
 		HTTPPort:          8080,
 		DisablemDNS:       true,
 		HeartbeatInterval: time.Second,
@@ -67,7 +67,7 @@ func TestAPIHandler_HandleNodes(t *testing.T) {
 }
 
 func TestAPIHandler_HandleDevices(t *testing.T) {
-	master := cluster.NewMasterNode("test", &cluster.MasterConfig{
+	master := cluster.NewLeaderNode("test", &cluster.LeaderConfig{
 		HTTPPort:          8080,
 		DisablemDNS:       true,
 		HeartbeatInterval: time.Second,
@@ -99,7 +99,7 @@ func TestAPIHandler_HandleDevices(t *testing.T) {
 }
 
 func TestAPIHandler_HandleQueue(t *testing.T) {
-	master := cluster.NewMasterNode("test", &cluster.MasterConfig{
+	master := cluster.NewLeaderNode("test", &cluster.LeaderConfig{
 		HTTPPort:          8080,
 		DisablemDNS:       true,
 		HeartbeatInterval: time.Second,
@@ -131,7 +131,7 @@ func TestAPIHandler_HandleQueue(t *testing.T) {
 }
 
 func TestAPIHandler_CreateJob(t *testing.T) {
-	master := cluster.NewMasterNode("test", &cluster.MasterConfig{
+	master := cluster.NewLeaderNode("test", &cluster.LeaderConfig{
 		HTTPPort:          8080,
 		DisablemDNS:       true,
 		HeartbeatInterval: time.Second,
@@ -168,7 +168,7 @@ func TestAPIHandler_CreateJob(t *testing.T) {
 }
 
 func TestServer_Start(t *testing.T) {
-	master := cluster.NewMasterNode("test", &cluster.MasterConfig{
+	master := cluster.NewLeaderNode("test", &cluster.LeaderConfig{
 		HTTPPort:          8081,
 		DisablemDNS:       true,
 		HeartbeatInterval: time.Second,

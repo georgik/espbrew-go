@@ -4,7 +4,7 @@ ESP32 cluster flashing tool written in Go. Manages multiple ESP32 devices across
 
 ## Features
 
-- **Cluster Mode**: Master/Worker architecture for distributed flashing
+- **Cluster Mode**: Leader/peer architecture for distributed flashing
 - **Device Discovery**: Automatic ESP device detection via USB serial
 - **Job Queue**: Queue and manage flash jobs across all available devices
 - **Device Locking**: Prevents concurrent access to serial ports
@@ -75,8 +75,8 @@ sudo mv espbrew /usr/local/bin/
 ### Cluster
 
 ```bash
-./espbrew cluster --role master --port 8080           # Start master
-./espbrew cluster --role worker --master IP:8080      # Start worker
+./espbrew cluster --role leader --port 8080           # Start leader
+./espbrew cluster --role peer --leader IP:8080         # Start peer
 ./espbrew --cluster http://IP:8080 flash firmware.bin # Remote flash
 ./espbrew --cluster http://IP:8080 monitor            # Remote monitor
 ```
@@ -88,7 +88,7 @@ esp-ci-cluster/
 ├── cmd/
 │   └── espbrew/           # CLI tool (flash, monitor, devices, cluster)
 ├── internal/
-│   ├── cluster/           # Master/Worker, job queue, mDNS
+│   ├── cluster/           # Leader/peer, job queue, mDNS
 │   ├── device/            # Device discovery, serial scanning
 │   ├── flash/             # Flash operations (uses espflasher)
 │   ├── http/              # HTTP API, WebSocket, dashboard

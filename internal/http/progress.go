@@ -114,13 +114,13 @@ func (h *ProgressHub) BroadcastComplete(jobID string, status string, errMsg stri
 }
 
 type ProgressHandler struct {
-	master *cluster.MasterNode
+	leader *cluster.LeaderNode
 	hub    *ProgressHub
 }
 
-func NewProgressHandler(master *cluster.MasterNode, hub *ProgressHub) *ProgressHandler {
+func NewProgressHandler(leader *cluster.LeaderNode, hub *ProgressHub) *ProgressHandler {
 	return &ProgressHandler{
-		master: master,
+		leader: leader,
 		hub:    hub,
 	}
 }
@@ -134,12 +134,12 @@ func (h *ProgressHandler) handleProgressWebSocket(w http.ResponseWriter, r *http
 	vars := mux.Vars(r)
 	jobID := vars["job_id"]
 
-	if h.master == nil {
-		http.Error(w, "Not available on worker nodes", http.StatusNotImplemented)
+	if h.leader == nil {
+		http.Error(w, "Not available on peer nodes", http.StatusNotImplemented)
 		return
 	}
 
-	job := h.master.GetJobQueue().Get(jobID)
+	job := h.leader.GetJobQueue().Get(jobID)
 	if job == nil {
 		http.Error(w, "Job not found", http.StatusNotFound)
 		return
@@ -194,7 +194,7 @@ func (h *ProgressHandler) handleProgressWebSocket(w http.ResponseWriter, r *http
 }
 
 func (h *ProgressHandler) StartProgressStreamer(jobID string) {
-	job := h.master.GetJobQueue().Get(jobID)
+	job := h.leader.GetJobQueue().Get(jobID)
 	if job == nil {
 		return
 	}

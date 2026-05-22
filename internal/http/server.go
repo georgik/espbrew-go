@@ -54,12 +54,16 @@ func (s *Server) setupRoutes() {
 	s.api.RegisterRoutes(s.router)
 
 	// Flash API routes
-	if master, ok := s.node.(*cluster.MasterNode); ok {
-		flashHandler := NewFlashHandler(master, os.TempDir())
+	if leader, ok := s.node.(*cluster.LeaderNode); ok {
+		flashHandler := NewFlashHandler(leader, os.TempDir())
 		flashHandler.RegisterRoutes(s.router)
 
-		progressHandler := NewProgressHandler(master, s.hub)
+		progressHandler := NewProgressHandler(leader, s.hub)
 		progressHandler.RegisterRoutes(s.router)
+	} else if peer, ok := s.node.(*cluster.PeerNode); ok {
+		// Register flash handler on peer nodes too
+		flashHandler := NewPeerFlashHandler(peer)
+		flashHandler.RegisterRoutes(s.router)
 	}
 
 	// Monitor WebSocket routes
@@ -196,10 +200,10 @@ func (s *Server) handleWebSocketCommand(conn *websocket.Conn, msg map[string]int
 		s.sendState(conn)
 
 	case "create_job":
-		if s.api.master != nil {
+		if s.api.leader != nil {
 			firmware, _ := msg["firmware"].(string)
 			device, _ := msg["device"].(string)
-			job, err := s.api.master.EnqueueJob(firmware, device)
+			job, err := s.api.leader.EnqueueJob(firmware, device)
 			if err != nil {
 				s.sendError(conn, err.Error())
 			} else {
@@ -222,8 +226,8 @@ func (s *Server) sendState(conn *websocket.Conn) {
 		"jobs":    len(state.Jobs),
 	}
 
-	if s.api.master != nil {
-		data["queue_size"] = s.api.master.GetJobQueue().PendingCount()
+	if s.api.leader != nil {
+		data["queue_size"] = s.api.leader.GetJobQueue().PendingCount()
 	}
 
 	s.sendJSON(conn, data)
@@ -260,8 +264,8 @@ func (s *Server) broadcastState() {
 			"jobs":    len(state.Jobs),
 		}
 
-		if s.api.master != nil {
-			update["queue_size"] = s.api.master.GetJobQueue().PendingCount()
+		if s.api.leader != nil {
+			update["queue_size"] = s.api.leader.GetJobQueue().PendingCount()
 		}
 
 		// Broadcast to all clients

@@ -11,19 +11,19 @@ import (
 
 type APIHandler struct {
 	node   cluster.Node
-	master *cluster.MasterNode
-	worker *cluster.WorkerNode
+	leader *cluster.LeaderNode
+	peer   *cluster.PeerNode
 }
 
 func NewAPIHandler(node cluster.Node) *APIHandler {
 	h := &APIHandler{node: node}
 
-	// Type assertions for master/worker specific APIs
-	if m, ok := node.(*cluster.MasterNode); ok {
-		h.master = m
+	// Type assertions for leader/peer specific APIs
+	if l, ok := node.(*cluster.LeaderNode); ok {
+		h.leader = l
 	}
-	if w, ok := node.(*cluster.WorkerNode); ok {
-		h.worker = w
+	if p, ok := node.(*cluster.PeerNode); ok {
+		h.peer = p
 	}
 
 	return h
@@ -46,8 +46,8 @@ func (h *APIHandler) RegisterRoutes(r *mux.Router) {
 	api.HandleFunc("/jobs/{id}", h.handleGetJob).Methods("GET")
 	api.HandleFunc("/jobs/{id}", h.handleCancelJob).Methods("DELETE")
 
-	// Master-specific
-	if h.master != nil {
+	// Leader-specific
+	if h.leader != nil {
 		api.HandleFunc("/queue", h.handleQueue).Methods("GET")
 	}
 }
@@ -61,11 +61,11 @@ func (h *APIHandler) handleStatus(w http.ResponseWriter, r *http.Request) {
 		"jobs_count":    len(state.Jobs),
 	}
 
-	if h.master != nil {
-		response["role"] = "master"
-		response["queue_size"] = h.master.GetJobQueue().PendingCount()
-	} else if h.worker != nil {
-		response["role"] = "worker"
+	if h.leader != nil {
+		response["role"] = "leader"
+		response["queue_size"] = h.leader.GetJobQueue().PendingCount()
+	} else if h.peer != nil {
+		response["role"] = "peer"
 	}
 
 	respondJSON(w, response)
@@ -78,9 +78,9 @@ func (h *APIHandler) handleNodes(w http.ResponseWriter, r *http.Request) {
 		nodes = append(nodes, n)
 	}
 
-	// Add mDNS peers for master
-	if h.master != nil {
-		peers := h.master.GetPeers()
+	// Add mDNS peers for leader
+	if h.leader != nil {
+		peers := h.leader.GetPeers()
 		for _, p := range peers {
 			nodes = append(nodes, map[string]interface{}{
 				"id":         p.NodeID,
@@ -116,12 +116,12 @@ func (h *APIHandler) handleDevices(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *APIHandler) handleListJobs(w http.ResponseWriter, r *http.Request) {
-	if h.master == nil {
-		respondError(w, http.StatusNotImplemented, "Job list only available on master")
+	if h.leader == nil {
+		respondError(w, http.StatusNotImplemented, "Job list only available on leader")
 		return
 	}
 
-	queue := h.master.GetJobQueue()
+	queue := h.leader.GetJobQueue()
 	jobs := queue.List()
 
 	result := make([]interface{}, 0, len(jobs))
@@ -138,8 +138,8 @@ type CreateJobRequest struct {
 }
 
 func (h *APIHandler) handleCreateJob(w http.ResponseWriter, r *http.Request) {
-	if h.master == nil {
-		respondError(w, http.StatusNotImplemented, "Job creation only available on master")
+	if h.leader == nil {
+		respondError(w, http.StatusNotImplemented, "Job creation only available on leader")
 		return
 	}
 
@@ -149,7 +149,7 @@ func (h *APIHandler) handleCreateJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	job, err := h.master.EnqueueJob(req.Firmware, req.DevicePath)
+	job, err := h.leader.EnqueueJob(req.Firmware, req.DevicePath)
 	if err != nil {
 		respondError(w, http.StatusConflict, err.Error())
 		return
@@ -159,15 +159,15 @@ func (h *APIHandler) handleCreateJob(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *APIHandler) handleGetJob(w http.ResponseWriter, r *http.Request) {
-	if h.master == nil {
-		respondError(w, http.StatusNotImplemented, "Job queries only available on master")
+	if h.leader == nil {
+		respondError(w, http.StatusNotImplemented, "Job queries only available on leader")
 		return
 	}
 
 	vars := mux.Vars(r)
 	jobID := vars["id"]
 
-	queue := h.master.GetJobQueue()
+	queue := h.leader.GetJobQueue()
 	job := queue.Get(jobID)
 
 	if job == nil {
@@ -179,15 +179,15 @@ func (h *APIHandler) handleGetJob(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *APIHandler) handleCancelJob(w http.ResponseWriter, r *http.Request) {
-	if h.master == nil {
-		respondError(w, http.StatusNotImplemented, "Job cancellation only available on master")
+	if h.leader == nil {
+		respondError(w, http.StatusNotImplemented, "Job cancellation only available on leader")
 		return
 	}
 
 	vars := mux.Vars(r)
 	jobID := vars["id"]
 
-	if err := h.master.CancelJob(jobID); err != nil {
+	if err := h.leader.CancelJob(jobID); err != nil {
 		if err.Error() == "job not found: "+jobID || err.Error()[:12] == "job not found" {
 			respondError(w, http.StatusNotFound, err.Error())
 			return
@@ -203,12 +203,12 @@ func (h *APIHandler) handleCancelJob(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *APIHandler) handleQueue(w http.ResponseWriter, r *http.Request) {
-	if h.master == nil {
-		respondError(w, http.StatusNotImplemented, "Queue info only available on master")
+	if h.leader == nil {
+		respondError(w, http.StatusNotImplemented, "Queue info only available on leader")
 		return
 	}
 
-	queue := h.master.GetJobQueue()
+	queue := h.leader.GetJobQueue()
 
 	respondJSON(w, map[string]interface{}{
 		"pending": queue.PendingCount(),
@@ -233,15 +233,15 @@ type ReserveDeviceRequest struct {
 }
 
 func (h *APIHandler) handleReserveDevice(w http.ResponseWriter, r *http.Request) {
-	if h.master == nil {
-		respondError(w, http.StatusNotImplemented, "Device reservation only available on master")
+	if h.leader == nil {
+		respondError(w, http.StatusNotImplemented, "Device reservation only available on leader")
 		return
 	}
 
 	vars := mux.Vars(r)
 	devicePath := vars["path"]
 
-	state := h.master.State()
+	state := h.leader.State()
 	device, exists := state.Devices[devicePath]
 	if !exists {
 		respondError(w, http.StatusNotFound, "Device not found")
@@ -261,15 +261,15 @@ func (h *APIHandler) handleReserveDevice(w http.ResponseWriter, r *http.Request)
 		}
 
 		// Try to reserve
-		if !h.master.GetDevices().Reserve(devicePath, req.ClientID) {
-			owner := h.master.GetDevices().GetOwner(devicePath)
+		if !h.leader.GetDevices().Reserve(devicePath, req.ClientID) {
+			owner := h.leader.GetDevices().GetOwner(devicePath)
 			respondError(w, http.StatusConflict, fmt.Sprintf("Device already reserved by: %s", owner))
 			return
 		}
 
 		// Update device state
 		device.Status = "busy"
-		h.master.State().Devices[devicePath] = device
+		h.leader.State().Devices[devicePath] = device
 
 		respondJSON(w, map[string]interface{}{
 			"status":    "reserved",
@@ -287,17 +287,17 @@ func (h *APIHandler) handleReserveDevice(w http.ResponseWriter, r *http.Request)
 		}
 
 		// Release if we own it or client_id matches
-		owner := h.master.GetDevices().GetOwner(devicePath)
+		owner := h.leader.GetDevices().GetOwner(devicePath)
 		if owner != "" && req.ClientID != "" && owner != req.ClientID {
 			respondError(w, http.StatusForbidden, fmt.Sprintf("Device reserved by: %s", owner))
 			return
 		}
 
-		h.master.GetDevices().Release(devicePath, owner)
+		h.leader.GetDevices().Release(devicePath, owner)
 
 		// Update device state
 		device.Status = "available"
-		h.master.State().Devices[devicePath] = device
+		h.leader.State().Devices[devicePath] = device
 
 		respondJSON(w, map[string]interface{}{
 			"status": "released",

@@ -9,8 +9,8 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestMasterNodeRegistersDevice(t *testing.T) {
-	master := NewMasterNode("test-master", &MasterConfig{
+func TestLeaderNodeRegistersDevice(t *testing.T) {
+	leader := NewLeaderNode("test-leader", &LeaderConfig{
 		HeartbeatInterval: time.Second,
 		NodeTimeout:       5 * time.Second,
 		HTTPPort:          8080,
@@ -18,26 +18,26 @@ func TestMasterNodeRegistersDevice(t *testing.T) {
 	})
 
 	ctx := context.Background()
-	assert.NoError(t, master.Start(ctx))
-	defer master.Stop()
+	assert.NoError(t, leader.Start(ctx))
+	defer leader.Stop()
 
 	dev := &protocol.DeviceInfo{
 		Path:   "/dev/ttyUSB0",
 		VID:    0x4348,
 		PID:    0x0027,
-		NodeID: "worker-1",
+		NodeID: "peer-1",
 		Status: "available",
 	}
 
-	master.state.Devices[dev.Path] = dev
+	leader.state.Devices[dev.Path] = dev
 
-	state := master.State()
+	state := leader.State()
 	assert.Equal(t, 1, len(state.Devices))
 	assert.Equal(t, dev, state.Devices[dev.Path])
 }
 
-func TestMasterNodeTimeoutCleanup(t *testing.T) {
-	master := NewMasterNode("test-master", &MasterConfig{
+func TestLeaderNodeTimeoutCleanup(t *testing.T) {
+	leader := NewLeaderNode("test-leader", &LeaderConfig{
 		HeartbeatInterval: 100 * time.Millisecond,
 		NodeTimeout:       200 * time.Millisecond,
 		HTTPPort:          8080,
@@ -45,26 +45,26 @@ func TestMasterNodeTimeoutCleanup(t *testing.T) {
 	})
 
 	ctx := context.Background()
-	assert.NoError(t, master.Start(ctx))
-	defer master.Stop()
+	assert.NoError(t, leader.Start(ctx))
+	defer leader.Stop()
 
 	node := &protocol.NodeInfo{
 		ID:       "stale-node",
 		Address:  "127.0.0.1",
-		Role:     "worker",
+		Role:     "peer",
 		LastSeen: time.Now().Add(-1 * time.Minute),
 	}
-	master.RegisterNode(node)
+	leader.RegisterNode(node)
 
-	assert.Equal(t, 1, len(master.State().Nodes))
+	assert.Equal(t, 1, len(leader.State().Nodes))
 
 	time.Sleep(300 * time.Millisecond)
 
-	assert.Equal(t, 0, len(master.State().Nodes), "stale node should be cleaned up")
+	assert.Equal(t, 0, len(leader.State().Nodes), "stale node should be cleaned up")
 }
 
-func TestWorkerNodeHeartbeat(t *testing.T) {
-	worker := NewWorkerNode("test-worker", "ws://master:8080", &WorkerConfig{
+func TestPeerNodeHeartbeat(t *testing.T) {
+	peer := NewPeerNode("test-peer", "ws://leader:8080", &PeerConfig{
 		HeartbeatInterval: 100 * time.Millisecond,
 		HTTPPort:          8081,
 		DisablemDNS:       true,
@@ -72,11 +72,11 @@ func TestWorkerNodeHeartbeat(t *testing.T) {
 	})
 
 	ctx := context.Background()
-	assert.NoError(t, worker.Start(ctx))
-	defer worker.Stop()
+	assert.NoError(t, peer.Start(ctx))
+	defer peer.Stop()
 
-	assert.Equal(t, "test-worker", worker.id)
-	assert.Equal(t, "ws://master:8080", worker.masterURL)
+	assert.Equal(t, "test-peer", peer.id)
+	assert.Equal(t, "ws://leader:8080", peer.leaderURL)
 }
 
 func TestJobQueue(t *testing.T) {

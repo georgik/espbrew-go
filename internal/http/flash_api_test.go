@@ -18,7 +18,7 @@ import (
 
 func TestFlashHandler_handleUpload(t *testing.T) {
 	// Create a mock master
-	master := cluster.NewMasterNode("test-master", &cluster.MasterConfig{
+	master := cluster.NewLeaderNode("test-master", &cluster.LeaderConfig{
 		DisablemDNS: true,
 	})
 
@@ -70,7 +70,7 @@ func TestFlashHandler_handleUpload(t *testing.T) {
 }
 
 func TestFlashHandler_handleUpload_NoFile(t *testing.T) {
-	master := cluster.NewMasterNode("test-master", &cluster.MasterConfig{
+	master := cluster.NewLeaderNode("test-master", &cluster.LeaderConfig{
 		DisablemDNS: true,
 	})
 
@@ -89,7 +89,7 @@ func TestFlashHandler_handleUpload_NoFile(t *testing.T) {
 }
 
 func TestFlashHandler_handleFlashSubmit(t *testing.T) {
-	master := cluster.NewMasterNode("test-master", &cluster.MasterConfig{
+	master := cluster.NewLeaderNode("test-master", &cluster.LeaderConfig{
 		DisablemDNS: true,
 	})
 
@@ -162,7 +162,7 @@ func TestFlashHandler_handleFlashSubmit(t *testing.T) {
 }
 
 func TestFlashHandler_handleFlashSubmit_DeviceNotFound(t *testing.T) {
-	master := cluster.NewMasterNode("test-master", &cluster.MasterConfig{
+	master := cluster.NewLeaderNode("test-master", &cluster.LeaderConfig{
 		DisablemDNS: true,
 	})
 

@@ -25,7 +25,7 @@ var cfg struct {
 	role        string
 	bindAddr    string
 	httpPort    int
-	masterAddr  string
+	leaderAddr  string
 	logLevel    string
 	cfgFile     string
 	workers     int
@@ -45,10 +45,10 @@ var clusterCmd = &cobra.Command{
 
 func init() {
 	clusterCmd.Flags().StringVarP(&cfg.cfgFile, "config", "c", "", "Config file path")
-	clusterCmd.Flags().StringVarP(&cfg.role, "role", "r", "standalone", "Node role: master, worker, standalone")
+	clusterCmd.Flags().StringVarP(&cfg.role, "role", "r", "standalone", "Node role: leader, peer, standalone")
 	clusterCmd.Flags().StringVar(&cfg.bindAddr, "bind", "0.0.0.0", "Bind address")
 	clusterCmd.Flags().IntVarP(&cfg.httpPort, "port", "p", 8080, "HTTP port")
-	clusterCmd.Flags().StringVar(&cfg.masterAddr, "master", "", "Master address (for workers)")
+	clusterCmd.Flags().StringVar(&cfg.leaderAddr, "leader", "", "Leader address (for peers)")
 	clusterCmd.Flags().StringVar(&cfg.logLevel, "log-level", "info", "Log level: debug, info, warn, error")
 	clusterCmd.Flags().IntVar(&cfg.workers, "workers", 2, "Number of flash workers")
 	clusterCmd.Flags().BoolVar(&cfg.disablemDNS, "no-mdns", false, "Disable mDNS discovery")
@@ -80,8 +80,8 @@ func runServer(cmd *cobra.Command, args []string) error {
 	if cmd.Flags().Changed("port") {
 		appCfg.HTTPPort = cfg.httpPort
 	}
-	if cmd.Flags().Changed("master") {
-		appCfg.MasterAddress = cfg.masterAddr
+	if cmd.Flags().Changed("leader") {
+		appCfg.LeaderAddress = cfg.leaderAddr
 	}
 
 	nodeID := "node-" + randomID(8)
@@ -92,41 +92,42 @@ func runServer(cmd *cobra.Command, args []string) error {
 	addr := fmt.Sprintf("%s:%d", appCfg.BindAddress, appCfg.HTTPPort)
 
 	switch appCfg.Role {
-	case "master":
-		master := cluster.NewMasterNode(nodeID, &cluster.MasterConfig{
+	case "leader":
+		leader := cluster.NewLeaderNode(nodeID, &cluster.LeaderConfig{
 			HeartbeatInterval: appCfg.HeartbeatInterval,
 			NodeTimeout:       appCfg.NodeTimeout,
 			HTTPPort:          appCfg.HTTPPort,
 			DisablemDNS:       cfg.disablemDNS,
 		})
-		node = master
+		node = leader
 		if err := node.Start(ctx); err != nil {
 			return err
 		}
 
-	case "worker":
-		if appCfg.MasterAddress == "" {
-			return fmt.Errorf("worker requires --master address")
+	case "peer":
+		if appCfg.LeaderAddress == "" {
+			return fmt.Errorf("peer requires --leader address")
 		}
-		worker := cluster.NewWorkerNode(nodeID, appCfg.MasterAddress, &cluster.WorkerConfig{
+		peer := cluster.NewPeerNode(nodeID, appCfg.LeaderAddress, &cluster.PeerConfig{
 			HeartbeatInterval: appCfg.HeartbeatInterval,
 			HTTPPort:          appCfg.HTTPPort,
 			DisablemDNS:       cfg.disablemDNS,
 			DisableWatcher:    false,
 		})
-		node = worker
+		node = peer
 		if err := node.Start(ctx); err != nil {
 			return err
 		}
 
 	default:
-		master := cluster.NewMasterNode(nodeID, &cluster.MasterConfig{
+		// Standalone mode - leader with device discovery
+		leader := cluster.NewLeaderNode(nodeID, &cluster.LeaderConfig{
 			HeartbeatInterval: appCfg.HeartbeatInterval,
 			NodeTimeout:       appCfg.NodeTimeout,
 			HTTPPort:          appCfg.HTTPPort,
 			DisablemDNS:       true,
 		})
-		node = master
+		node = leader
 		if err := node.Start(ctx); err != nil {
 			return err
 		}
@@ -134,10 +135,10 @@ func runServer(cmd *cobra.Command, args []string) error {
 
 	srv := httpserver.NewServer(addr, node)
 
-	// Start executor with progress callback for master nodes
-	if m, ok := node.(*cluster.MasterNode); ok {
+	// Start executor with progress callback for leader nodes
+	if l, ok := node.(*cluster.LeaderNode); ok {
 		progressCB := srv.GetProgressCallback()
-		m.StartJobExecutorWithProgress(cfg.workers, progressCB)
+		l.StartJobExecutorWithProgress(cfg.workers, progressCB)
 	}
 
 	if err := srv.Start(ctx); err != nil {
@@ -160,8 +161,8 @@ func runServer(cmd *cobra.Command, args []string) error {
 
 	done := make(chan struct{})
 	go func() {
-		if m, ok := node.(*cluster.MasterNode); ok {
-			m.StopJobExecutor()
+		if l, ok := node.(*cluster.LeaderNode); ok {
+			l.StopJobExecutor()
 		}
 		node.Stop()
 		close(done)
