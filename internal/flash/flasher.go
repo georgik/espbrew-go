@@ -39,6 +39,7 @@ func NewFlasher(opts *FlasherOptions) *Flasher {
 type FlashRequest struct {
 	Port     string
 	Firmware []byte
+	Offset   int
 	Progress chan int
 }
 
@@ -77,7 +78,7 @@ func (f *Flasher) Flash(ctx context.Context, req *FlashRequest) *FlashResult {
 		}
 	}
 
-	if err := flasher.FlashImage(req.Firmware, 0x0, progressFunc); err != nil {
+	if err := flasher.FlashImage(req.Firmware, uint32(req.Offset), progressFunc); err != nil {
 		log.Error().Err(err).Msg("Flash write failed")
 		return &FlashResult{Success: false, Error: err}
 	}

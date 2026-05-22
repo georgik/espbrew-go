@@ -61,6 +61,7 @@ sudo mv espbrew /usr/local/bin/
 ./espbrew flash firmware.bin -p /dev/ttyUSB0     # Specific port
 ./espbrew flash firmware.bin --chip esp32-s3     # Specify chip
 ./espbrew flash firmware.bin --monitor           # Flash and monitor
+./espbrew flash firmware.bin --offset 0x10000    # Flash at custom offset
 ```
 
 ### Monitor

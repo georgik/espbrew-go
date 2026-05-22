@@ -44,3 +44,32 @@ func TestFlashResult_Failure(t *testing.T) {
 	assert.False(t, result.Success)
 	assert.Equal(t, err, result.Error)
 }
+
+func TestFlashRequest_DefaultOffset(t *testing.T) {
+	req := &FlashRequest{
+		Port:     "/dev/ttyUSB0",
+		Firmware: []byte{0x01, 0x02, 0x03},
+		Progress: nil,
+	}
+	assert.Equal(t, 0, req.Offset, "Default offset should be 0")
+}
+
+func TestFlashRequest_CustomOffset(t *testing.T) {
+	req := &FlashRequest{
+		Port:     "/dev/ttyUSB0",
+		Firmware: []byte{0x01, 0x02, 0x03},
+		Offset:   0x10000,
+		Progress: nil,
+	}
+	assert.Equal(t, 0x10000, req.Offset, "Custom offset should be preserved")
+}
+
+func TestFlashRequest_ApplicationPartitionOffset(t *testing.T) {
+	req := &FlashRequest{
+		Port:     "/dev/ttyUSB0",
+		Firmware: []byte{0x01, 0x02, 0x03},
+		Offset:   0x10000,
+		Progress: nil,
+	}
+	assert.Equal(t, 65536, req.Offset, "Application partition offset should be 0x10000 (65536)")
+}

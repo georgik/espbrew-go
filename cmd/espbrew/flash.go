@@ -23,6 +23,7 @@ var flashOpts struct {
 	clusterURL      string
 	port            string
 	baud            int
+	offset          int
 	chip            string
 	flashMode       string
 	flashFreq       string
@@ -41,6 +42,7 @@ func init() {
 	flashCmd.Flags().StringVar(&flashOpts.clusterURL, "cluster", "", "Cluster URL for remote flashing")
 	flashCmd.Flags().StringVarP(&flashOpts.port, "port", "p", "", "Serial port (auto-detect if empty)")
 	flashCmd.Flags().IntVar(&flashOpts.baud, "baud", 460800, "Flash baud rate")
+	flashCmd.Flags().IntVar(&flashOpts.offset, "offset", 0, "Flash offset (default 0x0)")
 	flashCmd.Flags().StringVar(&flashOpts.chip, "chip", "auto", "Chip type (auto, esp8266, esp32, esp32s2, esp32s3, esp32c3, esp32c6, esp32h2)")
 	flashCmd.Flags().StringVar(&flashOpts.flashMode, "fm", "keep", "Flash mode (keep, qio, qout, dio, dout)")
 	flashCmd.Flags().StringVar(&flashOpts.flashFreq, "ff", "keep", "Flash frequency (keep, 80m, 40m, 26m, 20m)")
@@ -218,6 +220,7 @@ func runFlashLocal(args []string) error {
 	req := &flash.FlashRequest{
 		Port:     flashOpts.port,
 		Firmware: data,
+		Offset:   flashOpts.offset,
 		Progress: progress,
 	}
 

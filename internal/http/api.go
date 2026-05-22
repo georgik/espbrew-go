@@ -363,7 +363,7 @@ func (h *APIHandler) handleRegisterNode(w http.ResponseWriter, r *http.Request) 
 	h.leader.UpdateHeartbeat(payload.NodeID, &payload)
 
 	respondJSON(w, map[string]interface{}{
-		"status": "registered",
+		"status":  "registered",
 		"node_id": payload.NodeID,
 	})
 }
