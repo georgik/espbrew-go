@@ -75,10 +75,10 @@ sudo mv espbrew /usr/local/bin/
 ### Cluster
 
 ```bash
-./espbrew cluster --role leader --port 8080           # Start leader
-./espbrew cluster --role peer --leader IP:8080         # Start peer
-./espbrew --cluster http://IP:8080 flash firmware.bin # Remote flash
-./espbrew --cluster http://IP:8080 monitor            # Remote monitor
+./espbrew cluster --role leader --port 8080                             # Start leader
+./espbrew cluster --role peer --leader IP:8080 --node-id "station-1"    # Start named peer
+./espbrew --cluster http://IP:8080 flash firmware.bin                   # Remote flash
+./espbrew --cluster http://IP:8080 monitor                                # Remote monitor
 ```
 
 ## Project Structure

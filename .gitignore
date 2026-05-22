@@ -1,3 +1,19 @@
-espbrew
+/espbrew
 
+# Test coverage
+*.out
+coverage.html
 
+# Go workspace file
+go.work
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db

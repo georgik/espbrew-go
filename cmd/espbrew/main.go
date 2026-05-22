@@ -26,6 +26,7 @@ var cfg struct {
 	bindAddr    string
 	httpPort    int
 	leaderAddr  string
+	nodeID      string
 	logLevel    string
 	cfgFile     string
 	workers     int
@@ -49,6 +50,7 @@ func init() {
 	clusterCmd.Flags().StringVar(&cfg.bindAddr, "bind", "0.0.0.0", "Bind address")
 	clusterCmd.Flags().IntVarP(&cfg.httpPort, "port", "p", 8080, "HTTP port")
 	clusterCmd.Flags().StringVar(&cfg.leaderAddr, "leader", "", "Leader address (for peers)")
+	clusterCmd.Flags().StringVar(&cfg.nodeID, "node-id", "", "Node ID (default: hostname)")
 	clusterCmd.Flags().StringVar(&cfg.logLevel, "log-level", "info", "Log level: debug, info, warn, error")
 	clusterCmd.Flags().IntVar(&cfg.workers, "workers", 2, "Number of flash workers")
 	clusterCmd.Flags().BoolVar(&cfg.disablemDNS, "no-mdns", false, "Disable mDNS discovery")
@@ -84,7 +86,16 @@ func runServer(cmd *cobra.Command, args []string) error {
 		appCfg.LeaderAddress = cfg.leaderAddr
 	}
 
-	nodeID := "node-" + randomID(8)
+	// Determine node ID: use provided flag, hostname, or random
+	nodeID := cfg.nodeID
+	if nodeID == "" {
+		if hostname, err := os.Hostname(); err == nil {
+			nodeID = hostname
+		} else {
+			nodeID = "node-" + randomID(8)
+		}
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 

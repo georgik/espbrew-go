@@ -47,6 +47,7 @@ Peer nodes:
 | `--port` | HTTP port | 8080 |
 | `--bind` | Bind address | 0.0.0.0 |
 | `--leader` | Leader address (for peers) | - |
+| `--node-id` | Unique node identifier | hostname |
 | `--workers` | Number of flash workers | 2 |
 | `--no-mdns` | Disable mDNS discovery | false |
 | `--log-level` | Log level: debug, info, warn, error | info |
@@ -132,15 +133,17 @@ log_level = "info"
 ## Example: Multi-Node Setup
 
 ```bash
-# Terminal 1: Start leader
-./espbrew cluster --role leader --port 8080
+# Terminal 1: Start leader with custom node ID
+./espbrew cluster --role leader --port 8080 --node-id "build-server"
 
-# Terminal 2: Start peer 1
-./espbrew cluster --role peer --leader localhost:8080 --port 8081
+# Terminal 2: Start peer 1 with custom node ID
+./espbrew cluster --role peer --leader localhost:8080 --port 8081 --node-id "esp-station-1"
 
-# Terminal 3: Start peer 2
-./espbrew cluster --role peer --leader localhost:8080 --port 8082
+# Terminal 3: Start peer 2 with custom node ID
+./espbrew cluster --role peer --leader localhost:8080 --port 8082 --node-id "esp-station-2"
 
 # Terminal 4: Flash to cluster (auto-selects available device)
 ./espbrew --cluster http://localhost:8080 flash firmware.bin
 ```
+
+**Node names in the dashboard:** Without `--node-id`, nodes use the system hostname. With `--node-id`, you can set descriptive names for easier identification.
