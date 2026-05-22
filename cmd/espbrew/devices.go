@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/georgik/esp-ci-cluster/internal/cluster"
 	"github.com/georgik/esp-ci-cluster/internal/device"
 	"github.com/spf13/cobra"
 )
@@ -16,11 +17,13 @@ var devicesCmd = &cobra.Command{
 }
 
 var devicesOpts struct {
-	json    bool
-	espOnly bool
+	clusterURL string
+	json       bool
+	espOnly    bool
 }
 
 func init() {
+	devicesCmd.Flags().StringVar(&devicesOpts.clusterURL, "cluster", "", "Cluster URL for remote devices")
 	devicesCmd.Flags().BoolVar(&devicesOpts.json, "json", false, "Output as JSON")
 	devicesCmd.Flags().BoolVar(&devicesOpts.espOnly, "esp", false, "Show only ESP devices")
 
@@ -28,6 +31,13 @@ func init() {
 }
 
 func runDevices(cmd *cobra.Command, args []string) error {
+	if devicesOpts.clusterURL != "" {
+		return runDevicesRemote()
+	}
+	return runDevicesLocal()
+}
+
+func runDevicesLocal() error {
 	scanner := device.NewScanner()
 
 	var ports []interface{}
@@ -70,6 +80,39 @@ func runDevices(cmd *cobra.Command, args []string) error {
 
 	for i, p := range ports {
 		fmt.Printf("[%d] %v\n", i, p)
+	}
+
+	return nil
+}
+
+func runDevicesRemote() error {
+	client := cluster.NewClient(devicesOpts.clusterURL)
+	devices, err := client.ListDevices()
+	if err != nil {
+		return fmt.Errorf("list remote devices: %w", err)
+	}
+
+	if devicesOpts.json {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(devices)
+	}
+
+	if len(devices) == 0 {
+		fmt.Println("No devices found")
+		return nil
+	}
+
+	fmt.Printf("Devices from cluster %s:\n", devicesOpts.clusterURL)
+	for i, d := range devices {
+		fmt.Printf("[%d] %s\n", i, d.Path)
+		if d.VID != "" {
+			fmt.Printf("    VID: %s, PID: %s\n", d.VID, d.PID)
+		}
+		if d.NodeID != "" {
+			fmt.Printf("    Node: %s\n", d.NodeID)
+		}
+		fmt.Printf("    State: %s\n", d.State)
 	}
 
 	return nil

@@ -60,6 +60,9 @@ func (m *MasterNode) Start(ctx context.Context) error {
 	m.wg.Add(1)
 	go m.runJobDispatcher()
 
+	m.wg.Add(1)
+	go m.runMaintenanceLoop()
+
 	return nil
 }
 
@@ -151,6 +154,10 @@ func (m *MasterNode) EnqueueJob(firmwarePath, devicePath string) (*Job, error) {
 
 func (m *MasterNode) GetJobQueue() *JobQueue {
 	return m.queue
+}
+
+func (m *MasterNode) GetDevices() *DeviceRegistry {
+	return m.devices
 }
 
 func (m *MasterNode) GetPeers() []*PeerInfo {
@@ -252,4 +259,71 @@ func (m *MasterNode) dispatchJobs() {
 		// No executor, mark as running (for testing)
 		m.queue.UpdateProgress(job.ID, 50)
 	}
+}
+
+func (m *MasterNode) runMaintenanceLoop() {
+	defer m.wg.Done()
+
+	// Run maintenance every minute
+	ticker := time.NewTicker(1 * time.Minute)
+	defer ticker.Stop()
+
+	// Also run once on startup after a short delay
+	time.Sleep(10 * time.Second)
+	m.performMaintenance()
+
+	for {
+		select {
+		case <-m.ctx.Done():
+			return
+		case <-ticker.C:
+			m.performMaintenance()
+		}
+	}
+}
+
+func (m *MasterNode) performMaintenance() {
+	// Clean up stale device reservations (older than 30 minutes)
+	staleReservations := m.devices.CleanupStaleReservations(30 * time.Minute)
+
+	// Clean up old jobs (older than 24 hours)
+	oldJobs := m.queue.CleanupOld(DefaultJobTTL)
+
+	// Release devices for cancelled/timeout jobs
+	m.cleanupOrphanedDevices()
+
+	if staleReservations > 0 || oldJobs > 0 {
+		log.Info().
+			Int("stale_reservations", staleReservations).
+			Int("old_jobs", oldJobs).
+			Msg("Maintenance completed")
+	}
+}
+
+func (m *MasterNode) cleanupOrphanedDevices() {
+	jobs := m.queue.List()
+
+	// Track active job devices
+	activeDevices := make(map[string]string)
+	for _, job := range jobs {
+		job.RLock()
+		if job.Status == JobPending || job.Status == JobAssigned || job.Status == JobRunning {
+			activeDevices[job.DevicePath] = job.ID
+		}
+		job.RUnlock()
+	}
+
+	// Find devices marked busy but no active job
+	m.mu.Lock()
+	for path, dev := range m.state.Devices {
+		if dev.Status == "busy" {
+			if _, isActive := activeDevices[path]; !isActive {
+				log.Warn().Str("path", path).Msg("Releasing orphaned busy device")
+				dev.Status = "available"
+				m.state.Devices[path] = dev
+				m.devices.Release(path, "")
+			}
+		}
+	}
+	m.mu.Unlock()
 }

@@ -2,6 +2,7 @@ package http
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 
 	"github.com/georgik/esp-ci-cluster/internal/cluster"
@@ -35,6 +36,9 @@ func (h *APIHandler) RegisterRoutes(r *mux.Router) {
 	api.HandleFunc("/status", h.handleStatus).Methods("GET")
 	api.HandleFunc("/nodes", h.handleNodes).Methods("GET")
 	api.HandleFunc("/devices", h.handleDevices).Methods("GET")
+
+	// Device reservation
+	api.HandleFunc("/devices/{path}/reserve", h.handleReserveDevice).Methods("POST", "DELETE")
 
 	// Jobs
 	api.HandleFunc("/jobs", h.handleListJobs).Methods("GET")
@@ -94,9 +98,19 @@ func (h *APIHandler) handleNodes(w http.ResponseWriter, r *http.Request) {
 
 func (h *APIHandler) handleDevices(w http.ResponseWriter, r *http.Request) {
 	state := h.node.State()
-	devices := make([]interface{}, 0, len(state.Devices))
+	devices := make([]map[string]interface{}, 0, len(state.Devices))
 	for _, d := range state.Devices {
-		devices = append(devices, d)
+		dev := map[string]interface{}{
+			"path":    d.Path,
+			"vid":     fmt.Sprintf("0x%04x", d.VID),
+			"pid":     fmt.Sprintf("0x%04x", d.PID),
+			"state":   d.Status,
+			"node_id": d.NodeID,
+		}
+		if d.SerialNumber != "" {
+			dev["serial"] = d.SerialNumber
+		}
+		devices = append(devices, dev)
 	}
 	respondJSON(w, devices)
 }
@@ -165,8 +179,27 @@ func (h *APIHandler) handleGetJob(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *APIHandler) handleCancelJob(w http.ResponseWriter, r *http.Request) {
-	// TODO: Implement job cancellation
-	respondError(w, http.StatusNotImplemented, "Job cancellation not yet implemented")
+	if h.master == nil {
+		respondError(w, http.StatusNotImplemented, "Job cancellation only available on master")
+		return
+	}
+
+	vars := mux.Vars(r)
+	jobID := vars["id"]
+
+	if err := h.master.CancelJob(jobID); err != nil {
+		if err.Error() == "job not found: "+jobID || err.Error()[:12] == "job not found" {
+			respondError(w, http.StatusNotFound, err.Error())
+			return
+		}
+		respondError(w, http.StatusConflict, err.Error())
+		return
+	}
+
+	respondJSON(w, map[string]interface{}{
+		"status": "cancelled",
+		"job_id": jobID,
+	})
 }
 
 func (h *APIHandler) handleQueue(w http.ResponseWriter, r *http.Request) {
@@ -192,4 +225,86 @@ func respondError(w http.ResponseWriter, code int, message string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
 	json.NewEncoder(w).Encode(map[string]string{"error": message})
+}
+
+type ReserveDeviceRequest struct {
+	ClientID string `json:"client_id"`
+	TTL      int    `json:"ttl"`
+}
+
+func (h *APIHandler) handleReserveDevice(w http.ResponseWriter, r *http.Request) {
+	if h.master == nil {
+		respondError(w, http.StatusNotImplemented, "Device reservation only available on master")
+		return
+	}
+
+	vars := mux.Vars(r)
+	devicePath := vars["path"]
+
+	state := h.master.State()
+	device, exists := state.Devices[devicePath]
+	if !exists {
+		respondError(w, http.StatusNotFound, "Device not found")
+		return
+	}
+
+	if r.Method == "POST" {
+		var req ReserveDeviceRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			respondError(w, http.StatusBadRequest, "Invalid request body")
+			return
+		}
+
+		if req.ClientID == "" {
+			respondError(w, http.StatusBadRequest, "client_id required")
+			return
+		}
+
+		// Try to reserve
+		if !h.master.GetDevices().Reserve(devicePath, req.ClientID) {
+			owner := h.master.GetDevices().GetOwner(devicePath)
+			respondError(w, http.StatusConflict, fmt.Sprintf("Device already reserved by: %s", owner))
+			return
+		}
+
+		// Update device state
+		device.Status = "busy"
+		h.master.State().Devices[devicePath] = device
+
+		respondJSON(w, map[string]interface{}{
+			"status":    "reserved",
+			"device":    devicePath,
+			"client_id": req.ClientID,
+		})
+		return
+	}
+
+	if r.Method == "DELETE" {
+		var req ReserveDeviceRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			// Empty body is OK for release
+			req.ClientID = ""
+		}
+
+		// Release if we own it or client_id matches
+		owner := h.master.GetDevices().GetOwner(devicePath)
+		if owner != "" && req.ClientID != "" && owner != req.ClientID {
+			respondError(w, http.StatusForbidden, fmt.Sprintf("Device reserved by: %s", owner))
+			return
+		}
+
+		h.master.GetDevices().Release(devicePath, owner)
+
+		// Update device state
+		device.Status = "available"
+		h.master.State().Devices[devicePath] = device
+
+		respondJSON(w, map[string]interface{}{
+			"status": "released",
+			"device": devicePath,
+		})
+		return
+	}
+
+	respondError(w, http.StatusMethodNotAllowed, "Method not allowed")
 }

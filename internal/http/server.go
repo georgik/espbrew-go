@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"os"
 	"sync"
 	"time"
 
@@ -27,6 +28,7 @@ type Server struct {
 	server  *http.Server
 	api     *APIHandler
 	monitor *MonitorServer
+	hub     *ProgressHub
 
 	// WebSocket clients
 	clients map[*websocket.Conn]bool
@@ -45,10 +47,20 @@ func NewServer(addr string, node cluster.Node) *Server {
 
 func (s *Server) setupRoutes() {
 	s.router = mux.NewRouter()
+	s.hub = NewProgressHub()
 
 	// API routes
 	s.api = NewAPIHandler(s.node)
 	s.api.RegisterRoutes(s.router)
+
+	// Flash API routes
+	if master, ok := s.node.(*cluster.MasterNode); ok {
+		flashHandler := NewFlashHandler(master, os.TempDir())
+		flashHandler.RegisterRoutes(s.router)
+
+		progressHandler := NewProgressHandler(master, s.hub)
+		progressHandler.RegisterRoutes(s.router)
+	}
 
 	// Monitor WebSocket routes
 	s.monitor = NewMonitorServer()
@@ -62,6 +74,15 @@ func (s *Server) setupRoutes() {
 
 	// Static files (dashboard)
 	s.router.PathPrefix("/").Handler(s.handleStatic())
+}
+
+func (s *Server) GetProgressCallback() func(string, int, string) {
+	if s.hub == nil {
+		return nil
+	}
+	return func(jobID string, progress int, status string) {
+		s.hub.BroadcastProgress(jobID, progress, status)
+	}
 }
 
 func (s *Server) Start(ctx context.Context) error {

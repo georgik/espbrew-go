@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/signal"
@@ -10,7 +11,9 @@ import (
 	"go.bug.st/serial"
 	"golang.org/x/term"
 
+	"github.com/georgik/esp-ci-cluster/internal/cluster"
 	"github.com/georgik/esp-ci-cluster/internal/device"
+	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
 )
 
@@ -21,6 +24,7 @@ var monitorCmd = &cobra.Command{
 }
 
 var monitorOpts struct {
+	clusterURL  string
 	port        string
 	baud        int
 	exitOn      string
@@ -31,6 +35,7 @@ var monitorOpts struct {
 }
 
 func init() {
+	monitorCmd.Flags().StringVar(&monitorOpts.clusterURL, "cluster", "", "Cluster URL for remote monitoring")
 	monitorCmd.Flags().StringVarP(&monitorOpts.port, "port", "p", "", "Serial port (auto-detect if empty)")
 	monitorCmd.Flags().IntVar(&monitorOpts.baud, "baud", 115200, "Baud rate")
 	monitorCmd.Flags().StringVar(&monitorOpts.exitOn, "exit-on", "", "Exit when string found (success)")
@@ -43,6 +48,134 @@ func init() {
 }
 
 func runMonitorCmd(cmd *cobra.Command, args []string) error {
+	if monitorOpts.clusterURL != "" {
+		return runMonitorRemote()
+	}
+	return runMonitorLocal()
+}
+
+func runMonitorRemote() error {
+	client := cluster.NewClient(monitorOpts.clusterURL)
+
+	// Get available devices if port not specified
+	var devicePath string
+	if monitorOpts.port == "" {
+		devices, err := client.ListDevices()
+		if err != nil {
+			return fmt.Errorf("list devices: %w", err)
+		}
+
+		// Find first available device
+		for _, d := range devices {
+			if d.State == "available" {
+				devicePath = d.Path
+				break
+			}
+		}
+
+		if devicePath == "" {
+			return fmt.Errorf("no available devices on cluster")
+		}
+
+		log.Info().Str("device", devicePath).Msg("Auto-selected available device")
+	} else {
+		devicePath = monitorOpts.port
+	}
+
+	// Reserve device for monitoring
+	clientID := "espbrew-monitor-" + randomID(8)
+	monitorClient := cluster.NewMonitorClient(monitorOpts.clusterURL, devicePath, cluster.MonitorConfig{
+		Baud:        monitorOpts.baud,
+		Reset:       monitorOpts.resetFirst,
+		ExitOn:      monitorOpts.exitOn,
+		ExitOnError: monitorOpts.exitOnError,
+		Duration:    time.Duration(monitorOpts.duration) * time.Second,
+	})
+
+	log.Info().Str("device", devicePath).Str("cluster", monitorOpts.clusterURL).Msg("Reserving device for monitoring")
+	if err := monitorClient.ReserveDevice(clientID, 300); err != nil {
+		log.Warn().Err(err).Msg("Could not reserve device (may already be reserved)")
+	}
+	defer func() {
+		log.Info().Str("device", devicePath).Msg("Releasing device")
+		monitorClient.ReleaseDevice(clientID)
+	}()
+
+	return runMonitorRemoteStream(monitorClient)
+}
+
+func runMonitorRemoteStream(monitorClient *cluster.MonitorClient) error {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	defer monitorClient.Close()
+
+	dataCh := make(chan []byte, 256)
+	errorCh := make(chan error, 1)
+
+	if err := monitorClient.Stream(ctx, dataCh, errorCh); err != nil {
+		return fmt.Errorf("connect monitor: %w", err)
+	}
+
+	fmt.Printf("Remote monitor on %s @ %d baud\n", monitorOpts.port, monitorOpts.baud)
+	if !monitorOpts.noRaw {
+		fmt.Println("CTRL+C to exit")
+	}
+	fmt.Println("---")
+
+	// Set up signal handler
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+
+	exitCh := make(chan monitorExit, 1)
+
+	go func() {
+		select {
+		case <-sigCh:
+			exitCh <- monitorExit{success: true, message: "Interrupted"}
+		case err := <-errorCh:
+			if err != nil {
+				exitCh <- monitorExit{success: false, message: err.Error()}
+			}
+		}
+	}()
+
+	var timeoutCh <-chan time.Time
+	if monitorOpts.duration > 0 {
+		timeoutCh = time.After(time.Duration(monitorOpts.duration) * time.Second)
+	}
+
+	for {
+		select {
+		case exit := <-exitCh:
+			fmt.Printf("\r\n%s\n", exit.message)
+			if exit.success {
+				return nil
+			}
+			return fmt.Errorf("monitor failed: %s", exit.message)
+
+		case <-timeoutCh:
+			fmt.Printf("\r\nDuration limit reached (%d seconds)\n", monitorOpts.duration)
+			return nil
+
+		case data, ok := <-dataCh:
+			if !ok {
+				return nil
+			}
+			os.Stdout.Write(data)
+
+			// Check exit patterns
+			dataStr := string(data)
+			if monitorOpts.exitOnError != "" && contains(dataStr, monitorOpts.exitOnError) {
+				exitCh <- monitorExit{success: false, message: fmt.Sprintf("Error pattern matched: %s", monitorOpts.exitOnError)}
+			}
+			if monitorOpts.exitOn != "" && contains(dataStr, monitorOpts.exitOn) {
+				exitCh <- monitorExit{success: true, message: fmt.Sprintf("Success pattern matched: %s", monitorOpts.exitOn)}
+			}
+		}
+	}
+}
+
+func runMonitorLocal() error {
 	port := monitorOpts.port
 	if port == "" {
 		scanner := device.NewScanner()

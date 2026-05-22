@@ -5,20 +5,20 @@ import (
 	"io"
 	"os"
 	"sync"
-	"time"
 
 	"github.com/georgik/esp-ci-cluster/internal/flash"
 	"github.com/rs/zerolog/log"
 )
 
 type JobExecutor struct {
-	flasher *flash.Flasher
-	jobs    chan *Job
-	results chan *JobResult
-	workers int
-	wg      sync.WaitGroup
-	ctx     context.Context
-	cancel  context.CancelFunc
+	flasher    *flash.Flasher
+	jobs       chan *Job
+	results    chan *JobResult
+	workers    int
+	wg         sync.WaitGroup
+	ctx        context.Context
+	cancel     context.CancelFunc
+	progressCB func(string, int, string)
 }
 
 type JobResult struct {
@@ -27,14 +27,19 @@ type JobResult struct {
 }
 
 func NewJobExecutor(workers int) *JobExecutor {
+	return NewJobExecutorWithProgress(workers, nil)
+}
+
+func NewJobExecutorWithProgress(workers int, progressCB func(string, int, string)) *JobExecutor {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &JobExecutor{
-		flasher: flash.NewFlasher(nil),
-		jobs:    make(chan *Job, 100),
-		results: make(chan *JobResult, 100),
-		workers: workers,
-		ctx:     ctx,
-		cancel:  cancel,
+		flasher:    flash.NewFlasher(nil),
+		jobs:       make(chan *Job, 100),
+		results:    make(chan *JobResult, 100),
+		workers:    workers,
+		ctx:        ctx,
+		cancel:     cancel,
+		progressCB: progressCB,
 	}
 }
 
@@ -106,8 +111,8 @@ func (e *JobExecutor) executeJob(workerID int, job *Job) {
 		return
 	}
 
-	// Execute flash
-	ctx, cancel := context.WithTimeout(e.ctx, 5*time.Minute)
+	// Execute flash with timeout
+	ctx, cancel := context.WithTimeout(e.ctx, DefaultJobTimeout)
 	defer cancel()
 
 	req := &flash.FlashRequest{
@@ -117,27 +122,41 @@ func (e *JobExecutor) executeJob(workerID int, job *Job) {
 	}
 
 	// Progress goroutine
+	done := make(chan struct{})
 	go func() {
+		defer close(done)
 		for progress := range req.Progress {
 			job.mu.Lock()
 			job.Progress = progress
 			job.mu.Unlock()
 			log.Debug().Str("job_id", job.ID).Int("progress", progress).Msg("Flash progress")
+
+			// Broadcast progress if callback set
+			if e.progressCB != nil {
+				e.progressCB(job.ID, progress, "running")
+			}
 		}
 	}()
 
 	result := e.flasher.Flash(ctx, req)
 	close(req.Progress)
+	<-done
 
 	job.mu.Lock()
 	if result.Error != nil {
-		job.Status = JobFailed
-		job.Error = result.Error.Error()
-		log.Error().Err(result.Error).Str("job_id", job.ID).Msg("Job failed")
+		if ctx.Err() == context.DeadlineExceeded {
+			job.Status = JobTimedOut
+			job.Error = "Flash operation timed out"
+			log.Error().Str("job_id", job.ID).Msg("Job timed out")
+		} else {
+			job.Status = JobFailed
+			job.Error = result.Error.Error()
+			log.Error().Err(result.Error).Str("job_id", job.ID).Msg("Job failed")
+		}
 	} else {
 		job.Status = JobComplete
 		job.Progress = 100
-		now := job.CreatedAt // Use created time as fallback
+		now := job.CreatedAt
 		job.CompletedAt = &now
 		log.Info().Str("job_id", job.ID).Msg("Job completed successfully")
 	}

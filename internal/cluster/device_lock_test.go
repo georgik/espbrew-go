@@ -150,3 +150,112 @@ func TestDeviceLock_ConcurrentAccess(t *testing.T) {
 		t.Errorf("Expected Available after concurrent ops, got %s", lock.State())
 	}
 }
+
+func TestDeviceRegistry_CleanupStaleReservations(t *testing.T) {
+	r := NewDeviceRegistry()
+
+	// Register devices
+	r.Register("/dev/ttyUSB0")
+	r.Register("/dev/ttyUSB1")
+	r.Register("/dev/ttyUSB2")
+
+	// Reserve some devices
+	r.Reserve("/dev/ttyUSB0", "client1")
+	r.Reserve("/dev/ttyUSB1", "client2")
+
+	// Manually set reservation time to old
+	oldTime := time.Now().Add(-2 * time.Hour)
+	r.mu.Lock()
+	if dev, exists := r.devices["/dev/ttyUSB0"]; exists {
+		dev.mu.Lock()
+		dev.reservedAt = oldTime
+		dev.mu.Unlock()
+	}
+	r.mu.Unlock()
+
+	// Clean up reservations older than 1 hour
+	cleaned := r.CleanupStaleReservations(1 * time.Hour)
+
+	if cleaned != 1 {
+		t.Errorf("expected 1 cleaned, got %d", cleaned)
+	}
+
+	// Verify /dev/ttyUSB0 is available
+	state := r.GetState("/dev/ttyUSB0")
+	if state != DeviceAvailable {
+		t.Errorf("expected available, got %s", state)
+	}
+
+	// Verify /dev/ttyUSB1 is still reserved
+	state = r.GetState("/dev/ttyUSB1")
+	if state != DeviceReserved {
+		t.Errorf("expected reserved, got %s", state)
+	}
+
+	// Verify /dev/ttyUSB2 is still available (was never reserved)
+	state = r.GetState("/dev/ttyUSB2")
+	if state != DeviceAvailable {
+		t.Errorf("expected available, got %s", state)
+	}
+}
+
+func TestDeviceRegistry_CleanupStaleReservationsNone(t *testing.T) {
+	r := NewDeviceRegistry()
+
+	r.Register("/dev/ttyUSB0")
+	r.Reserve("/dev/ttyUSB0", "client1")
+
+	// Clean up with very short max age (nothing should be cleaned)
+	cleaned := r.CleanupStaleReservations(1 * time.Second)
+
+	if cleaned != 0 {
+		t.Errorf("expected 0 cleaned, got %d", cleaned)
+	}
+}
+
+func TestDeviceRegistry_GetOwner(t *testing.T) {
+	r := NewDeviceRegistry()
+
+	r.Register("/dev/ttyUSB0")
+
+	owner := r.GetOwner("/dev/ttyUSB0")
+	if owner != "" {
+		t.Errorf("expected empty owner, got %s", owner)
+	}
+
+	r.Reserve("/dev/ttyUSB0", "client1")
+
+	owner = r.GetOwner("/dev/ttyUSB0")
+	if owner != "client1" {
+		t.Errorf("expected client1, got %s", owner)
+	}
+}
+
+func TestDeviceRegistry_GetOwnerNotFound(t *testing.T) {
+	r := NewDeviceRegistry()
+
+	owner := r.GetOwner("/dev/nonexistent")
+	if owner != "" {
+		t.Errorf("expected empty owner for non-existent device, got %s", owner)
+	}
+}
+
+func TestDeviceLock_ReserveTimestamp(t *testing.T) {
+	r := NewDeviceRegistry()
+	r.Register("/dev/ttyUSB0")
+
+	before := time.Now()
+	r.Reserve("/dev/ttyUSB0", "client1")
+	after := time.Now()
+
+	r.mu.RLock()
+	dev := r.devices["/dev/ttyUSB0"]
+	dev.mu.RLock()
+	reservedAt := dev.reservedAt
+	dev.mu.RUnlock()
+	r.mu.RUnlock()
+
+	if reservedAt.Before(before) || reservedAt.After(after) {
+		t.Errorf("reservedAt out of expected range: %v", reservedAt)
+	}
+}

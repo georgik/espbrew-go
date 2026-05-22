@@ -191,3 +191,40 @@ func (r *DeviceRegistry) AvailableDevices() []string {
 	}
 	return avail
 }
+
+func (r *DeviceRegistry) GetOwner(path string) string {
+	r.mu.RLock()
+	dev, exists := r.devices[path]
+	r.mu.RUnlock()
+
+	if !exists {
+		return ""
+	}
+
+	return dev.Owner()
+}
+
+func (r *DeviceRegistry) CleanupStaleReservations(maxAge time.Duration) int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	cutoff := time.Now().Add(-maxAge)
+	cleaned := 0
+
+	for path, dev := range r.devices {
+		dev.mu.Lock()
+		if dev.state == DeviceReserved || dev.state == DeviceBusy {
+			if dev.reservedAt.Before(cutoff) {
+				prevOwner := dev.owner
+				dev.state = DeviceAvailable
+				dev.owner = ""
+				log.Info().Str("path", path).Str("prev_owner", prevOwner).
+					Msg("Cleaned up stale device reservation")
+				cleaned++
+			}
+		}
+		dev.mu.Unlock()
+	}
+
+	return cleaned
+}

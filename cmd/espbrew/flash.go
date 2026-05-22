@@ -1,10 +1,12 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"time"
 
+	"github.com/georgik/esp-ci-cluster/internal/cluster"
 	"github.com/georgik/esp-ci-cluster/internal/device"
 	"github.com/georgik/esp-ci-cluster/internal/flash"
 	"github.com/rs/zerolog/log"
@@ -18,6 +20,7 @@ var flashCmd = &cobra.Command{
 }
 
 var flashOpts struct {
+	clusterURL      string
 	port            string
 	baud            int
 	chip            string
@@ -35,7 +38,8 @@ var flashOpts struct {
 }
 
 func init() {
-	flashCmd.Flags().StringVarP(&flashOpts.port, "port", "p", "", "Serial port (required)")
+	flashCmd.Flags().StringVar(&flashOpts.clusterURL, "cluster", "", "Cluster URL for remote flashing")
+	flashCmd.Flags().StringVarP(&flashOpts.port, "port", "p", "", "Serial port (auto-detect if empty)")
 	flashCmd.Flags().IntVar(&flashOpts.baud, "baud", 460800, "Flash baud rate")
 	flashCmd.Flags().StringVar(&flashOpts.chip, "chip", "auto", "Chip type (auto, esp8266, esp32, esp32s2, esp32s3, esp32c3, esp32c6, esp32h2)")
 	flashCmd.Flags().StringVar(&flashOpts.flashMode, "fm", "keep", "Flash mode (keep, qio, qout, dio, dout)")
@@ -54,6 +58,124 @@ func init() {
 }
 
 func runFlash(cmd *cobra.Command, args []string) error {
+	if flashOpts.clusterURL != "" {
+		return runFlashRemote(args)
+	}
+	return runFlashLocal(args)
+}
+
+func runFlashRemote(args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("firmware.bin path required")
+	}
+
+	firmwarePath := args[0]
+
+	client := cluster.NewClient(flashOpts.clusterURL)
+
+	// Get available devices if port not specified
+	var devicePath string
+	if flashOpts.port == "" {
+		devices, err := client.ListDevices()
+		if err != nil {
+			return fmt.Errorf("list devices: %w", err)
+		}
+
+		// Find first available device
+		for _, d := range devices {
+			if d.State == "available" {
+				devicePath = d.Path
+				break
+			}
+		}
+
+		if devicePath == "" {
+			return fmt.Errorf("no available devices on cluster")
+		}
+
+		log.Info().Str("device", devicePath).Msg("Auto-selected available device")
+	} else {
+		devicePath = flashOpts.port
+	}
+
+	log.Info().Str("cluster", flashOpts.clusterURL).Str("device", devicePath).Msg("Uploading firmware to cluster")
+
+	// Upload firmware
+	uploadResp, err := client.UploadFirmware(firmwarePath)
+	if err != nil {
+		return fmt.Errorf("upload firmware: %w", err)
+	}
+
+	log.Info().Str("file_id", uploadResp.FileID).Int64("size", uploadResp.Size).Msg("Firmware uploaded")
+
+	// Submit flash job
+	submitReq := cluster.FlashSubmitRequest{
+		DevicePath: devicePath,
+		FileID:     uploadResp.FileID,
+		ClientID:   "espbrew-cli",
+	}
+
+	flashResp, err := client.SubmitFlash(submitReq)
+	if err != nil {
+		return fmt.Errorf("submit flash: %w", err)
+	}
+
+	log.Info().Str("job_id", flashResp.JobID).Msg("Flash job submitted, streaming progress...")
+
+	// Connect to progress WebSocket
+	progressClient, err := client.ConnectProgress(flashResp.JobID)
+	if err != nil {
+		log.Warn().Err(err).Msg("Could not connect to progress WebSocket")
+		fmt.Printf("Job ID: %s\n", flashResp.JobID)
+		fmt.Printf("Status: %s\n", flashResp.Status)
+		fmt.Printf("Device: %s\n", flashResp.DevicePath)
+		return nil
+	}
+	defer progressClient.Close()
+
+	// Stream progress
+	lastProgress := -1
+	err = progressClient.Stream(func(msg cluster.ProgressMessage) {
+		switch msg.Type {
+		case "init":
+			fmt.Printf("\nJob ID: %s\n", msg.JobID)
+			fmt.Printf("Device: %s\n\n", devicePath)
+		case "progress":
+			if msg.Progress > lastProgress {
+				displayProgressBar(msg.Progress, msg.Status)
+				lastProgress = msg.Progress
+			}
+		case "complete":
+			if msg.Status == "completed" {
+				fmt.Printf("\n✓ Flash completed successfully!\n")
+			} else {
+				fmt.Printf("\n✗ Flash failed: %s\n", msg.Error)
+			}
+		}
+	})
+
+	if err != nil {
+		return fmt.Errorf("progress stream error: %w", err)
+	}
+
+	return nil
+}
+
+func displayProgressBar(progress int, status string) {
+	const barWidth = 40
+	filled := int(float64(progress) / 100.0 * float64(barWidth))
+	bar := ""
+	for i := 0; i < barWidth; i++ {
+		if i < filled {
+			bar += "="
+		} else {
+			bar += " "
+		}
+	}
+	fmt.Printf("\r[%s] %d%% %s", bar, progress, status)
+}
+
+func runFlashLocal(args []string) error {
 	var err error
 	if flashOpts.port == "" {
 		scanner := device.NewScanner()
@@ -77,9 +199,6 @@ func runFlash(cmd *cobra.Command, args []string) error {
 	}
 
 	log.Info().Str("port", flashOpts.port).Str("chip", flashOpts.chip).Msg("Creating flasher")
-
-	// TODO: Add support for chip, flashMode, flashFreq, flashSize, eraseAll, resetMode
-	// These options require extending internal/flash wrapper
 
 	opts := &flash.FlasherOptions{
 		BaudRate:      115200,
@@ -105,7 +224,7 @@ func runFlash(cmd *cobra.Command, args []string) error {
 	log.Info().Int("bytes", len(data)).Msg("Flashing...")
 
 	start := time.Now()
-	result := flasher.Flash(cmd.Context(), req)
+	result := flasher.Flash(context.Background(), req)
 	close(progress)
 	duration := time.Since(start)
 

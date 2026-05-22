@@ -103,7 +103,6 @@ func runServer(cmd *cobra.Command, args []string) error {
 		if err := node.Start(ctx); err != nil {
 			return err
 		}
-		master.StartJobExecutor(cfg.workers)
 
 	case "worker":
 		if appCfg.MasterAddress == "" {
@@ -131,10 +130,16 @@ func runServer(cmd *cobra.Command, args []string) error {
 		if err := node.Start(ctx); err != nil {
 			return err
 		}
-		master.StartJobExecutor(cfg.workers)
 	}
 
 	srv := httpserver.NewServer(addr, node)
+
+	// Start executor with progress callback for master nodes
+	if m, ok := node.(*cluster.MasterNode); ok {
+		progressCB := srv.GetProgressCallback()
+		m.StartJobExecutorWithProgress(cfg.workers, progressCB)
+	}
+
 	if err := srv.Start(ctx); err != nil {
 		return err
 	}

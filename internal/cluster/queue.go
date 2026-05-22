@@ -1,6 +1,7 @@
 package cluster
 
 import (
+	"fmt"
 	"sync"
 	"time"
 
@@ -11,11 +12,18 @@ import (
 type JobStatus string
 
 const (
-	JobPending  JobStatus = "pending"
-	JobAssigned JobStatus = "assigned"
-	JobRunning  JobStatus = "running"
-	JobComplete JobStatus = "completed"
-	JobFailed   JobStatus = "failed"
+	JobPending   JobStatus = "pending"
+	JobAssigned  JobStatus = "assigned"
+	JobRunning   JobStatus = "running"
+	JobComplete  JobStatus = "completed"
+	JobFailed    JobStatus = "failed"
+	JobCancelled JobStatus = "cancelled"
+	JobTimedOut  JobStatus = "timeout"
+)
+
+const (
+	DefaultJobTimeout = 10 * time.Minute
+	DefaultJobTTL     = 24 * time.Hour
 )
 
 type Job struct {
@@ -155,6 +163,93 @@ func (q *JobQueue) PendingCount() int {
 	q.mu.RLock()
 	defer q.mu.RUnlock()
 	return len(q.pending)
+}
+
+func (q *JobQueue) Cancel(jobID string) error {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
+	job, exists := q.jobs[jobID]
+	if !exists {
+		return fmt.Errorf("job not found: %s", jobID)
+	}
+
+	job.mu.Lock()
+	defer job.mu.Unlock()
+
+	if job.Status == JobComplete || job.Status == JobFailed || job.Status == JobCancelled {
+		return fmt.Errorf("cannot cancel job in state: %s", job.Status)
+	}
+
+	job.Status = JobCancelled
+	now := time.Now()
+	job.CompletedAt = &now
+	job.Error = "Cancelled by user"
+
+	log.Info().Str("job_id", jobID).Msg("Job cancelled")
+
+	return nil
+}
+
+func (q *JobQueue) Timeout(jobID string) error {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
+	job, exists := q.jobs[jobID]
+	if !exists {
+		return fmt.Errorf("job not found: %s", jobID)
+	}
+
+	job.mu.Lock()
+	defer job.mu.Unlock()
+
+	if job.Status == JobComplete || job.Status == JobFailed || job.Status == JobCancelled {
+		return fmt.Errorf("job already in terminal state: %s", job.Status)
+	}
+
+	job.Status = JobTimedOut
+	now := time.Now()
+	job.CompletedAt = &now
+	job.Error = "Job timed out"
+
+	log.Warn().Str("job_id", jobID).Msg("Job timed out")
+
+	return nil
+}
+
+func (q *JobQueue) CleanupOld(olderThan time.Duration) int {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
+	cutoff := time.Now().Add(-olderThan)
+	removed := 0
+
+	for jobID, job := range q.jobs {
+		job.mu.RLock()
+		isTerminal := job.Status == JobComplete || job.Status == JobFailed ||
+			job.Status == JobCancelled || job.Status == JobTimedOut
+		completedAt := job.CompletedAt
+		job.mu.RUnlock()
+
+		if isTerminal && completedAt != nil && completedAt.Before(cutoff) {
+			delete(q.jobs, jobID)
+			removed++
+		}
+	}
+
+	if removed > 0 {
+		log.Info().Int("count", removed).Dur("older_than", olderThan).Msg("Cleaned up old jobs")
+	}
+
+	return removed
+}
+
+func (j *Job) RLock() {
+	j.mu.RLock()
+}
+
+func (j *Job) RUnlock() {
+	j.mu.RUnlock()
 }
 
 func (j *Job) ToMap() map[string]interface{} {
