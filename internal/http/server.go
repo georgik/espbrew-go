@@ -55,11 +55,11 @@ func (s *Server) setupRoutes() {
 
 	// Flash API routes
 	if leader, ok := s.node.(*cluster.LeaderNode); ok {
-		flashHandler := NewFlashHandler(leader, os.TempDir())
-		flashHandler.RegisterRoutes(s.router)
-
 		progressHandler := NewProgressHandler(leader, s.hub)
 		progressHandler.RegisterRoutes(s.router)
+
+		flashHandler := NewFlashHandler(leader, os.TempDir(), progressHandler)
+		flashHandler.RegisterRoutes(s.router)
 	} else if peer, ok := s.node.(*cluster.PeerNode); ok {
 		// Register flash handler on peer nodes too
 		flashHandler := NewPeerFlashHandler(peer)

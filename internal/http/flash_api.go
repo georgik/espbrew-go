@@ -19,12 +19,14 @@ import (
 type FlashHandler struct {
 	leader    *cluster.LeaderNode
 	uploadDir string
+	progress  *ProgressHandler
 }
 
-func NewFlashHandler(leader *cluster.LeaderNode, uploadDir string) *FlashHandler {
+func NewFlashHandler(leader *cluster.LeaderNode, uploadDir string, progress *ProgressHandler) *FlashHandler {
 	return &FlashHandler{
 		leader:    leader,
 		uploadDir: uploadDir,
+		progress:  progress,
 	}
 }
 
@@ -130,6 +132,11 @@ func (h *FlashHandler) handleFlashSubmit(w http.ResponseWriter, r *http.Request)
 	if err != nil {
 		respondError(w, http.StatusConflict, err.Error())
 		return
+	}
+
+	// Start progress streaming in background
+	if h.progress != nil {
+		go h.progress.StartProgressStreamer(job.ID)
 	}
 
 	log.Info().

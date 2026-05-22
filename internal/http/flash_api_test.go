@@ -22,7 +22,7 @@ func TestFlashHandler_handleUpload(t *testing.T) {
 		DisablemDNS: true,
 	})
 
-	handler := NewFlashHandler(master, os.TempDir())
+	handler := NewFlashHandler(master, os.TempDir(), nil)
 
 	// Create test firmware
 	testData := []byte("test firmware data")
@@ -74,7 +74,7 @@ func TestFlashHandler_handleUpload_NoFile(t *testing.T) {
 		DisablemDNS: true,
 	})
 
-	handler := NewFlashHandler(master, os.TempDir())
+	handler := NewFlashHandler(master, os.TempDir(), nil)
 
 	req := httptest.NewRequest("POST", "/api/v1/flash/upload", strings.NewReader(""))
 	req.Header.Set("Content-Type", "multipart/form-data")
@@ -101,7 +101,7 @@ func TestFlashHandler_handleFlashSubmit(t *testing.T) {
 		Status: "available",
 	})
 
-	handler := NewFlashHandler(master, os.TempDir())
+	handler := NewFlashHandler(master, os.TempDir(), nil)
 
 	// Create test firmware file
 	testData := []byte("test firmware")
@@ -166,7 +166,7 @@ func TestFlashHandler_handleFlashSubmit_DeviceNotFound(t *testing.T) {
 		DisablemDNS: true,
 	})
 
-	handler := NewFlashHandler(master, os.TempDir())
+	handler := NewFlashHandler(master, os.TempDir(), nil)
 
 	// First upload a file so we get past that check
 	testData := []byte("test firmware")

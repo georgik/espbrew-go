@@ -208,7 +208,7 @@ func TestClient_ProgressStream(t *testing.T) {
 
 	hub := NewProgressHub()
 	progressHandler := NewProgressHandler(master, hub)
-	flashHandler := NewFlashHandler(master, os.TempDir())
+	flashHandler := NewFlashHandler(master, os.TempDir(), progressHandler)
 
 	router := mux.NewRouter()
 	router.HandleFunc("/api/v1/flash/upload", flashHandler.handleUpload).Methods("POST")

@@ -204,7 +204,7 @@ func (h *ProgressHandler) StartProgressStreamer(jobID string) {
 
 	for {
 		select {
-		case <-time.After(500 * time.Millisecond):
+		case <-ticker.C:
 			job.RLock()
 			progress := job.Progress
 			status := string(job.Status)
