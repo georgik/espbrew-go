@@ -4,8 +4,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sort"
+	"time"
 
 	"codeberg.org/georgik/espbrew-go/internal/cluster"
+	"codeberg.org/georgik/espbrew-go/pkg/protocol"
 	"github.com/gorilla/mux"
 )
 
@@ -45,6 +48,10 @@ func (h *APIHandler) RegisterRoutes(r *mux.Router) {
 	api.HandleFunc("/jobs", h.handleCreateJob).Methods("POST")
 	api.HandleFunc("/jobs/{id}", h.handleGetJob).Methods("GET")
 	api.HandleFunc("/jobs/{id}", h.handleCancelJob).Methods("DELETE")
+
+	// Node registration (for peer nodes)
+	api.HandleFunc("/nodes/register", h.handleRegisterNode).Methods("POST")
+	api.HandleFunc("/nodes/{id}/heartbeat", h.handleNodeHeartbeat).Methods("POST")
 
 	// Leader-specific
 	if h.leader != nil {
@@ -98,8 +105,17 @@ func (h *APIHandler) handleNodes(w http.ResponseWriter, r *http.Request) {
 
 func (h *APIHandler) handleDevices(w http.ResponseWriter, r *http.Request) {
 	state := h.node.State()
+
+	// Collect device paths and sort them
+	paths := make([]string, 0, len(state.Devices))
+	for path := range state.Devices {
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
+
 	devices := make([]map[string]interface{}, 0, len(state.Devices))
-	for _, d := range state.Devices {
+	for _, path := range paths {
+		d := state.Devices[path]
 		dev := map[string]interface{}{
 			"path":    d.Path,
 			"vid":     fmt.Sprintf("0x%04x", d.VID),
@@ -307,4 +323,58 @@ func (h *APIHandler) handleReserveDevice(w http.ResponseWriter, r *http.Request)
 	}
 
 	respondError(w, http.StatusMethodNotAllowed, "Method not allowed")
+}
+
+func (h *APIHandler) handleRegisterNode(w http.ResponseWriter, r *http.Request) {
+	if h.leader == nil {
+		respondError(w, http.StatusNotImplemented, "Node registration only available on leader")
+		return
+	}
+
+	var payload protocol.HeartbeatPayload
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+
+	// Create node info from heartbeat payload
+	node := &protocol.NodeInfo{
+		ID:       payload.NodeID,
+		Address:  r.RemoteAddr,
+		Role:     "peer",
+		LastSeen: time.Now(),
+	}
+
+	h.leader.RegisterNode(node)
+
+	// Process devices from heartbeat
+	h.leader.UpdateHeartbeat(payload.NodeID, &payload)
+
+	respondJSON(w, map[string]interface{}{
+		"status": "registered",
+		"node_id": payload.NodeID,
+	})
+}
+
+func (h *APIHandler) handleNodeHeartbeat(w http.ResponseWriter, r *http.Request) {
+	if h.leader == nil {
+		respondError(w, http.StatusNotImplemented, "Heartbeat only available on leader")
+		return
+	}
+
+	vars := mux.Vars(r)
+	nodeID := vars["id"]
+
+	var payload protocol.HeartbeatPayload
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+
+	// Update heartbeat and devices
+	h.leader.UpdateHeartbeat(nodeID, &payload)
+
+	respondJSON(w, map[string]interface{}{
+		"status": "ok",
+	})
 }

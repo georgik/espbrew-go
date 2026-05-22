@@ -1,8 +1,11 @@
 package cluster
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"net/http"
 	"sync"
 	"time"
 
@@ -164,10 +167,56 @@ func (p *PeerNode) sendHeartbeat() {
 	log.Debug().
 		Str("node_id", p.id).
 		Int("devices", payload.DeviceCount).
-		Msg("Heartbeat sent")
+		Msg("Sending heartbeat to leader")
 
-	// In real implementation, send payload to leader via WebSocket/HTTP
-	_ = payload
+	// Send heartbeat to leader via HTTP
+	if err := p.sendHeartbeatHTTP(payload); err != nil {
+		log.Warn().Err(err).Msg("Heartbeat failed")
+	}
+}
+
+func (p *PeerNode) sendHeartbeatHTTP(payload *protocol.HeartbeatPayload) error {
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("marshal heartbeat: %w", err)
+	}
+
+	// First heartbeat - register the node
+	registerURL := fmt.Sprintf("%s/api/v1/nodes/register", p.leaderURL)
+	req, err := http.NewRequest("POST", registerURL, bytes.NewReader(body))
+	if err == nil {
+		req.Header.Set("Content-Type", "application/json")
+		client := &http.Client{Timeout: 5 * time.Second}
+		resp, err := client.Do(req)
+		if err == nil {
+			resp.Body.Close()
+			log.Debug().
+				Str("node_id", p.id).
+				Int("status", resp.StatusCode).
+				Msg("Node registration attempted")
+		}
+	}
+
+	// Regular heartbeat update
+	heartbeatURL := fmt.Sprintf("%s/api/v1/nodes/%s/heartbeat", p.leaderURL, p.id)
+	req, err = http.NewRequest("POST", heartbeatURL, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("send heartbeat: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusAccepted {
+		return fmt.Errorf("heartbeat failed: %d", resp.StatusCode)
+	}
+
+	return nil
 }
 
 func (p *PeerNode) ExecuteJob(ctx context.Context, job *Job) error {
