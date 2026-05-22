@@ -2,6 +2,9 @@ module codeberg.org/georgik/espbrew-go
 
 go 1.26.2
 
+// Use local module for development before publishing to Codeberg
+replace codeberg.org/georgik/espbrew-go => ./
+
 require (
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/mux v1.8.1
