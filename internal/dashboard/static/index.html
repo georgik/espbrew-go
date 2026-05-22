@@ -345,6 +345,8 @@
             } catch (error) {
                 console.error('Failed to refresh:', error);
             }
+            // Schedule next refresh after this one completes (prevents pile-up)
+            setTimeout(refreshData, 5000);
         }
 
         function renderDevices(devices) {
@@ -427,8 +429,7 @@
 
         // Initialize
         connect();
-        refreshData();
-        setInterval(refreshData, 5000);
+        refreshData();  // Starts recursive refresh loop
     </script>
 </body>
 </html>

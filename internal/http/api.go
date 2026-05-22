@@ -11,6 +11,7 @@ import (
 	"codeberg.org/georgik/espbrew-go/internal/device"
 	"codeberg.org/georgik/espbrew-go/pkg/protocol"
 	"github.com/gorilla/mux"
+	"github.com/rs/zerolog/log"
 )
 
 type APIHandler struct {
@@ -340,9 +341,13 @@ func (h *APIHandler) handleRegisterNode(w http.ResponseWriter, r *http.Request) 
 
 	var payload protocol.HeartbeatPayload
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		log.Debug().Err(err).Msg("Failed to decode register payload")
 		respondError(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
+
+	log.Info().Str("node_id", payload.NodeID).Str("remote_addr", r.RemoteAddr).
+		Int("devices", len(payload.Devices)).Msg("Node registration request")
 
 	// Create node info from heartbeat payload
 	node := &protocol.NodeInfo{
@@ -374,9 +379,13 @@ func (h *APIHandler) handleNodeHeartbeat(w http.ResponseWriter, r *http.Request)
 
 	var payload protocol.HeartbeatPayload
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		log.Debug().Err(err).Str("node_id", nodeID).Msg("Failed to decode heartbeat payload")
 		respondError(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
+
+	log.Debug().Str("node_id", nodeID).Str("remote_addr", r.RemoteAddr).
+		Int("devices", len(payload.Devices)).Msg("Heartbeat received")
 
 	// Update heartbeat and devices
 	h.leader.UpdateHeartbeat(nodeID, &payload)

@@ -76,7 +76,7 @@ func TestPeerNodeHeartbeat(t *testing.T) {
 	defer peer.Stop()
 
 	assert.Equal(t, "test-peer", peer.id)
-	assert.Equal(t, "ws://leader:8080", peer.leaderURL)
+	assert.Equal(t, "http://ws://leader:8080", peer.leaderURL)
 }
 
 func TestJobQueue(t *testing.T) {

@@ -174,8 +174,9 @@ func (p *PeerNode) sendHeartbeat() {
 		Devices:     devices,
 	}
 
-	log.Debug().
+	log.Info().
 		Str("node_id", p.id).
+		Str("leader", p.leaderURL).
 		Int("devices", payload.DeviceCount).
 		Msg("Sending heartbeat to leader")
 

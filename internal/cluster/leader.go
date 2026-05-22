@@ -127,6 +127,11 @@ func (l *LeaderNode) UpdateHeartbeat(nodeID string, payload *protocol.HeartbeatP
 
 	if node, exists := l.state.Nodes[nodeID]; exists {
 		node.LastSeen = time.Now()
+		log.Debug().Str("node_id", nodeID).Time("last_seen", node.LastSeen).
+			Msg("Heartbeat received, LastSeen updated")
+	} else {
+		log.Warn().Str("node_id", nodeID).
+			Msg("Heartbeat received from unknown node - not registered")
 	}
 
 	// Aggregate devices from peer
