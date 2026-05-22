@@ -5,9 +5,10 @@ import (
 	"os"
 	"time"
 
-	"github.com/spf13/cobra"
-	"github.com/rs/zerolog/log"
+	"github.com/georgik/esp-ci-cluster/internal/device"
 	"github.com/georgik/esp-ci-cluster/internal/flash"
+	"github.com/rs/zerolog/log"
+	"github.com/spf13/cobra"
 )
 
 var flashCmd = &cobra.Command{
@@ -17,17 +18,20 @@ var flashCmd = &cobra.Command{
 }
 
 var flashOpts struct {
-	port          string
-	baud          int
-	chip          string
-	flashMode     string
-	flashFreq     string
-	flashSize     string
-	eraseAll      bool
-	noCompress    bool
-	resetMode     string
-	monitorAfter  bool
-	monitorBaud   int
+	port            string
+	baud            int
+	chip            string
+	flashMode       string
+	flashFreq       string
+	flashSize       string
+	eraseAll        bool
+	noCompress      bool
+	resetMode       string
+	monitorAfter    bool
+	monitorBaud     int
+	monitorNoRaw    bool
+	monitorDuration int
+	monitorReset    bool
 }
 
 func init() {
@@ -42,13 +46,23 @@ func init() {
 	flashCmd.Flags().StringVar(&flashOpts.resetMode, "reset", "default", "Reset mode (default, no-reset, usb-jtag, auto)")
 	flashCmd.Flags().BoolVarP(&flashOpts.monitorAfter, "monitor", "m", false, "Enter monitor mode after flashing")
 	flashCmd.Flags().IntVar(&flashOpts.monitorBaud, "monitor-baud", 115200, "Monitor baud rate")
+	flashCmd.Flags().BoolVar(&flashOpts.monitorNoRaw, "monitor-no-raw", false, "Skip raw terminal in monitor (for testing)")
+	flashCmd.Flags().IntVar(&flashOpts.monitorDuration, "monitor-duration", 0, "Monitor duration in seconds (0=no limit)")
+	flashCmd.Flags().BoolVar(&flashOpts.monitorReset, "monitor-reset", false, "Reset device before monitoring")
 
 	rootCmd.AddCommand(flashCmd)
 }
 
 func runFlash(cmd *cobra.Command, args []string) error {
+	var err error
 	if flashOpts.port == "" {
-		return fmt.Errorf("--port is required")
+		scanner := device.NewScanner()
+		espPorts, err := scanner.ScanESP()
+		if err != nil || len(espPorts) == 0 {
+			return fmt.Errorf("--port required or no ESP devices found")
+		}
+		flashOpts.port = espPorts[0].Path
+		log.Info().Str("auto_port", flashOpts.port).Msg("Auto-detected ESP device")
 	}
 
 	if len(args) == 0 {
@@ -102,9 +116,11 @@ func runFlash(cmd *cobra.Command, args []string) error {
 	log.Info().Str("duration", duration.String()).Msg("Flash complete")
 
 	if flashOpts.monitorAfter {
-		// For monitor, we need to open raw serial port
-		// The internal/flash.Monitor() is not yet implemented
-		log.Warn().Msg("Monitor after flash not yet implemented - use 'espbrew monitor' separately")
+		log.Info().Msg("Starting monitor...")
+		monitorOpts.noRaw = flashOpts.monitorNoRaw
+		monitorOpts.duration = flashOpts.monitorDuration
+		monitorOpts.resetFirst = flashOpts.monitorReset
+		return runMonitor(flashOpts.port, flashOpts.monitorBaud)
 	}
 
 	return nil

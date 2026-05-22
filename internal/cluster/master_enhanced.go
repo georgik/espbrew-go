@@ -6,22 +6,22 @@ import (
 	"sync"
 	"time"
 
-	"github.com/rs/zerolog/log"
 	"github.com/georgik/esp-ci-cluster/pkg/protocol"
+	"github.com/rs/zerolog/log"
 )
 
 type MasterNode struct {
-	id        string
-	config    *MasterConfig
-	state     *ClusterState
-	queue     *JobQueue
-	executor  *JobExecutor
-	devices   *DeviceRegistry
-	mu        sync.RWMutex
-	ctx       context.Context
-	cancel    context.CancelFunc
-	wg        sync.WaitGroup
-	mdns      *mDNSService
+	id       string
+	config   *MasterConfig
+	state    *ClusterState
+	queue    *JobQueue
+	executor *JobExecutor
+	devices  *DeviceRegistry
+	mu       sync.RWMutex
+	ctx      context.Context
+	cancel   context.CancelFunc
+	wg       sync.WaitGroup
+	mdns     *mDNSService
 }
 
 type MasterConfig struct {
@@ -33,10 +33,11 @@ type MasterConfig struct {
 
 func NewMasterNode(id string, cfg *MasterConfig) *MasterNode {
 	return &MasterNode{
-		id:     id,
-		config: cfg,
-		state:  NewClusterState(),
-		queue:  NewJobQueue(),
+		id:      id,
+		config:  cfg,
+		state:   NewClusterState(),
+		queue:   NewJobQueue(),
+		devices: NewDeviceRegistry(),
 	}
 }
 
@@ -118,25 +119,29 @@ func (m *MasterNode) RegisterDevice(device *protocol.DeviceInfo) {
 
 	device.NodeID = m.id
 	m.state.Devices[device.Path] = device
+	m.devices.Register(device.Path)
 	log.Info().Str("path", device.Path).Msg("Device registered on master")
 }
 
 func (m *MasterNode) EnqueueJob(firmwarePath, devicePath string) (*Job, error) {
-	m.mu.Lock()
-	dev, exists := m.state.Devices[devicePath]
-	m.mu.Unlock()
+	m.mu.RLock()
+	_, exists := m.state.Devices[devicePath]
+	m.mu.RUnlock()
 
 	if !exists {
 		return nil, fmt.Errorf("device not found: %s", devicePath)
 	}
 
-	if dev.Status != "available" {
-		return nil, fmt.Errorf("device not available: %s (status: %s)", devicePath, dev.Status)
-	}
-
 	job := m.queue.Enqueue(firmwarePath, devicePath)
 
+	// Reserve device for this job
+	if !m.devices.Reserve(devicePath, job.ID) {
+		m.queue.Complete(job.ID, fmt.Errorf("device reservation failed"))
+		return nil, fmt.Errorf("device not available: %s", devicePath)
+	}
+
 	m.mu.Lock()
+	dev := m.state.Devices[devicePath]
 	dev.Status = "busy"
 	m.state.Devices[devicePath] = dev
 	m.mu.Unlock()

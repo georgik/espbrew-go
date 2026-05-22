@@ -7,11 +7,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/georgik/esp-ci-cluster/internal/cluster"
+	"github.com/georgik/esp-ci-cluster/internal/dashboard"
 	"github.com/gorilla/mux"
 	"github.com/gorilla/websocket"
 	"github.com/rs/zerolog/log"
-	"github.com/georgik/esp-ci-cluster/internal/cluster"
-	"github.com/georgik/esp-ci-cluster/internal/dashboard"
 )
 
 var upgrader = websocket.Upgrader{
@@ -21,11 +21,12 @@ var upgrader = websocket.Upgrader{
 }
 
 type Server struct {
-	addr   string
-	node   cluster.Node
-	router *mux.Router
-	server *http.Server
-	api    *APIHandler
+	addr    string
+	node    cluster.Node
+	router  *mux.Router
+	server  *http.Server
+	api     *APIHandler
+	monitor *MonitorServer
 
 	// WebSocket clients
 	clients map[*websocket.Conn]bool
@@ -48,6 +49,10 @@ func (s *Server) setupRoutes() {
 	// API routes
 	s.api = NewAPIHandler(s.node)
 	s.api.RegisterRoutes(s.router)
+
+	// Monitor WebSocket routes
+	s.monitor = NewMonitorServer()
+	s.monitor.RegisterRoutes(s.router)
 
 	// WebSocket - override the API placeholder
 	s.router.HandleFunc("/api/v1/ws", s.handleWebSocket)

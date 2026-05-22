@@ -6,24 +6,24 @@ import (
 	"sync"
 	"time"
 
-	"github.com/rs/zerolog/log"
 	"github.com/georgik/esp-ci-cluster/internal/device"
 	"github.com/georgik/esp-ci-cluster/internal/flash"
 	"github.com/georgik/esp-ci-cluster/pkg/protocol"
+	"github.com/rs/zerolog/log"
 )
 
 type WorkerNode struct {
-	id          string
-	masterURL   string
-	config      *WorkerConfig
-	state       *ClusterState
-	mu          sync.RWMutex
-	ctx         context.Context
-	cancel      context.CancelFunc
-	wg          sync.WaitGroup
-	mdns        *mDNSService
-	watcher     *device.Watcher
-	flasher     *flash.Flasher
+	id        string
+	masterURL string
+	config    *WorkerConfig
+	state     *ClusterState
+	mu        sync.RWMutex
+	ctx       context.Context
+	cancel    context.CancelFunc
+	wg        sync.WaitGroup
+	mdns      *mDNSService
+	watcher   *device.Watcher
+	flasher   *flash.Flasher
 }
 
 type WorkerConfig struct {

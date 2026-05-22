@@ -25,7 +25,7 @@ type DeviceInfo struct {
 }
 
 const (
-	ESP_VID = 0x4348
+	ESP_VID    = 0x4348
 	ESP_PID_S2 = 0x0027
 	ESP_PID_S3 = 0x0028
 	ESP_PID_C3 = 0x0029

@@ -28,6 +28,9 @@ func (m *MasterNode) handleJobResults() {
 	for result := range m.executor.Results() {
 		job := result.Job
 
+		// Release device lock
+		m.devices.Release(job.DevicePath, job.ID)
+
 		// Update device status
 		m.mu.Lock()
 		if dev, exists := m.state.Devices[job.DevicePath]; exists {
@@ -39,7 +42,6 @@ func (m *MasterNode) handleJobResults() {
 		// Complete job in queue
 		m.queue.Complete(job.ID, result.Error)
 
-		// Notify via WebSocket would happen here
 		if result.Error != nil {
 			log.Error().Err(result.Error).Str("job_id", job.ID).Msg("Job failed")
 		} else {

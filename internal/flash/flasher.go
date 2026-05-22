@@ -14,9 +14,9 @@ type Flasher struct {
 }
 
 type FlasherOptions struct {
-	BaudRate     int
+	BaudRate      int
 	FlashBaudRate int
-	Compress     bool
+	Compress      bool
 }
 
 type FlashResult struct {

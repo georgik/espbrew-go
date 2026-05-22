@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	serviceName  = "_espbrew._tcp"
+	serviceName   = "_espbrew._tcp"
 	serviceDomain = "local."
 )
 
@@ -24,15 +24,15 @@ type mdnsInfo struct {
 }
 
 type mDNSService struct {
-	nodeID     string
-	role       string
-	httpPort   int
-	entries    chan *mdns.ServiceEntry
-	ctx        context.Context
-	cancel     context.CancelFunc
-	wg         sync.WaitGroup
-	mu         sync.RWMutex
-	peers      map[string]*PeerInfo
+	nodeID   string
+	role     string
+	httpPort int
+	entries  chan *mdns.ServiceEntry
+	ctx      context.Context
+	cancel   context.CancelFunc
+	wg       sync.WaitGroup
+	mu       sync.RWMutex
+	peers    map[string]*PeerInfo
 }
 
 type PeerInfo struct {

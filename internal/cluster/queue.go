@@ -4,43 +4,43 @@ import (
 	"sync"
 	"time"
 
-	"github.com/rs/zerolog/log"
 	"github.com/google/uuid"
+	"github.com/rs/zerolog/log"
 )
 
 type JobStatus string
 
 const (
-	JobPending   JobStatus = "pending"
-	JobAssigned  JobStatus = "assigned"
-	JobRunning   JobStatus = "running"
+	JobPending  JobStatus = "pending"
+	JobAssigned JobStatus = "assigned"
+	JobRunning  JobStatus = "running"
 	JobComplete JobStatus = "completed"
-	JobFailed    JobStatus = "failed"
+	JobFailed   JobStatus = "failed"
 )
 
 type Job struct {
-	ID         string
-	Firmware   string
-	DevicePath string
-	DeviceNode string
-	Status     JobStatus
-	Progress   int
-	CreatedAt  time.Time
-	StartedAt  *time.Time
+	ID          string
+	Firmware    string
+	DevicePath  string
+	DeviceNode  string
+	Status      JobStatus
+	Progress    int
+	CreatedAt   time.Time
+	StartedAt   *time.Time
 	CompletedAt *time.Time
-	Error      string
-	mu         sync.RWMutex
+	Error       string
+	mu          sync.RWMutex
 }
 
 type JobQueue struct {
-	jobs  map[string]*Job
+	jobs    map[string]*Job
 	pending []string
-	mu    sync.RWMutex
+	mu      sync.RWMutex
 }
 
 func NewJobQueue() *JobQueue {
 	return &JobQueue{
-		jobs:   make(map[string]*Job),
+		jobs:    make(map[string]*Job),
 		pending: make([]string, 0),
 	}
 }

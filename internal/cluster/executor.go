@@ -7,18 +7,18 @@ import (
 	"sync"
 	"time"
 
-	"github.com/rs/zerolog/log"
 	"github.com/georgik/esp-ci-cluster/internal/flash"
+	"github.com/rs/zerolog/log"
 )
 
 type JobExecutor struct {
-	flasher   *flash.Flasher
-	jobs      chan *Job
-	results   chan *JobResult
-	workers   int
-	wg        sync.WaitGroup
-	ctx       context.Context
-	cancel    context.CancelFunc
+	flasher *flash.Flasher
+	jobs    chan *Job
+	results chan *JobResult
+	workers int
+	wg      sync.WaitGroup
+	ctx     context.Context
+	cancel  context.CancelFunc
 }
 
 type JobResult struct {

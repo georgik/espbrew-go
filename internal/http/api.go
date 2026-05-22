@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/gorilla/mux"
 	"github.com/georgik/esp-ci-cluster/internal/cluster"
+	"github.com/gorilla/mux"
 )
 
 type APIHandler struct {

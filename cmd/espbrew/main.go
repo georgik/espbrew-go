@@ -8,12 +8,12 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/georgik/esp-ci-cluster/internal/cluster"
+	"github.com/georgik/esp-ci-cluster/internal/config"
+	httpserver "github.com/georgik/esp-ci-cluster/internal/http"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
-	"github.com/georgik/esp-ci-cluster/internal/config"
-	"github.com/georgik/esp-ci-cluster/internal/cluster"
-	httpserver "github.com/georgik/esp-ci-cluster/internal/http"
 )
 
 var rootCmd = &cobra.Command{
@@ -86,6 +86,7 @@ func runServer(cmd *cobra.Command, args []string) error {
 
 	nodeID := "node-" + randomID(8)
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
 	var node cluster.Node
 	addr := fmt.Sprintf("%s:%d", appCfg.BindAddress, appCfg.HTTPPort)
