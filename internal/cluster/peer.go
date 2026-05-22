@@ -38,6 +38,11 @@ type PeerConfig struct {
 }
 
 func NewPeerNode(id, leaderURL string, cfg *PeerConfig) *PeerNode {
+	// Ensure leaderURL has a scheme
+	if leaderURL != "" && !startsWithScheme(leaderURL) {
+		leaderURL = "http://" + leaderURL
+	}
+
 	return &PeerNode{
 		id:        id,
 		leaderURL: leaderURL,
@@ -45,6 +50,10 @@ func NewPeerNode(id, leaderURL string, cfg *PeerConfig) *PeerNode {
 		state:     NewClusterState(),
 		flasher:   flash.NewFlasher(nil),
 	}
+}
+
+func startsWithScheme(url string) bool {
+	return len(url) >= 7 && (url[:7] == "http://" || (len(url) >= 8 && url[:8] == "https://"))
 }
 
 func (p *PeerNode) Start(ctx context.Context) error {
