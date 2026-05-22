@@ -220,32 +220,34 @@ func (p *PeerNode) sendHeartbeatHTTP(payload *protocol.HeartbeatPayload) error {
 		} else {
 			log.Debug().Str("node_id", p.id).Int("status", resp.StatusCode).
 				Msg("Registration attempt failed, will retry")
+			return fmt.Errorf("registration failed: %d", resp.StatusCode)
 		}
 	}
 
-	// Send heartbeat update (only if registered)
-	p.mu.RLock()
-	isRegistered = p.registered
-	p.mu.RUnlock()
-
-	if !isRegistered {
-		return fmt.Errorf("not registered with leader")
-	}
-
+	// Send heartbeat update
 	heartbeatURL := fmt.Sprintf("%s/api/v1/nodes/%s/heartbeat", p.leaderURL, p.id)
 	req, err := http.NewRequest("POST", heartbeatURL, bytes.NewReader(body))
 	if err != nil {
+		p.mu.Lock()
+		p.registered = false
+		p.mu.Unlock()
 		return fmt.Errorf("create heartbeat request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := client.Do(req)
 	if err != nil {
+		p.mu.Lock()
+		p.registered = false
+		p.mu.Unlock()
 		return fmt.Errorf("send heartbeat: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusAccepted {
+		p.mu.Lock()
+		p.registered = false
+		p.mu.Unlock()
 		return fmt.Errorf("heartbeat failed: %d", resp.StatusCode)
 	}
 
