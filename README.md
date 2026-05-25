@@ -7,6 +7,7 @@ ESP32 cluster flashing tool written in Go. Manages multiple ESP32 devices across
 - **Smart File Detection**: Auto-detects ELF, ESP32 binary, and raw firmware files
 - **Chip-Specific Offsets**: Correct bootloader offsets per chip variant
 - **Multi-Image Flashing**: Flash bootloader, partitions, and app in one command
+- **Project Detection**: Automatically detects ESP-IDF projects and populates flash paths
 - **ESP-IDF Integration**: Read flash_args directly from build directory
 - **Cluster Mode**: Leader/peer architecture for distributed flashing
 - **Device Discovery**: Automatic ESP device detection via USB serial
@@ -77,6 +78,12 @@ sudo mv espbrew /usr/local/bin/
 
 # ESP-IDF integration (reads flash_args)
 ./espbrew flash --build-dir build/
+
+# Project detection (auto-detects ESP-IDF projects)
+cd esp-idf-project
+idf.py build
+./espbrew --cluster http://leader:8080 flash    # Auto-populates bootloader, partitions, app
+./espbrew --cluster http://leader:8080 flash --no-detect  # Disable auto-detection
 ```
 
 ### Monitor
@@ -109,6 +116,7 @@ esp-ci-cluster/
 │   ├── flash/             # Flash operations (uses espflasher)
 │   ├── http/              # HTTP API, WebSocket, dashboard
 │   ├── monitor/           # Serial stream multiplexing
+│   ├── project/           # Project detection (ESP-IDF, etc.)
 │   ├── dashboard/         # Embedded dashboard files
 │   └── config/            # Configuration management
 ├── pkg/protocol/          # Cluster message types
@@ -140,6 +148,45 @@ ESPBrew automatically detects firmware file types:
 - **ELF files**: Rejected with error (use `espflash save-image` or build .bin)
 - **ESP32 Binary**: Magic 0xE9 (ESP32) or 0xEA (ESP8266)
 - **Raw Binary**: Any other data (flashed as-is)
+
+## Project Detection
+
+ESPBrew automatically detects project types when run from a project directory. This eliminates the need to manually specify paths to bootloader, partition table, and application binaries.
+
+### ESP-IDF Projects
+
+Detection requires:
+- `CMakeLists.txt` in project root
+- `sdkconfig` or `sdkconfig.defaults` file
+- `build/` directory with compiled binaries
+
+When detected, ESPBrew automatically locates:
+- `build/bootloader/bootloader.bin`
+- `build/partition_table/partition-table.bin`
+- `build/<project_name>.bin` (or largest `.bin` file)
+
+```bash
+cd esp-idf-project
+idf.py build
+espbrew --cluster http://leader:8080 flash
+# Output: Detected ESP-IDF project, auto-populated flash paths
+```
+
+### Disabling Auto-Detection
+
+To disable automatic project detection:
+
+```bash
+espbrew flash --no-detect
+```
+
+### Explicit Override
+
+Explicitly specified paths always override auto-detected paths:
+
+```bash
+espbrew flash --app custom.bin --partitions custom-partitions.bin
+```
 
 ## ESP-IDF Integration
 

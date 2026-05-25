@@ -9,6 +9,7 @@ import (
 	"codeberg.org/georgik/espbrew-go/internal/cluster"
 	"codeberg.org/georgik/espbrew-go/internal/device"
 	"codeberg.org/georgik/espbrew-go/internal/flash"
+	"codeberg.org/georgik/espbrew-go/internal/project"
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
 )
@@ -43,6 +44,8 @@ var flashOpts struct {
 	app        string
 	// ESP-IDF integration
 	buildDir string
+	// Project detection
+	noDetect bool
 }
 
 func init() {
@@ -69,9 +72,17 @@ func init() {
 	flashCmd.Flags().StringVar(&flashOpts.app, "app", "", "Application .bin file (multi-image mode)")
 	// ESP-IDF integration
 	flashCmd.Flags().StringVar(&flashOpts.buildDir, "build-dir", "", "ESP-IDF build directory (reads flash_args)")
+	// Project detection
+	flashCmd.Flags().BoolVar(&flashOpts.noDetect, "no-detect", false, "Disable automatic project detection")
 
 	rootCmd.AddCommand(flashCmd)
 }
+
+var projectRegistry = func() *project.Registry {
+	r := project.NewRegistry()
+	r.Register(&project.ESPIDFDetector{})
+	return r
+}()
 
 func runFlash(cmd *cobra.Command, args []string) error {
 	if flashOpts.clusterURL != "" {
@@ -81,6 +92,44 @@ func runFlash(cmd *cobra.Command, args []string) error {
 }
 
 func runFlashRemote(args []string) error {
+	// Auto-detect project if no paths specified
+	if !flashOpts.noDetect && len(args) == 0 &&
+		flashOpts.bootloader == "" && flashOpts.partitions == "" && flashOpts.app == "" && flashOpts.buildDir == "" {
+
+		cwd, err := os.Getwd()
+		if err == nil {
+			projType, detector := projectRegistry.Detect(cwd)
+			if projType != project.ProjectTypeNone {
+				log.Info().Str("type", string(projType)).Str("dir", cwd).Msg("Detected project")
+
+				buildDir, err := detector.FindBuildDir(cwd)
+				if err == nil {
+					log.Info().Str("build_dir", buildDir).Msg("Found build directory")
+
+					artifacts, err := detector.GetArtifacts(buildDir)
+					if err == nil {
+						// Populate flashOpts from detected artifacts (only if not explicitly set)
+						if flashOpts.bootloader == "" && artifacts.Bootloader != "" {
+							flashOpts.bootloader = artifacts.Bootloader
+						}
+						if flashOpts.partitions == "" && artifacts.Partitions != "" {
+							flashOpts.partitions = artifacts.Partitions
+						}
+						if flashOpts.app == "" && artifacts.App != "" {
+							flashOpts.app = artifacts.App
+						}
+
+						log.Info().
+							Str("bootloader", flashOpts.bootloader).
+							Str("partitions", flashOpts.partitions).
+							Str("app", flashOpts.app).
+							Msg("Auto-populated flash paths")
+					}
+				}
+			}
+		}
+	}
+
 	// Check for multi-image mode
 	multiImage := flashOpts.bootloader != "" || flashOpts.partitions != "" || flashOpts.app != ""
 	singleImage := !multiImage && len(args) > 0
