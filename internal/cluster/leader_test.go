@@ -82,8 +82,8 @@ func TestPeerNodeHeartbeat(t *testing.T) {
 func TestJobQueue(t *testing.T) {
 	q := NewJobQueue()
 
-	job1 := q.Enqueue("firmware1.bin", "/dev/ttyUSB0")
-	job2 := q.Enqueue("firmware2.bin", "/dev/ttyUSB1")
+	job1 := q.Enqueue("firmware1.bin", "/dev/ttyUSB0", 0)
+	job2 := q.Enqueue("firmware2.bin", "/dev/ttyUSB1", 0)
 
 	assert.Equal(t, 2, q.PendingCount())
 
@@ -104,7 +104,7 @@ func TestJobQueue(t *testing.T) {
 func TestJobProgress(t *testing.T) {
 	q := NewJobQueue()
 
-	job := q.Enqueue("firmware.bin", "/dev/ttyUSB0")
+	job := q.Enqueue("firmware.bin", "/dev/ttyUSB0", 0)
 
 	q.UpdateProgress(job.ID, 50)
 	assert.Equal(t, 50, job.Progress)
@@ -116,13 +116,13 @@ func TestJobProgress(t *testing.T) {
 func TestJobComplete(t *testing.T) {
 	q := NewJobQueue()
 
-	job := q.Enqueue("firmware.bin", "/dev/ttyUSB0")
+	job := q.Enqueue("firmware.bin", "/dev/ttyUSB0", 0)
 
 	q.Complete(job.ID, nil)
 	assert.Equal(t, JobComplete, job.Status)
 	assert.NotNil(t, job.CompletedAt)
 
-	job2 := q.Enqueue("firmware2.bin", "/dev/ttyUSB1")
+	job2 := q.Enqueue("firmware2.bin", "/dev/ttyUSB1", 0)
 	testErr := assert.AnError
 	q.Complete(job2.ID, testErr)
 	assert.Equal(t, JobFailed, job2.Status)

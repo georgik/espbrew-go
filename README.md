@@ -4,6 +4,10 @@ ESP32 cluster flashing tool written in Go. Manages multiple ESP32 devices across
 
 ## Features
 
+- **Smart File Detection**: Auto-detects ELF, ESP32 binary, and raw firmware files
+- **Chip-Specific Offsets**: Correct bootloader offsets per chip variant
+- **Multi-Image Flashing**: Flash bootloader, partitions, and app in one command
+- **ESP-IDF Integration**: Read flash_args directly from build directory
 - **Cluster Mode**: Leader/peer architecture for distributed flashing
 - **Device Discovery**: Automatic ESP device detection via USB serial
 - **Job Queue**: Queue and manage flash jobs across all available devices
@@ -62,6 +66,17 @@ sudo mv espbrew /usr/local/bin/
 ./espbrew flash firmware.bin --chip esp32-s3     # Specify chip
 ./espbrew flash firmware.bin --monitor           # Flash and monitor
 ./espbrew flash firmware.bin --offset 0x10000    # Flash at custom offset
+
+# Preset offsets (recommended)
+./espbrew flash firmware.bin --preset bootloader # Chip-specific bootloader offset
+./espbrew flash firmware.bin --preset partitions # 0x8000
+./espbrew flash firmware.bin --preset app        # 0x10000 (default)
+
+# Multi-image mode
+./espbrew flash --bootloader bootloader.bin --partitions partitions.bin --app app.bin
+
+# ESP-IDF integration (reads flash_args)
+./espbrew flash --build-dir build/
 ```
 
 ### Monitor
@@ -103,16 +118,43 @@ esp-ci-cluster/
 
 ## Hardware Support
 
-Supports all ESP32 variants:
-- ESP8266
-- ESP32 (original)
-- ESP32-S2
-- ESP32-S3
-- ESP32-C2
-- ESP32-C3
-- ESP32-C5
-- ESP32-C6
-- ESP32-H2
+Supports all ESP32 variants with chip-specific bootloader offsets:
+
+| Chip      | Bootloader Offset | Notes                   |
+|-----------|-------------------|-------------------------|
+| ESP8266   | 0x0               |                         |
+| ESP32     | 0x1000            | Original ESP32 only     |
+| ESP32-S2  | 0x1000            |                         |
+| ESP32-S3  | 0x0               |                         |
+| ESP32-C2  | 0x0               |                         |
+| ESP32-C3  | 0x0               |                         |
+| ESP32-C5  | 0x2000            |                         |
+| ESP32-C6  | 0x0               |                         |
+| ESP32-H2  | 0x0               |                         |
+| ESP32-P4  | 0x2000            | Rev 1                   |
+
+## File Type Detection
+
+ESPBrew automatically detects firmware file types:
+
+- **ELF files**: Rejected with error (use `espflash save-image` or build .bin)
+- **ESP32 Binary**: Magic 0xE9 (ESP32) or 0xEA (ESP8266)
+- **Raw Binary**: Any other data (flashed as-is)
+
+## ESP-IDF Integration
+
+Use `--build-dir` to flash ESP-IDF projects:
+
+```bash
+cd esp-idf-project
+idf.py build
+espbrew flash --build-dir build/
+```
+
+Reads `build/flash_args` for flash settings and file list. Automatically finds files in:
+- `{build-dir}/{filename}`
+- `{build-dir}/bootloader/{filename}`
+- `{filename}` (fallback)
 
 ## Development
 

@@ -176,6 +176,7 @@ type FlashSubmitRequest struct {
 	FirmwareURL string                 `json:"firmware_url,omitempty"`
 	Options     map[string]interface{} `json:"options,omitempty"`
 	ClientID    string                 `json:"client_id,omitempty"`
+	Offset      int                    `json:"offset,omitempty"`
 }
 
 type FlashSubmitResponse struct {

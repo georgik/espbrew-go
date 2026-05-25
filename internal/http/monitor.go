@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"sync"
+	"time"
 
 	"codeberg.org/georgik/espbrew-go/internal/monitor"
 	"github.com/gorilla/mux"
@@ -35,7 +36,10 @@ func (s *MonitorServer) RegisterRoutes(r *mux.Router) {
 
 func (s *MonitorServer) handleMonitorWebSocket(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
-	port := vars["port"]
+	portName := vars["port"]
+
+	// Reconstruct full port path from name
+	port := "/dev/" + portName
 
 	conn, err := monitorUpgrader.Upgrade(w, r, nil)
 	if err != nil {
@@ -57,6 +61,9 @@ func (s *MonitorServer) handleMonitorWebSocket(w http.ResponseWriter, r *http.Re
 
 	exitOn := r.URL.Query().Get("exit_on")
 
+	// Check if reset is requested
+	resetRequested := r.URL.Query().Get("reset") == "1"
+
 	cfg := monitor.StreamConfig{
 		Port:     port,
 		BaudRate: baud,
@@ -74,12 +81,23 @@ func (s *MonitorServer) handleMonitorWebSocket(w http.ResponseWriter, r *http.Re
 	// Send start message
 	conn.WriteJSON(map[string]interface{}{
 		"type": "monitor_start",
-		"port": port,
+		"port": portName,
 		"baud": baud,
 	})
 
 	// Handle incoming messages
 	go s.handleMonitorMessages(conn, session)
+
+	// Trigger reset after connection is established (if requested)
+	if resetRequested {
+		// Small delay to ensure client is ready
+		time.Sleep(50 * time.Millisecond)
+		session.SendControl(&monitor.ControlMessage{Type: "reset"})
+		// Send reset confirmation
+		conn.WriteJSON(map[string]interface{}{
+			"type": "reset_complete",
+		})
+	}
 
 	// Stream data to client
 	for {
@@ -88,6 +106,7 @@ func (s *MonitorServer) handleMonitorWebSocket(w http.ResponseWriter, r *http.Re
 			if !ok {
 				return
 			}
+			log.Debug().Int("bytes", len(data)).Str("content", string(data)).Msg("Sending data to client")
 			msg := map[string]interface{}{
 				"type": "data",
 				"data": data,

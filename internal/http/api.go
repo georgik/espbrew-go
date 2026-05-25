@@ -42,8 +42,8 @@ func (h *APIHandler) RegisterRoutes(r *mux.Router) {
 	api.HandleFunc("/nodes", h.handleNodes).Methods("GET")
 	api.HandleFunc("/devices", h.handleDevices).Methods("GET")
 
-	// Device reservation
-	api.HandleFunc("/devices/{path}/reserve", h.handleReserveDevice).Methods("POST", "DELETE")
+	// Device reservation (use device name without /dev/ prefix)
+	api.HandleFunc("/devices/{name}/reserve", h.handleReserveDevice).Methods("POST", "DELETE")
 
 	// Jobs
 	api.HandleFunc("/jobs", h.handleListJobs).Methods("GET")
@@ -256,6 +256,22 @@ type ReserveDeviceRequest struct {
 	TTL      int    `json:"ttl"`
 }
 
+// findDeviceByName looks up a device by its base name (without /dev/ prefix)
+func (h *APIHandler) findDeviceByName(deviceName string) (string, *protocol.DeviceInfo, bool) {
+	if h.leader == nil {
+		return "", nil, false
+	}
+
+	state := h.leader.State()
+	for path, dev := range state.Devices {
+		// Match by base name
+		if path == "/dev/"+deviceName || path == deviceName {
+			return path, dev, true
+		}
+	}
+	return "", nil, false
+}
+
 func (h *APIHandler) handleReserveDevice(w http.ResponseWriter, r *http.Request) {
 	if h.leader == nil {
 		respondError(w, http.StatusNotImplemented, "Device reservation only available on leader")
@@ -263,10 +279,10 @@ func (h *APIHandler) handleReserveDevice(w http.ResponseWriter, r *http.Request)
 	}
 
 	vars := mux.Vars(r)
-	devicePath := vars["path"]
+	deviceName := vars["name"]
 
-	state := h.leader.State()
-	device, exists := state.Devices[devicePath]
+	// Look up device by name
+	devicePath, device, exists := h.findDeviceByName(deviceName)
 	if !exists {
 		respondError(w, http.StatusNotFound, "Device not found")
 		return
@@ -297,7 +313,7 @@ func (h *APIHandler) handleReserveDevice(w http.ResponseWriter, r *http.Request)
 
 		respondJSON(w, map[string]interface{}{
 			"status":    "reserved",
-			"device":    devicePath,
+			"device":    deviceName,
 			"client_id": req.ClientID,
 		})
 		return
@@ -325,7 +341,7 @@ func (h *APIHandler) handleReserveDevice(w http.ResponseWriter, r *http.Request)
 
 		respondJSON(w, map[string]interface{}{
 			"status": "released",
-			"device": devicePath,
+			"device": deviceName,
 		})
 		return
 	}

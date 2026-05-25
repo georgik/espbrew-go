@@ -31,6 +31,7 @@ type Job struct {
 	Firmware    string
 	DevicePath  string
 	DeviceNode  string
+	Offset      int
 	Status      JobStatus
 	Progress    int
 	CreatedAt   time.Time
@@ -53,7 +54,7 @@ func NewJobQueue() *JobQueue {
 	}
 }
 
-func (q *JobQueue) Enqueue(firmwarePath, devicePath string) *Job {
+func (q *JobQueue) Enqueue(firmwarePath, devicePath string, offset int) *Job {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
@@ -61,6 +62,7 @@ func (q *JobQueue) Enqueue(firmwarePath, devicePath string) *Job {
 		ID:         uuid.New().String(),
 		Firmware:   firmwarePath,
 		DevicePath: devicePath,
+		Offset:     offset,
 		Status:     JobPending,
 		CreatedAt:  time.Now(),
 	}
@@ -68,7 +70,7 @@ func (q *JobQueue) Enqueue(firmwarePath, devicePath string) *Job {
 	q.jobs[job.ID] = job
 	q.pending = append(q.pending, job.ID)
 
-	log.Info().Str("job_id", job.ID).Str("device", devicePath).
+	log.Info().Str("job_id", job.ID).Str("device", devicePath).Int("offset", offset).
 		Msg("Job enqueued")
 
 	return job

@@ -47,6 +47,7 @@ type FlashSubmitRequest struct {
 	FirmwareURL string                 `json:"firmware_url,omitempty"`
 	Options     map[string]interface{} `json:"options,omitempty"`
 	ClientID    string                 `json:"client_id,omitempty"`
+	Offset      int                    `json:"offset,omitempty"`
 }
 
 type FlashSubmitResponse struct {
@@ -127,8 +128,8 @@ func (h *FlashHandler) handleFlashSubmit(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Enqueue job
-	job, err := h.leader.EnqueueJob(firmwarePath, req.DevicePath)
+	// Enqueue job with offset
+	job, err := h.leader.EnqueueJobWithOffset(firmwarePath, req.DevicePath, req.Offset)
 	if err != nil {
 		respondError(w, http.StatusConflict, err.Error())
 		return

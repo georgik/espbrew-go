@@ -8,12 +8,26 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"path/filepath"
 	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
 	"github.com/rs/zerolog/log"
 )
+
+// DeviceName extracts the base device name without the /dev/ prefix
+func DeviceName(devicePath string) string {
+	if devicePath == "" {
+		return ""
+	}
+	base := filepath.Base(devicePath)
+	if base == devicePath {
+		// Already just a name
+		return devicePath
+	}
+	return base
+}
 
 type MonitorMessage struct {
 	Type    string `json:"type"`    // "data", "error", "monitor_start", "reset_complete"
@@ -94,11 +108,12 @@ func (c *MonitorClient) Close() error {
 
 func (c *MonitorClient) readLoop(ctx context.Context, dataCh chan<- []byte, errorCh chan<- error) {
 	defer close(dataCh)
-	defer close(errorCh)
+	// Note: errorCh closed explicitly before return to ensure proper order
 
 	for {
 		select {
 		case <-ctx.Done():
+			close(errorCh)
 			return
 		default:
 			c.mu.Lock()
@@ -106,6 +121,7 @@ func (c *MonitorClient) readLoop(ctx context.Context, dataCh chan<- []byte, erro
 			c.mu.Unlock()
 
 			if conn == nil {
+				close(errorCh)
 				return
 			}
 
@@ -116,6 +132,7 @@ func (c *MonitorClient) readLoop(ctx context.Context, dataCh chan<- []byte, erro
 				case errorCh <- fmt.Errorf("read error: %w", err):
 				case <-ctx.Done():
 				}
+				close(errorCh)
 				return
 			}
 
@@ -126,9 +143,10 @@ func (c *MonitorClient) readLoop(ctx context.Context, dataCh chan<- []byte, erro
 				if msg.Data != "" {
 					data, err := base64.StdEncoding.DecodeString(msg.Data)
 					if err != nil {
-						log.Warn().Err(err).Msg("Failed to decode base64 data")
+						log.Warn().Err(err).Str("b64_data", msg.Data).Msg("Failed to decode base64 data")
 						continue
 					}
+					log.Debug().Int("bytes", len(data)).Str("content", string(data)).Msg("Received data from server")
 					select {
 					case dataCh <- data:
 					case <-ctx.Done():
@@ -140,8 +158,10 @@ func (c *MonitorClient) readLoop(ctx context.Context, dataCh chan<- []byte, erro
 				select {
 				case errorCh <- fmt.Errorf("monitor error: %s", msg.Message):
 				case <-ctx.Done():
+					close(errorCh)
 					return
 				}
+				close(errorCh)
 				return
 
 			case "reset_complete":
@@ -156,8 +176,10 @@ func (c *MonitorClient) readLoop(ctx context.Context, dataCh chan<- []byte, erro
 				select {
 				case errorCh <- fmt.Errorf("server exit: %s", msg.Message):
 				case <-ctx.Done():
+					close(errorCh)
 					return
 				}
+				close(errorCh)
 				return
 			}
 		}
@@ -184,8 +206,16 @@ func (c *MonitorClient) Stream(ctx context.Context, dataCh chan<- []byte, errorC
 		}
 		query += fmt.Sprintf("exit_on=%s", jsonEscape(c.exitOn))
 	}
+	if c.reset {
+		if query == "" {
+			query = "?"
+		} else {
+			query += "&"
+		}
+		query += "reset=1"
+	}
 
-	wsURL += "/api/v1/monitor/" + c.devicePath + query
+	wsURL += "/api/v1/monitor/" + DeviceName(c.devicePath) + query
 
 	log.Debug().Str("url", wsURL).Msg("Connecting to monitor WebSocket")
 
@@ -207,14 +237,6 @@ func (c *MonitorClient) Stream(ctx context.Context, dataCh chan<- []byte, errorC
 	c.cancel = cancel
 	go c.readLoop(ctx, dataCh, errorCh)
 
-	// Send reset if requested
-	if c.reset {
-		time.Sleep(100 * time.Millisecond)
-		if err := c.Reset(); err != nil {
-			log.Warn().Err(err).Msg("Failed to send reset")
-		}
-	}
-
 	return nil
 }
 
@@ -225,8 +247,8 @@ func (c *MonitorClient) ReserveDevice(clientID string, ttl int) error {
 	}
 	body, _ := json.Marshal(req)
 
-	reqURL := c.baseURL + "/api/v1/devices/" + c.devicePath + "/reserve"
-	resp, err := c.httpClient.Post(reqURL, "application/json", nil)
+	reqURL := c.baseURL + "/api/v1/devices/" + DeviceName(c.devicePath) + "/reserve"
+	resp, err := c.httpClient.Post(reqURL, "application/json", bytes.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("reserve request: %w", err)
 	}
@@ -237,7 +259,6 @@ func (c *MonitorClient) ReserveDevice(clientID string, ttl int) error {
 		return fmt.Errorf("reserve failed: status %d: %s", resp.StatusCode, string(respBody))
 	}
 
-	_ = body // Will be used for future authentication
 	return nil
 }
 
@@ -247,7 +268,7 @@ func (c *MonitorClient) ReleaseDevice(clientID string) error {
 	}
 	body, _ := json.Marshal(req)
 
-	reqURL := c.baseURL + "/api/v1/devices/" + c.devicePath + "/reserve"
+	reqURL := c.baseURL + "/api/v1/devices/" + DeviceName(c.devicePath) + "/reserve"
 	req2, _ := http.NewRequest("DELETE", reqURL, bytes.NewReader(body))
 	req2.Header.Set("Content-Type", "application/json")
 
@@ -262,7 +283,6 @@ func (c *MonitorClient) ReleaseDevice(clientID string) error {
 		return fmt.Errorf("release failed: status %d: %s", resp.StatusCode, string(respBody))
 	}
 
-	_ = body // Will be used for future authentication
 	return nil
 }
 

@@ -73,6 +73,9 @@ func (s *StreamSession) readLoop() {
 	buf := make([]byte, 1024)
 	exitPattern := s.config.ExitOn
 
+	maxRetries := 10
+	retryDelay := 200 * time.Millisecond
+
 	for {
 		select {
 		case <-s.ctx.Done():
@@ -96,13 +99,51 @@ func (s *StreamSession) readLoop() {
 					return
 				}
 			}
-			if err != nil && err != io.EOF {
-				// Timeout errors are expected when no data available
-				select {
-				case s.errorCh <- err:
-				default:
+			if err != nil {
+				if err == io.EOF {
+					return
 				}
-				return
+
+				// Timeout errors are expected when no data available - continue
+				if err.Error() == "timeout" || err.Error() == "read timeout" {
+					continue
+				}
+
+				// Other errors (device disconnect) - try to reconnect
+				log.Warn().Str("session", s.id).Err(err).Msg("Device read error, attempting reconnect")
+
+				// Try to reconnect with backoff
+				for attempt := 1; attempt <= maxRetries; attempt++ {
+					select {
+					case <-s.ctx.Done():
+						return
+					case <-time.After(retryDelay * time.Duration(attempt)):
+					}
+
+					// Close old port
+					if s.port != nil {
+						s.port.Close()
+					}
+
+					// Try to reopen
+					mode := &serial.Mode{BaudRate: s.config.BaudRate}
+					port, openErr := serial.Open(s.config.Port, mode)
+					if openErr == nil {
+						s.port = port
+						s.port.SetReadTimeout(50 * time.Millisecond)
+						log.Info().Str("session", s.id).Int("attempt", attempt).Msg("Reconnected to device")
+						break // Success, continue reading
+					}
+
+					if attempt == maxRetries {
+						log.Error().Str("session", s.id).Err(err).Msg("Failed to reconnect after retries")
+						select {
+						case s.errorCh <- err:
+						default:
+						}
+						return
+					}
+				}
 			}
 		}
 	}
@@ -116,16 +157,13 @@ func (s *StreamSession) controlLoop() {
 		case msg := <-s.control:
 			switch msg.Type {
 			case "reset":
-				s.port.Close()
+				// Toggle DTR/RTS to reset device
+				s.port.SetDTR(false)
+				s.port.SetRTS(true)
 				time.Sleep(100 * time.Millisecond)
-				mode := &serial.Mode{BaudRate: s.config.BaudRate}
-				port, err := serial.Open(s.config.Port, mode)
-				if err != nil {
-					s.errorCh <- err
-					return
-				}
-				s.port = port
-				s.port.SetReadTimeout(50 * time.Millisecond)
+				s.port.SetRTS(false)
+				time.Sleep(50 * time.Millisecond)
+				log.Debug().Str("session", s.id).Msg("Device reset triggered")
 			case "close":
 				s.cancel()
 				return

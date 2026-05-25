@@ -11,6 +11,7 @@ import (
 
 	"codeberg.org/georgik/espbrew-go/internal/cluster"
 	"codeberg.org/georgik/espbrew-go/pkg/protocol"
+	"github.com/gorilla/mux"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -197,4 +198,82 @@ func TestServer_Start(t *testing.T) {
 	assert.Equal(t, "healthy", health["status"])
 
 	cancel()
+}
+
+func TestAPIHandler_ReserveDevice(t *testing.T) {
+	master := cluster.NewLeaderNode("test", &cluster.LeaderConfig{
+		HTTPPort:          8080,
+		DisablemDNS:       true,
+		HeartbeatInterval: time.Second,
+		NodeTimeout:       5 * time.Second,
+	})
+	master.Start(context.Background())
+	defer master.Stop()
+
+	// Register a test device with full path
+	master.RegisterDevice(&protocol.DeviceInfo{
+		Path:   "/dev/cu.usbmodem1401",
+		VID:    0x4348,
+		PID:    0x0027,
+		Status: "available",
+	})
+
+	handler := NewAPIHandler(master)
+
+	// Test reserve with device name (without /dev/)
+	body := `{"client_id": "test-client"}`
+	req := httptest.NewRequest("POST", "/api/v1/devices/cu.usbmodem1401/reserve", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req = mux.SetURLVars(req, map[string]string{"name": "cu.usbmodem1401"})
+	w := httptest.NewRecorder()
+
+	handler.handleReserveDevice(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var resp map[string]interface{}
+	json.NewDecoder(w.Body).Decode(&resp)
+
+	assert.Equal(t, "reserved", resp["status"])
+	assert.Equal(t, "cu.usbmodem1401", resp["device"])
+	assert.Equal(t, "test-client", resp["client_id"])
+
+	// Test release
+	req2 := httptest.NewRequest("DELETE", "/api/v1/devices/cu.usbmodem1401/reserve", strings.NewReader(body))
+	req2.Header.Set("Content-Type", "application/json")
+	req2 = mux.SetURLVars(req2, map[string]string{"name": "cu.usbmodem1401"})
+	w2 := httptest.NewRecorder()
+
+	handler.handleReserveDevice(w2, req2)
+
+	assert.Equal(t, http.StatusOK, w2.Code)
+
+	var resp2 map[string]interface{}
+	json.NewDecoder(w2.Body).Decode(&resp2)
+
+	assert.Equal(t, "released", resp2["status"])
+}
+
+func TestAPIHandler_ReserveDeviceNotFound(t *testing.T) {
+	master := cluster.NewLeaderNode("test", &cluster.LeaderConfig{
+		HTTPPort:          8080,
+		DisablemDNS:       true,
+		HeartbeatInterval: time.Second,
+		NodeTimeout:       5 * time.Second,
+	})
+	master.Start(context.Background())
+	defer master.Stop()
+
+	handler := NewAPIHandler(master)
+
+	// Try to reserve non-existent device
+	body := `{"client_id": "test-client"}`
+	req := httptest.NewRequest("POST", "/api/v1/devices/missing/reserve", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req = mux.SetURLVars(req, map[string]string{"name": "missing"})
+	w := httptest.NewRecorder()
+
+	handler.handleReserveDevice(w, req)
+
+	assert.Equal(t, http.StatusNotFound, w.Code)
 }

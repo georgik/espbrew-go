@@ -8,7 +8,7 @@ import (
 func TestJobQueue_Cancel(t *testing.T) {
 	q := NewJobQueue()
 
-	job := q.Enqueue("test.bin", "/dev/ttyUSB0")
+	job := q.Enqueue("test.bin", "/dev/ttyUSB0", 0)
 
 	if job.Status != JobPending {
 		t.Errorf("expected pending, got %s", job.Status)
@@ -32,7 +32,7 @@ func TestJobQueue_Cancel(t *testing.T) {
 func TestJobQueue_CancelCompletedJob(t *testing.T) {
 	q := NewJobQueue()
 
-	job := q.Enqueue("test.bin", "/dev/ttyUSB0")
+	job := q.Enqueue("test.bin", "/dev/ttyUSB0", 0)
 
 	// Mark as completed
 	q.Complete(job.ID, nil)
@@ -55,7 +55,7 @@ func TestJobQueue_CancelNotFound(t *testing.T) {
 func TestJobQueue_Timeout(t *testing.T) {
 	q := NewJobQueue()
 
-	job := q.Enqueue("test.bin", "/dev/ttyUSB0")
+	job := q.Enqueue("test.bin", "/dev/ttyUSB0", 0)
 
 	err := q.Timeout(job.ID)
 	if err != nil {
@@ -76,9 +76,9 @@ func TestJobQueue_CleanupOld(t *testing.T) {
 	q := NewJobQueue()
 
 	// Create some jobs
-	job1 := q.Enqueue("test1.bin", "/dev/ttyUSB0")
-	job2 := q.Enqueue("test2.bin", "/dev/ttyUSB1")
-	job3 := q.Enqueue("test3.bin", "/dev/ttyUSB2")
+	job1 := q.Enqueue("test1.bin", "/dev/ttyUSB0", 0)
+	job2 := q.Enqueue("test2.bin", "/dev/ttyUSB1", 0)
+	job3 := q.Enqueue("test3.bin", "/dev/ttyUSB2", 0)
 
 	// Complete job1 and job2, leave job3 pending
 	q.Complete(job1.ID, nil)
@@ -114,7 +114,7 @@ func TestJobQueue_CleanupOld(t *testing.T) {
 func TestJobQueue_CleanupOldPending(t *testing.T) {
 	q := NewJobQueue()
 
-	job := q.Enqueue("test.bin", "/dev/ttyUSB0")
+	job := q.Enqueue("test.bin", "/dev/ttyUSB0", 0)
 
 	// Pending jobs should not be cleaned up even if old
 	removed := q.CleanupOld(0)

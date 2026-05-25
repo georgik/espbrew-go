@@ -177,6 +177,10 @@ func (l *LeaderNode) RegisterDevice(device *protocol.DeviceInfo) {
 }
 
 func (l *LeaderNode) EnqueueJob(firmwarePath, devicePath string) (*Job, error) {
+	return l.EnqueueJobWithOffset(firmwarePath, devicePath, 0)
+}
+
+func (l *LeaderNode) EnqueueJobWithOffset(firmwarePath, devicePath string, offset int) (*Job, error) {
 	l.mu.RLock()
 	_, exists := l.state.Devices[devicePath]
 	l.mu.RUnlock()
@@ -185,7 +189,7 @@ func (l *LeaderNode) EnqueueJob(firmwarePath, devicePath string) (*Job, error) {
 		return nil, fmt.Errorf("device not found: %s", devicePath)
 	}
 
-	job := l.queue.Enqueue(firmwarePath, devicePath)
+	job := l.queue.Enqueue(firmwarePath, devicePath, offset)
 
 	// Reserve device for this job
 	if !l.devices.Reserve(devicePath, job.ID) {

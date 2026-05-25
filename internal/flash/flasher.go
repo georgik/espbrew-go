@@ -62,6 +62,10 @@ func (f *Flasher) Flash(ctx context.Context, req *FlashRequest) *FlashResult {
 
 	log.Info().Str("port", req.Port).Msg("Chip detected")
 
+	// Log detected chip for visibility
+	chipName := flasher.ChipName()
+	log.Info().Str("chip", chipName).Msg("Detected chip")
+
 	log.Info().Int("bytes", len(req.Firmware)).Msg("Starting flash")
 
 	var progressFunc espflasher.ProgressFunc

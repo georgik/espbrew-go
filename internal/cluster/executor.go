@@ -118,6 +118,7 @@ func (e *JobExecutor) executeJob(workerID int, job *Job) {
 	req := &flash.FlashRequest{
 		Port:     job.DevicePath,
 		Firmware: firmware,
+		Offset:   job.Offset,
 		Progress: make(chan int, 10),
 	}
 

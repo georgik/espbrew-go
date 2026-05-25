@@ -118,7 +118,7 @@ func runMonitorRemoteStream(monitorClient *cluster.MonitorClient) error {
 
 	fmt.Printf("Remote monitor on %s @ %d baud\n", monitorOpts.port, monitorOpts.baud)
 	if !monitorOpts.noRaw {
-		fmt.Println("CTRL+C to exit")
+		fmt.Println("CTRL+R to reset, CTRL+C to exit")
 	}
 	fmt.Println("---")
 
@@ -138,6 +138,16 @@ func runMonitorRemoteStream(monitorClient *cluster.MonitorClient) error {
 			}
 		}
 	}()
+
+	// stdin reader for reset command
+	var stdinBuf []byte
+	if !monitorOpts.noRaw {
+		stdinBuf = make([]byte, 1)
+		oldState, err := term.MakeRaw(int(os.Stdin.Fd()))
+		if err == nil {
+			defer term.Restore(int(os.Stdin.Fd()), oldState)
+		}
+	}
 
 	var timeoutCh <-chan time.Time
 	if monitorOpts.duration > 0 {
@@ -161,6 +171,7 @@ func runMonitorRemoteStream(monitorClient *cluster.MonitorClient) error {
 			if !ok {
 				return nil
 			}
+			log.Debug().Int("bytes", len(data)).Str("content", string(data)).Msg("Writing data to stdout")
 			os.Stdout.Write(data)
 
 			// Check exit patterns
@@ -170,6 +181,23 @@ func runMonitorRemoteStream(monitorClient *cluster.MonitorClient) error {
 			}
 			if monitorOpts.exitOn != "" && contains(dataStr, monitorOpts.exitOn) {
 				exitCh <- monitorExit{success: true, message: fmt.Sprintf("Success pattern matched: %s", monitorOpts.exitOn)}
+			}
+
+		default:
+			if !monitorOpts.noRaw {
+				n, _ := os.Stdin.Read(stdinBuf)
+				if n > 0 {
+					c := stdinBuf[0]
+					if c == 18 { // CTRL+R
+						fmt.Println("\r\n[Resetting device]")
+						if err := monitorClient.Reset(); err != nil {
+							log.Warn().Err(err).Msg("Reset failed")
+						}
+						fmt.Println("---")
+					} else if c == 3 { // CTRL+C
+						exitCh <- monitorExit{success: true, message: "Exiting..."}
+					}
+				}
 			}
 		}
 	}
