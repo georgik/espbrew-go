@@ -11,6 +11,19 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
+// Virtual device definitions
+var virtualDevices = []struct {
+	path      string
+	chip      string
+	flashSize string
+	label     string
+}{
+	{path: "wokwi-esp32s3", chip: "esp32s3", flashSize: "16MB", label: "Wokwi ESP32-S3"},
+	{path: "wokwi-esp32", chip: "esp32", flashSize: "4MB", label: "Wokwi ESP32"},
+	{path: "wokwi-esp32c3", chip: "esp32c3", flashSize: "4MB", label: "Wokwi ESP32-C3"},
+	{path: "wokwi-esp32c6", chip: "esp32c6", flashSize: "8MB", label: "Wokwi ESP32-C6"},
+}
+
 // LeaderNode coordinates the cluster, discovers local devices, and aggregates state from peers.
 type LeaderNode struct {
 	id       string
@@ -73,6 +86,9 @@ func (l *LeaderNode) Start(ctx context.Context) error {
 
 	l.wg.Add(1)
 	go l.runMaintenanceLoop()
+
+	// Register virtual devices
+	l.registerVirtualDevices()
 
 	return nil
 }
@@ -257,6 +273,23 @@ func (l *LeaderNode) handleDeviceEvent(event device.DeviceEvent) {
 	case device.DeviceRemoved:
 		delete(l.state.Devices, event.Path)
 		log.Info().Str("path", event.Path).Msg("Device removed from leader")
+	}
+}
+
+func (l *LeaderNode) registerVirtualDevices() {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	for _, vdev := range virtualDevices {
+		dev := &protocol.DeviceInfo{
+			Path:   vdev.path,
+			NodeID: l.id,
+			Status: "available",
+		}
+		l.state.Devices[vdev.path] = dev
+		l.devices.Register(vdev.path)
+		log.Info().Str("path", vdev.path).Str("chip", vdev.chip).Str("label", vdev.label).
+			Msg("Virtual device registered")
 	}
 }
 

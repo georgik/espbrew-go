@@ -111,12 +111,15 @@ esp-ci-cluster/
 ├── cmd/
 │   └── espbrew/           # CLI tool (flash, monitor, devices, cluster)
 ├── internal/
+│   ├── chips/             # Common chip type definitions
 │   ├── cluster/           # Leader/peer, job queue, mDNS
 │   ├── device/            # Device discovery, serial scanning
-│   ├── flash/             # Flash operations (uses espflasher)
+│   ├── flash/             # Flash operations, ELF parsing
+│   │   ├── bootloaders/   # Bootloader cache manager
+│   │   └── espfmt/        # ESP-IDF image format builder
 │   ├── http/              # HTTP API, WebSocket, dashboard
 │   ├── monitor/           # Serial stream multiplexing
-│   ├── project/           # Project detection (ESP-IDF, etc.)
+│   ├── project/           # Project detection (ESP-IDF, Rust ESP)
 │   ├── dashboard/         # Embedded dashboard files
 │   └── config/            # Configuration management
 ├── pkg/protocol/          # Cluster message types
@@ -126,28 +129,61 @@ esp-ci-cluster/
 
 ## Hardware Support
 
-Supports all ESP32 variants with chip-specific bootloader offsets:
+Supports all ESP32 variants with chip-specific bootloader offsets and automatic bootloader management:
 
-| Chip      | Bootloader Offset | Notes                   |
-|-----------|-------------------|-------------------------|
-| ESP8266   | 0x0               |                         |
-| ESP32     | 0x1000            | Original ESP32 only     |
-| ESP32-S2  | 0x1000            |                         |
-| ESP32-S3  | 0x0               |                         |
-| ESP32-C2  | 0x0               |                         |
-| ESP32-C3  | 0x0               |                         |
-| ESP32-C5  | 0x2000            |                         |
-| ESP32-C6  | 0x0               |                         |
-| ESP32-H2  | 0x0               |                         |
-| ESP32-P4  | 0x2000            | Rev 1                   |
+| Chip      | Bootloader Offset | Bootloader Size | Notes                   |
+|-----------|-------------------|-----------------|-------------------------|
+| ESP32     | 0x1000            | ~26 KB          | Original ESP32 only     |
+| ESP32-S2  | 0x1000            | ~22 KB          |                         |
+| ESP32-S3  | 0x0               | ~21 KB          |                         |
+| ESP32-C2  | 0x0               | ~20 KB          |                         |
+| ESP32-C3  | 0x0               | ~21 KB          |                         |
+| ESP32-C5  | 0x2000            | ~22 KB          |                         |
+| ESP32-C6  | 0x0               | ~23 KB          |                         |
+| ESP32-H2  | 0x0               | ~22 KB          |                         |
+| ESP32-C61 | 0x0               | ~22 KB          |                         |
+| ESP32-P4  | 0x2000            | ~23 KB          | Rev 0, Rev 1 supported   |
+
+Bootloaders are automatically downloaded from the espflash project repository on first use and cached locally for subsequent operations.
 
 ## File Type Detection
 
-ESPBrew automatically detects firmware file types:
+ESPBrew automatically detects and processes firmware file types:
 
-- **ELF files**: Rejected with error (use `espflash save-image` or build .bin)
+- **ELF files**: Automatically converted to ESP-IDF format with bootloader and partition table
 - **ESP32 Binary**: Magic 0xE9 (ESP32) or 0xEA (ESP8266)
-- **Raw Binary**: Any other data (flashed as-is)
+- **Raw Binary**: Flashed as-is to specified offset
+
+### ELF File Support
+
+When flashing ELF files (Rust no_std ESP projects), ESPBrew:
+
+1. Extracts ROM and RAM segments from the ELF
+2. Downloads appropriate bootloader for the target chip
+3. Generates default partition table
+4. Creates ESP-IDF format image with proper checksums
+5. Flashes the complete image
+
+This enables direct flashing of Rust ESP projects without intermediate conversion steps.
+
+### Technical Implementation Notes
+
+ELF to ESP image conversion uses ESP-IDF ExtendedImageHeader format (24 bytes header):
+
+- **Flash Size Encoding**: Byte 3 encodes both size and frequency as `(size_enum << 4) | freq_enum`
+  - Size enum: 0x00=1MB, 0x01=2MB, 0x02=4MB, 0x04=16MB, etc.
+  - Frequency enum: 0x00=40MHz, 0x01=26MHz, 0x02=20MHz, 0x0F=80MHz
+  - Example: 16MB @ 40MHz = 0x40 (0x04 << 4 | 0x00)
+
+- **Segment Merging**: ROM segments from adjacent memory regions are merged with proper padding
+  - IROM segment starts at 0x42000000 (ESP32-S3 code flash)
+  - DROM segment starts at 0x3C000000 (ESP32-S3 data flash)
+  - Segments are sorted by address and merged with zero padding for gaps
+
+- **Image Structure**: App image follows ESP-IDF v3.0 format
+  - 24-byte extended header with chip ID, entry point, WP pin
+  - Segment headers (8 bytes each): address + length
+  - Segment data followed by SHA-256 digest
 
 ## Project Detection
 
@@ -203,6 +239,42 @@ Reads `build/flash_args` for flash settings and file list. Automatically finds f
 - `{build-dir}/bootloader/{filename}`
 - `{filename}` (fallback)
 
+## Bootloader Management
+
+ESPBrew automatically downloads and caches ESP32 bootloaders from the official espflash repository on first use. Bootloaders are stored in `~/.espbrew/bootloaders/` and reused for subsequent flashes.
+
+### Supported Chips
+
+Bootloaders are downloaded from espflash v3.1.0 for:
+
+ESP32, ESP32-S2, ESP32-S3, ESP32-C2, ESP32-C3, ESP32-C5, ESP32-C6, ESP32-C61, ESP32-H2, ESP32-P4
+
+### Custom Bootloaders
+
+To use a custom bootloader binary:
+
+```bash
+espbrew flash --bootloader /path/to/custom-bootloader.bin firmware.bin
+```
+
+### Cache Management
+
+The bootloader cache is automatically managed:
+
+- First use: Downloads required bootloader (~21 KB per chip)
+- Subsequent uses: Loads from cache (no network access)
+- Cache location: `~/.espbrew/bootloaders/`
+
+To clear the cache:
+
+```bash
+rm -rf ~/.espbrew/bootloaders/
+```
+
+### Offline Operation
+
+Once bootloaders are cached, ESPBrew works offline. For air-gapped environments, pre-populate the cache by running espbrew once with network access, or manually copy bootloader binaries to `~/.espbrew/bootloaders/`.
+
 ## Development
 
 ```bash
@@ -215,8 +287,22 @@ go vet ./...
 # Run tests
 go test ./...
 
+# Run tests with coverage
+go test -cover ./...
+
 # Build all
 go build ./...
+```
+
+### Test Data
+
+Some integration tests require ESP32 ELF files. See [internal/flash/testdata/README.md](internal/flash/testdata/README.md) for setup instructions.
+
+Tests requiring external data will skip gracefully if not available. To run all tests:
+
+```bash
+export ESPBREW_TEST_ELF="/path/to/your/esp32s3-binary"
+go test ./internal/flash/... -v
 ```
 
 ## License

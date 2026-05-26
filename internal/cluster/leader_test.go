@@ -32,7 +32,7 @@ func TestLeaderNodeRegistersDevice(t *testing.T) {
 	leader.state.Devices[dev.Path] = dev
 
 	state := leader.State()
-	assert.Equal(t, 1, len(state.Devices))
+	assert.Equal(t, 5, len(state.Devices)) // 4 virtual devices + 1 registered
 	assert.Equal(t, dev, state.Devices[dev.Path])
 }
 

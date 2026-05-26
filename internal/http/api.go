@@ -119,8 +119,9 @@ func (h *APIHandler) handleDevices(w http.ResponseWriter, r *http.Request) {
 	for _, path := range paths {
 		d := state.Devices[path]
 
-		// Filter to only show ESP devices
-		if !device.IsESPDevice(d.VID, d.PID) {
+		// Filter to only show ESP devices or virtual devices
+		isVirtual := len(path) > 6 && path[:6] == "wokwi-"
+		if !isVirtual && !device.IsESPDevice(d.VID, d.PID) {
 			continue
 		}
 
@@ -130,6 +131,10 @@ func (h *APIHandler) handleDevices(w http.ResponseWriter, r *http.Request) {
 			"pid":     fmt.Sprintf("0x%04x", d.PID),
 			"state":   d.Status,
 			"node_id": d.NodeID,
+		}
+		if isVirtual {
+			dev["virtual"] = true
+			dev["label"] = "Wokwi " + path[6:]
 		}
 		if d.SerialNumber != "" {
 			dev["serial"] = d.SerialNumber

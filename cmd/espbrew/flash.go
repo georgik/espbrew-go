@@ -81,6 +81,7 @@ func init() {
 var projectRegistry = func() *project.Registry {
 	r := project.NewRegistry()
 	r.Register(&project.ESPIDFDetector{})
+	r.Register(&project.RustESPDetector{})
 	return r
 }()
 
@@ -333,11 +334,6 @@ func runMultiImage(opts *flash.FlasherOptions) error {
 			return fmt.Errorf("read %s: %w", img.name, err)
 		}
 		totalSize += len(data)
-
-		fileType := flash.DetectFileType(data)
-		if fileType == flash.FileTypeELF {
-			return fmt.Errorf("%s: %w", img.name, flash.ErrELFNotSupported)
-		}
 	}
 
 	log.Info().Int("total_bytes", totalSize).Msg("Multi-image flash")
@@ -398,10 +394,6 @@ func runSingleImage(opts *flash.FlasherOptions, firmwarePath string) error {
 	// Detect file type
 	fileType := flash.DetectFileType(data)
 	log.Info().Str("type", fileType.String()).Msg("Detected file type")
-
-	if fileType == flash.FileTypeELF {
-		return fmt.Errorf("%w", flash.ErrELFNotSupported)
-	}
 
 	// Resolve offset from preset
 	offset := flashOpts.offset
@@ -527,11 +519,6 @@ func runBuildDir() error {
 		data, err := os.ReadFile(resolvedPath)
 		if err != nil {
 			return fmt.Errorf("read %s: %w", resolvedPath, err)
-		}
-
-		fileType := flash.DetectFileType(data)
-		if fileType == flash.FileTypeELF {
-			return fmt.Errorf("%s: %w", resolvedPath, flash.ErrELFNotSupported)
 		}
 
 		log.Info().

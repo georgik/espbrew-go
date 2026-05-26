@@ -30,9 +30,9 @@ func TestESPIDFDetector_Name(t *testing.T) {
 
 func TestESPIDFDetector_Detect(t *testing.T) {
 	tests := []struct {
-		name     string
-		files    map[string]string
-		want     bool
+		name  string
+		files map[string]string
+		want  bool
 	}{
 		{
 			name: "valid ESP-IDF project",
@@ -45,8 +45,8 @@ func TestESPIDFDetector_Detect(t *testing.T) {
 		{
 			name: "ESP-IDF with sdkconfig.defaults",
 			files: map[string]string{
-				"CMakeLists.txt":       "cmake_minimum_required(VERSION 3.5)",
-				"sdkconfig.defaults":   "CONFIG_IDF_TARGET=esp32",
+				"CMakeLists.txt":     "cmake_minimum_required(VERSION 3.5)",
+				"sdkconfig.defaults": "CONFIG_IDF_TARGET=esp32",
 			},
 			want: true,
 		},
@@ -72,9 +72,9 @@ func TestESPIDFDetector_Detect(t *testing.T) {
 		{
 			name: "with main source file",
 			files: map[string]string{
-				"CMakeLists.txt":  "cmake_minimum_required(VERSION 3.5)",
-				"sdkconfig":       "CONFIG_IDF_TARGET=esp32",
-				"main/main.c":     "void app_main() {}",
+				"CMakeLists.txt":      "cmake_minimum_required(VERSION 3.5)",
+				"sdkconfig":           "CONFIG_IDF_TARGET=esp32",
+				"main/main.c":         "void app_main() {}",
 				"main/CMakeLists.txt": "idf_component_register(SRCS \"main.c\")",
 			},
 			want: true,
@@ -201,9 +201,9 @@ func TestESPIDFDetector_GetArtifacts(t *testing.T) {
 				return os.WriteFile(filepath.Join(tmpDir, "app.bin"), []byte("app"), 0644)
 			},
 			checkFunc: func(t *testing.T, a *BuildArtifacts) {
-			 assert.Empty(t, a.Bootloader)
-			 assert.Empty(t, a.Partitions)
-			 assert.Contains(t, a.App, "app.bin")
+				assert.Empty(t, a.Bootloader)
+				assert.Empty(t, a.Partitions)
+				assert.Contains(t, a.App, "app.bin")
 			},
 		},
 		{

@@ -185,6 +185,23 @@ type FlashSubmitResponse struct {
 	DevicePath string `json:"device_path"`
 }
 
+// ReadFlashRequest represents a request to read flash memory
+type ReadFlashRequest struct {
+	DevicePath string `json:"device_path"`
+	Address    uint32 `json:"address"`
+	Size       uint32 `json:"size"`
+	ClientID   string `json:"client_id,omitempty"`
+}
+
+// ReadFlashResponse represents the response from a read flash request
+type ReadFlashResponse struct {
+	JobID       string `json:"job_id"`
+	Status      string `json:"status"` // pending, running, completed, failed
+	Size        int64  `json:"size"`
+	DownloadURL string `json:"download_url,omitempty"`
+	Error       string `json:"error,omitempty"`
+}
+
 func (c *Client) UploadFirmware(filePath string) (*FlashUploadResponse, error) {
 	file, err := os.Open(filePath)
 	if err != nil {
@@ -264,6 +281,85 @@ func (c *Client) SubmitFlash(req FlashSubmitRequest) (*FlashSubmitResponse, erro
 	}
 
 	return &flashResp, nil
+}
+
+// ReadFlash submits a flash read job to the cluster
+func (c *Client) ReadFlash(req ReadFlashRequest) (*ReadFlashResponse, error) {
+	body, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("marshal request: %w", err)
+	}
+
+	httpReq, err := http.NewRequest("POST", c.baseURL+"/api/v1/flash/read", bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.doWithRetry(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var readResp ReadFlashResponse
+	if err := json.NewDecoder(resp.Body).Decode(&readResp); err != nil {
+		return nil, fmt.Errorf("decode response: %w", err)
+	}
+
+	return &readResp, nil
+}
+
+// GetReadFlashStatus retrieves the status of a read flash job
+func (c *Client) GetReadFlashStatus(jobID string) (*ReadFlashResponse, error) {
+	req, err := http.NewRequest("GET", c.baseURL+"/api/v1/flash/read/"+jobID, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+
+	resp, err := c.doWithRetry(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var statusResp ReadFlashResponse
+	if err := json.NewDecoder(resp.Body).Decode(&statusResp); err != nil {
+		return nil, fmt.Errorf("decode response: %w", err)
+	}
+
+	return &statusResp, nil
+}
+
+// DownloadReadFlash downloads the flash read data
+func (c *Client) DownloadReadFlash(jobID string) ([]byte, error) {
+	req, err := http.NewRequest("GET", c.baseURL+"/api/v1/flash/download/"+jobID, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+
+	resp, err := c.doWithRetry(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("status %d: %s", resp.StatusCode, string(body))
+	}
+
+	return io.ReadAll(resp.Body)
 }
 
 func (c *Client) CancelJob(jobID string) error {

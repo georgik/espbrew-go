@@ -4,10 +4,10 @@ package project
 type ProjectType string
 
 const (
-	ProjectTypeNone    ProjectType = ""
-	ProjectTypeESPIDF  ProjectType = "esp-idf"
+	ProjectTypeNone       ProjectType = ""
+	ProjectTypeESPIDF     ProjectType = "esp-idf"
 	ProjectTypePlatformIO ProjectType = "platformio" // Future
-	ProjectTypeArduino ProjectType = "arduino"       // Future
+	ProjectTypeArduino    ProjectType = "arduino"    // Future
 )
 
 // BuildArtifacts contains paths to build outputs

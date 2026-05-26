@@ -38,7 +38,7 @@ func TestAPIHandler_HandleStatus(t *testing.T) {
 	json.NewDecoder(w.Body).Decode(&resp)
 
 	assert.Equal(t, 0.0, resp["nodes_count"])
-	assert.Equal(t, 0.0, resp["devices_count"])
+	assert.Equal(t, 4.0, resp["devices_count"]) // 4 virtual devices auto-registered
 	assert.Equal(t, "leader", resp["role"])
 	assert.Equal(t, 0.0, resp["queue_size"])
 }
@@ -96,7 +96,7 @@ func TestAPIHandler_HandleDevices(t *testing.T) {
 	var resp []interface{}
 	json.NewDecoder(w.Body).Decode(&resp)
 
-	assert.Equal(t, 1, len(resp))
+	assert.Equal(t, 5, len(resp)) // 4 virtual + 1 registered device
 }
 
 func TestAPIHandler_HandleQueue(t *testing.T) {
