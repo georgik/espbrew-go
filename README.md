@@ -11,6 +11,7 @@ ESP32 cluster flashing tool written in Go. Manages multiple ESP32 devices across
 - **ESP-IDF Integration**: Read flash_args directly from build directory
 - **Cluster Mode**: Leader/peer architecture for distributed flashing
 - **Device Discovery**: Automatic ESP device detection via USB serial
+- **Camera Support**: Discover and capture images from connected cameras
 - **Job Queue**: Queue and manage flash jobs across all available devices
 - **Device Locking**: Prevents concurrent access to serial ports
 - **Remote Flashing**: Flash devices from any machine on the network
@@ -95,6 +96,18 @@ idf.py build
 ./espbrew monitor --exit-on "ready" # Exit on pattern
 ```
 
+### Camera
+
+```bash
+./espbrew camera list              # List available cameras
+./espbrew camera list --json       # Output as JSON
+./espbrew capture                  # Capture image with defaults
+./espbrew capture --list           # List cameras before capturing
+./espbrew capture --camera-id cam-001 --width 1920 --height 1080
+./espbrew capture --format jpg --quality 90
+./espbrew capture my-photo.jpg     # Save to specific file
+```
+
 ### Cluster
 
 ```bash
@@ -111,6 +124,7 @@ esp-ci-cluster/
 ├── cmd/
 │   └── espbrew/           # CLI tool (flash, monitor, devices, cluster)
 ├── internal/
+│   ├── camera/            # Camera discovery and capture
 │   ├── chips/             # Common chip type definitions
 │   ├── cluster/           # Leader/peer, job queue, mDNS
 │   ├── device/            # Device discovery, serial scanning
@@ -274,6 +288,64 @@ rm -rf ~/.espbrew/bootloaders/
 ### Offline Operation
 
 Once bootloaders are cached, ESPBrew works offline. For air-gapped environments, pre-populate the cache by running espbrew once with network access, or manually copy bootloader binaries to `~/.espbrew/bootloaders/`.
+
+## Camera Support
+
+ESPBrew can discover and capture images from connected cameras, useful for HMI demos, automated testing, and remote monitoring.
+
+### Platform Support
+
+Camera support uses platform-specific tools:
+
+| Platform | Capture Tool | Installation |
+|----------|-------------|--------------|
+| macOS    | imagesnap   | `brew install imagesnap` |
+| Linux    | fswebcam    | `sudo apt install fswebcam` |
+| Windows  | (planned)   | - |
+
+### Discovery
+
+Camera discovery uses pion/mediadevices library to enumerate video input devices:
+
+```bash
+espbrew camera list
+```
+
+Output includes camera ID, name, backend type, and supported formats.
+
+### Capture
+
+Capture images to `~/.espbrew/captures/` with timestamped filenames:
+
+```bash
+espbrew capture                                          # Use defaults
+espbrew capture --width 1920 --height 1080 --quality 90  # Specify parameters
+espbrew capture --camera-id cam-001                    # Specific camera
+espbrew capture output.jpg                              # Custom output path
+```
+
+Captured images are organized by date:
+```
+~/.espbrew/captures/
+├── 2026-05-27/
+│   ├── cam-abc123-001.jpg
+│   ├── cam-abc123-002.jpg
+│   └── metadata.json
+```
+
+### Storage
+
+- **Location**: `~/.espbrew/captures/`
+- **Organization**: Daily directories with metadata.json
+- **Formats**: JPEG (default), PNG support planned
+- **Metadata**: Camera ID, timestamp, dimensions, file size
+
+### Use Cases
+
+- **HMI Testing**: Capture screenshots of GUI demos for verification
+- **AI Observation**: Feed camera images to AI for automated testing
+- **Remote Monitoring**: Capture and review images from cluster nodes
+- **Documentation**: Generate visual records of device states
 
 ## Development
 
