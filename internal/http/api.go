@@ -10,6 +10,7 @@ import (
 	"codeberg.org/georgik/espbrew-go/internal/camera"
 	"codeberg.org/georgik/espbrew-go/internal/cluster"
 	"codeberg.org/georgik/espbrew-go/internal/device"
+	"codeberg.org/georgik/espbrew-go/internal/inventory"
 	"codeberg.org/georgik/espbrew-go/pkg/protocol"
 	"github.com/gorilla/mux"
 	"github.com/rs/zerolog/log"
@@ -42,6 +43,10 @@ func (h *APIHandler) RegisterRoutes(r *mux.Router) {
 	api.HandleFunc("/status", h.handleStatus).Methods("GET")
 	api.HandleFunc("/nodes", h.handleNodes).Methods("GET")
 	api.HandleFunc("/devices", h.handleDevices).Methods("GET")
+	api.HandleFunc("/devices", h.handleAddDevice).Methods("POST")
+	api.HandleFunc("/devices/probe", h.handleProbeDevice).Methods("POST")
+	api.HandleFunc("/devices/{id}", h.handleDeviceDetail).Methods("GET")
+	api.HandleFunc("/devices/{id}", h.handleUpdateDevice).Methods("PUT", "PATCH")
 	api.HandleFunc("/cameras", h.handleCameras).Methods("GET")
 
 	// Device reservation (use device name without /dev/ prefix)
@@ -130,11 +135,14 @@ func (h *APIHandler) handleDevices(w http.ResponseWriter, r *http.Request) {
 		}
 
 		dev := map[string]interface{}{
-			"path":    d.Path,
-			"vid":     fmt.Sprintf("0x%04x", d.VID),
-			"pid":     fmt.Sprintf("0x%04x", d.PID),
-			"state":   d.Status,
-			"node_id": d.NodeID,
+			"path":      d.Path,
+			"vid":       fmt.Sprintf("0x%04x", d.VID),
+			"pid":       fmt.Sprintf("0x%04x", d.PID),
+			"state":     d.Status,
+			"status":    d.Status,
+			"node_id":   d.NodeID,
+			"device_id": d.DeviceID,
+			"chip_type": d.ChipType,
 		}
 		if isVirtual {
 			dev["virtual"] = true
@@ -538,5 +546,313 @@ func (h *APIHandler) handleNodeHeartbeat(w http.ResponseWriter, r *http.Request)
 
 	respondJSON(w, map[string]interface{}{
 		"status": "ok",
+	})
+}
+
+// handleDeviceDetail returns detailed device information from inventory
+func (h *APIHandler) handleDeviceDetail(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	deviceID := vars["id"]
+
+	// Open inventory
+	inv, err := inventory.NewInventory()
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "Failed to open inventory")
+		return
+	}
+
+	// Try to find by device ID
+	dev, err := inv.Get(deviceID)
+	if err != nil {
+		// Try by alias
+		dev, err = inv.FindByAlias(deviceID)
+		if err != nil {
+			// Try by MAC (with esp- prefix)
+			if len(deviceID) == 17 && deviceID[2] == ':' {
+				dev, err = inv.Get("esp-" + deviceID)
+			}
+			if err != nil {
+				respondError(w, http.StatusNotFound, "Device not found in inventory")
+				return
+			}
+		}
+	}
+
+	// Build response with full device details
+	response := map[string]interface{}{
+		"device_id":   dev.DeviceID,
+		"mac_address": dev.MACAddress,
+		"chip_type":   dev.ChipType,
+		"chip_rev":    dev.ChipRev,
+		"flash_size":  dev.FlashSize,
+		"psram_size":  dev.PSRAMSize,
+		"psram_type":  dev.PSRAMType,
+		"board_model": dev.BoardModel,
+		"description": dev.Description,
+		"first_seen":  dev.FirstSeen.Format(time.RFC3339),
+		"last_seen":   dev.LastSeen.Format(time.RFC3339),
+		"last_path":   dev.LastPath,
+		"node_id":     dev.NodeID,
+		"aliases":     dev.Aliases,
+		"tags":        dev.Tags,
+	}
+
+	// Check if device is currently connected
+	state := h.node.State()
+	connectedPath := ""
+	for path, d := range state.Devices {
+		if d.DeviceID == dev.DeviceID || d.SerialNumber == dev.MACAddress {
+			connectedPath = path
+			response["connected"] = true
+			response["current_path"] = path
+			response["status"] = d.Status
+			break
+		}
+	}
+	if connectedPath == "" {
+		response["connected"] = false
+		response["status"] = "offline"
+	}
+
+	respondJSON(w, response)
+}
+
+// handleUpdateDevice updates device tags and aliases
+type UpdateDeviceRequest struct {
+	MACAddress  string   `json:"mac_address"`
+	ChipType    string   `json:"chip_type"`
+	ChipRev     string   `json:"chip_rev"`
+	FlashSize   uint32   `json:"flash_size"`
+	PSRAMSize   uint32   `json:"psram_size"`
+	PSRAMType   string   `json:"psram_type"`
+	BoardModel  string   `json:"board_model"`
+	Description string   `json:"description"`
+	Aliases     []string `json:"aliases"`
+	Tags        []string `json:"tags"`
+}
+
+func (h *APIHandler) handleUpdateDevice(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	deviceID := vars["id"]
+
+	// Open inventory
+	inv, err := inventory.NewInventory()
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "Failed to open inventory")
+		return
+	}
+
+	// Find device (reuse logic from handleDeviceDetail)
+	dev, err := inv.Get(deviceID)
+	if err != nil {
+		dev, err = inv.FindByAlias(deviceID)
+		if err != nil {
+			if len(deviceID) == 17 && deviceID[2] == ':' {
+				dev, err = inv.Get("esp-" + deviceID)
+			}
+			if err != nil {
+				respondError(w, http.StatusNotFound, "Device not found in inventory")
+				return
+			}
+		}
+	}
+
+	var req UpdateDeviceRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+
+	// Update device fields (only update non-empty values)
+	updated := &inventory.DeviceInventory{
+		DeviceID:    dev.DeviceID,
+		MACAddress:  dev.MACAddress,
+		ChipType:    dev.ChipType,
+		ChipRev:     dev.ChipRev,
+		FlashSize:   dev.FlashSize,
+		PSRAMSize:   dev.PSRAMSize,
+		PSRAMType:   dev.PSRAMType,
+		BoardModel:  dev.BoardModel,
+		Description: dev.Description,
+		Aliases:     dev.Aliases,
+		Tags:        dev.Tags,
+		FirstSeen:   dev.FirstSeen,
+		LastSeen:    dev.LastSeen,
+		LastPath:    dev.LastPath,
+		NodeID:      dev.NodeID,
+	}
+
+	// Update fields from request if provided
+	if req.MACAddress != "" {
+		updated.MACAddress = req.MACAddress
+	}
+	if req.ChipType != "" {
+		updated.ChipType = req.ChipType
+	}
+	if req.ChipRev != "" {
+		updated.ChipRev = req.ChipRev
+	}
+	if req.FlashSize > 0 {
+		updated.FlashSize = req.FlashSize
+	}
+	if req.PSRAMSize > 0 {
+		updated.PSRAMSize = req.PSRAMSize
+	}
+	if req.PSRAMType != "" {
+		updated.PSRAMType = req.PSRAMType
+	}
+	if req.BoardModel != "" {
+		updated.BoardModel = req.BoardModel
+	}
+	if req.Description != "" {
+		updated.Description = req.Description
+	}
+	if req.Aliases != nil {
+		updated.Aliases = req.Aliases
+	}
+	if req.Tags != nil {
+		updated.Tags = req.Tags
+	}
+
+	if err := inv.Save(updated); err != nil {
+		respondError(w, http.StatusInternalServerError, "Failed to update device")
+		return
+	}
+
+	respondJSON(w, map[string]interface{}{
+		"status":    "updated",
+		"device_id": dev.DeviceID,
+	})
+}
+
+// AddDeviceRequest is the request body for manually adding a device
+type AddDeviceRequest struct {
+	Path        string   `json:"path"` // Device path (e.g., /dev/cu.usbserial-xxx)
+	MACAddress  string   `json:"mac_address"`
+	ChipType    string   `json:"chip_type"`
+	ChipRev     string   `json:"chip_rev"`
+	FlashSize   uint32   `json:"flash_size"`
+	PSRAMSize   uint32   `json:"psram_size"`
+	PSRAMType   string   `json:"psram_type"`
+	BoardModel  string   `json:"board_model"`
+	Description string   `json:"description"`
+	Aliases     []string `json:"aliases"`
+	Tags        []string `json:"tags"`
+}
+
+// handleAddDevice manually adds a device to inventory (for devices that can't be probed)
+func (h *APIHandler) handleAddDevice(w http.ResponseWriter, r *http.Request) {
+	var req AddDeviceRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+
+	// Validate required fields (only chip_type is required, MAC is optional)
+	if req.ChipType == "" {
+		respondError(w, http.StatusBadRequest, "chip_type is required")
+		return
+	}
+
+	// Open inventory
+	inv, err := inventory.NewInventory()
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "Failed to open inventory")
+		return
+	}
+
+	// Generate device ID from MAC if provided, otherwise use timestamp-based ID
+	var deviceID string
+	if req.MACAddress != "" {
+		deviceID = "esp-" + req.MACAddress
+		// Check if device already exists
+		if _, err := inv.Get(deviceID); err == nil {
+			respondError(w, http.StatusConflict, "Device with this MAC already exists")
+			return
+		}
+	} else {
+		// Generate ID from chip type + timestamp
+		deviceID = fmt.Sprintf("manual-%s-%d", req.ChipType, time.Now().Unix())
+	}
+
+	// Create new device entry
+	now := time.Now()
+	dev := &inventory.DeviceInventory{
+		DeviceID:    deviceID,
+		MACAddress:  req.MACAddress,
+		ChipType:    req.ChipType,
+		ChipRev:     req.ChipRev,
+		FlashSize:   req.FlashSize,
+		PSRAMSize:   req.PSRAMSize,
+		PSRAMType:   req.PSRAMType,
+		BoardModel:  req.BoardModel,
+		Description: req.Description,
+		Aliases:     req.Aliases,
+		Tags:        req.Tags,
+		FirstSeen:   now,
+		LastSeen:    now,
+	}
+
+	if req.Aliases == nil {
+		dev.Aliases = []string{}
+	}
+	if req.Tags == nil {
+		dev.Tags = []string{}
+	}
+
+	// Store path if provided (for linking to cluster state)
+	if req.Path != "" {
+		dev.LastPath = req.Path
+	}
+
+	if err := inv.Save(dev); err != nil {
+		respondError(w, http.StatusInternalServerError, "Failed to save device")
+		return
+	}
+
+	// If path provided and we're leader, link to cluster state
+	if req.Path != "" && h.leader != nil {
+		h.leader.UpdateDeviceInfo(req.Path, deviceID, req.ChipType, req.MACAddress)
+	}
+
+	respondJSON(w, map[string]interface{}{
+		"status":    "created",
+		"device_id": deviceID,
+	})
+}
+
+// handleProbeDevice manually probes a device (user must put device in bootloader first)
+type ProbeDeviceRequest struct {
+	Path string `json:"path"`
+}
+
+func (h *APIHandler) handleProbeDevice(w http.ResponseWriter, r *http.Request) {
+	if h.leader == nil {
+		respondError(w, http.StatusNotImplemented, "Device probe only available on leader")
+		return
+	}
+
+	var req ProbeDeviceRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+
+	if req.Path == "" {
+		respondError(w, http.StatusBadRequest, "path is required")
+		return
+	}
+
+	devInfo, err := h.leader.ProbeDevice(req.Path)
+	if err != nil {
+		respondError(w, http.StatusServiceUnavailable, "Probe failed: "+err.Error())
+		return
+	}
+
+	respondJSON(w, map[string]interface{}{
+		"status":    "probed",
+		"device_id": devInfo.DeviceID,
+		"chip_type": devInfo.ChipType,
+		"path":      devInfo.Path,
 	})
 }

@@ -9,6 +9,7 @@ import (
 	"codeberg.org/georgik/espbrew-go/internal/cluster"
 	"codeberg.org/georgik/espbrew-go/internal/device"
 	"codeberg.org/georgik/espbrew-go/internal/flash"
+	"codeberg.org/georgik/espbrew-go/internal/inventory"
 	"codeberg.org/georgik/espbrew-go/internal/project"
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
@@ -22,6 +23,7 @@ var flashCmd = &cobra.Command{
 
 var flashOpts struct {
 	clusterURL      string
+	deviceID        string // Device selection by ID, alias, or MAC
 	port            string
 	baud            int
 	offset          int
@@ -50,6 +52,7 @@ var flashOpts struct {
 
 func init() {
 	flashCmd.Flags().StringVar(&flashOpts.clusterURL, "cluster", "", "Cluster URL for remote flashing")
+	flashCmd.Flags().StringVar(&flashOpts.deviceID, "device", "", "Device selection by ID, alias, or MAC (from inventory)")
 	flashCmd.Flags().StringVarP(&flashOpts.port, "port", "p", "", "Serial port (auto-detect if empty)")
 	flashCmd.Flags().IntVar(&flashOpts.baud, "baud", 460800, "Flash baud rate")
 	flashCmd.Flags().IntVar(&flashOpts.offset, "offset", 0, "Flash offset (default 0x0, ignored with --preset)")
@@ -149,6 +152,15 @@ func runFlashRemote(args []string) error {
 
 	// Single image mode
 	firmwarePath := args[0]
+
+	// Resolve device from inventory if --device specified
+	if flashOpts.deviceID != "" {
+		port, err := resolveDevice()
+		if err != nil {
+			return err
+		}
+		flashOpts.port = port
+	}
 
 	client := cluster.NewClient(flashOpts.clusterURL)
 
@@ -254,7 +266,41 @@ func displayProgressBar(progress int, status string) {
 	fmt.Printf("\r[%s] %d%% %s", bar, progress, status)
 }
 
+// resolveDevice resolves device identifier to port path using inventory
+func resolveDevice() (string, error) {
+	if flashOpts.deviceID == "" {
+		return "", fmt.Errorf("no device identifier specified")
+	}
+
+	inv, err := inventory.NewInventory()
+	if err != nil {
+		return "", fmt.Errorf("load inventory: %w", err)
+	}
+
+	dev, err := findDevice(inv, flashOpts.deviceID)
+	if err != nil {
+		return "", err
+	}
+
+	// Get last known path
+	if dev.LastPath == "" {
+		return "", fmt.Errorf("device %s has no recorded path (probe device first)", dev.DeviceID)
+	}
+
+	log.Info().Str("device_id", dev.DeviceID).Str("path", dev.LastPath).Msg("Resolved device from inventory")
+	return dev.LastPath, nil
+}
+
 func runFlashLocal(args []string) error {
+	// Resolve device from inventory if --device specified
+	if flashOpts.deviceID != "" {
+		port, err := resolveDevice()
+		if err != nil {
+			return err
+		}
+		flashOpts.port = port
+	}
+
 	if flashOpts.port == "" {
 		scanner := device.NewScanner()
 		espPorts, err := scanner.ScanESP()
@@ -568,6 +614,15 @@ func runBuildDir() error {
 }
 
 func runFlashRemoteMultiImage() error {
+	// Resolve device from inventory if --device specified
+	if flashOpts.deviceID != "" {
+		port, err := resolveDevice()
+		if err != nil {
+			return err
+		}
+		flashOpts.port = port
+	}
+
 	client := cluster.NewClient(flashOpts.clusterURL)
 
 	// Get available devices if port not specified

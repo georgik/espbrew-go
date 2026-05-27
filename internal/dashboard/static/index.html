@@ -369,6 +369,115 @@
         @keyframes spin {
             to { transform: rotate(360deg); }
         }
+
+        .device-item { cursor: pointer; }
+        .device-item:hover { background: var(--bg-tertiary); }
+
+        .detail-modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.8);
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+        }
+
+        .detail-modal.active { display: flex; }
+
+        .detail-content {
+            background: var(--bg-secondary);
+            border-radius: 12px;
+            padding: 24px;
+            max-width: 600px;
+            width: 90%;
+            max-height: 80vh;
+            overflow-y: auto;
+        }
+
+        .detail-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            padding-bottom: 16px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .detail-title { font-size: 18px; font-weight: 600; }
+
+        .detail-close {
+            background: var(--bg-tertiary);
+            color: var(--text-primary);
+            border: none;
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            cursor: pointer;
+            font-size: 18px;
+        }
+
+        .detail-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px 0;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .detail-row:last-child { border-bottom: none; }
+
+        .detail-label { color: var(--text-secondary); font-size: 13px; }
+        .detail-value { font-weight: 500; font-size: 14px; }
+
+        .tag-list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+
+        .tag {
+            background: var(--bg-tertiary);
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 12px;
+        }
+
+        .tag .remove {
+            margin-left: 6px;
+            cursor: pointer;
+            opacity: 0.7;
+        }
+
+        .tag .remove:hover { opacity: 1; }
+
+        .add-tag-form {
+            display: flex;
+            gap: 8px;
+            margin-top: 12px;
+        }
+
+        .add-tag-form input {
+            flex: 1;
+            padding: 6px 10px;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            color: var(--text-primary);
+            font-size: 13px;
+        }
+
+        .add-tag-form button {
+            padding: 6px 12px;
+            font-size: 13px;
+        }
+
+        .warning-banner {
+            background: var(--warning);
+            color: white;
+            padding: 10px 14px;
+            border-radius: 8px;
+            margin-bottom: 16px;
+            font-size: 13px;
+        }
     </style>
 </head>
 <body>
@@ -472,10 +581,24 @@
         </div>
     </div>
 
+    <div id="device-modal" class="detail-modal">
+        <div class="detail-content">
+            <div class="detail-header">
+                <div class="detail-title">Device Details</div>
+                <button class="detail-close" onclick="closeDeviceModal()">&times;</button>
+            </div>
+            <div id="device-detail-content">
+                <div style="text-align: center; padding: 20px;">Loading...</div>
+            </div>
+        </div>
+    </div>
+
     <script>
         let ws;
         let reconnectInterval;
         let cameras = [];
+
+        let reconnectTimeout;
 
         function connect() {
             const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -484,7 +607,10 @@
             ws.onopen = () => {
                 console.log('WebSocket connected');
                 updateConnectionStatus(true);
-                clearInterval(reconnectInterval);
+                if (reconnectTimeout) {
+                    clearTimeout(reconnectTimeout);
+                    reconnectTimeout = null;
+                }
             };
 
             ws.onmessage = (event) => {
@@ -495,7 +621,13 @@
             ws.onclose = () => {
                 console.log('WebSocket disconnected');
                 updateConnectionStatus(false);
-                reconnectInterval = setInterval(connect, 3000);
+                // Use timeout instead of interval to prevent multiple concurrent reconnections
+                if (!reconnectTimeout) {
+                    reconnectTimeout = setTimeout(() => {
+                        reconnectTimeout = null;
+                        connect();
+                    }, 3000);
+                }
             };
 
             ws.onerror = (error) => {
@@ -562,17 +694,21 @@
                 return;
             }
 
-            list.innerHTML = devices.map(d => `
-                <li class="device-item">
+            list.innerHTML = devices.map(d => {
+                // Show warning indicator if device is not probed
+                const needsProbe = !d.device_id && !d.chip_type;
+                return `
+                <li class="device-item" onclick="showDeviceDetail('${d.path}', '${d.device_id || ''}', '${d.chip_type || ''}')" title="Click for details">
                     <div class="device-info">
                         <span class="status-dot ${d.status}"></span>
                         <span class="device-name">${d.path}</span>
+                        ${needsProbe ? '<span style="color: var(--warning); margin-left: 8px;" title="Device not probed">⚠</span>' : ''}
                     </div>
                     <span style="font-size: 12px; color: var(--text-secondary)">
-                        ${d.node_id || 'local'}
+                        ${d.chip_type || 'Unknown chip'}
                     </span>
                 </li>
-            `).join('');
+            `}).join('');
 
             select.innerHTML = '<option value="">Select device...</option>' +
                 devices.filter(d => d.status === 'available').map(d =>
@@ -772,6 +908,546 @@
                 alert('Failed to delete: ' + error.message);
                 btn.disabled = false;
                 btn.textContent = 'Delete';
+            }
+        }
+
+        let currentDeviceId = null;
+        let currentDevicePath = null;
+
+        // Extract chip type from Wokwi device path (e.g., "wokwi-esp32s3" -> "ESP32-S3")
+        function wokwiChipType(path) {
+            const match = path.match(/^wokwi-(esp32[cs][236]|esp32)$/);
+            if (!match) return null;
+            const chip = match[1];
+            switch (chip) {
+                case 'esp32s3': return 'ESP32-S3';
+                case 'esp32s2': return 'ESP32-S2';
+                case 'esp32c3': return 'ESP32-C3';
+                case 'esp32c6': return 'ESP32-C6';
+                case 'esp32h2': return 'ESP32-H2';
+                case 'esp32': return 'ESP32';
+                default: return null;
+            }
+        }
+
+        async function showDeviceDetail(path, deviceId, chipType) {
+            document.getElementById('device-modal').classList.add('active');
+            currentDevicePath = path;
+
+            const content = document.getElementById('device-detail-content');
+
+            // If no deviceId, show edit form with probe option
+            if (!deviceId) {
+                // For Wokwi devices, extract chip type from path
+                const inferredChip = chipType || wokwiChipType(path);
+                renderDeviceEditForm(path, inferredChip);
+                return;
+            }
+
+            try {
+                const response = await fetch(`/api/v1/devices/${deviceId}`);
+                if (!response.ok) {
+                    throw new Error('Failed to fetch device details');
+                }
+
+                const dev = await response.json();
+                currentDeviceId = dev.device_id;
+                currentDevicePath = dev.current_path || path;
+                renderDeviceDetail(dev);
+            } catch (error) {
+                console.error('Failed to load device details:', error);
+                content.innerHTML = '<div style="text-align: center; padding: 20px; color: var(--error);">Failed to load device details</div>';
+            }
+        }
+
+        async function probeDevice(path) {
+            const content = document.getElementById('device-detail-content');
+            content.innerHTML = '<div style="text-align: center; padding: 30px;"><span class="spinner"></span> Probing device...</div>';
+
+            try {
+                const response = await fetch('/api/v1/devices/probe', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ path: path })
+                });
+
+                if (response.ok) {
+                    const result = await response.json();
+                    // Refresh device details with new device_id
+                    showDeviceDetail(path, result.device_id);
+                } else {
+                    const error = await response.json();
+                    content.innerHTML = `
+                        <div style="text-align: center; padding: 20px;">
+                            <p style="color: var(--error); margin-bottom: 16px;">Probe failed: ${error.error || 'Unknown error'}</p>
+                            <button class="btn" onclick="showDeviceDetail('${path}', null)">Try Again</button>
+                            <p style="margin-top: 16px; font-size: 12px; color: var(--text-secondary);">
+                                Make sure device is in bootloader mode:<br>
+                                Hold BOOT button, press RESET, release BOOT
+                            </p>
+                        </div>
+                    `;
+                }
+            } catch (error) {
+                console.error('Probe failed:', error);
+                content.innerHTML = `
+                    <div style="text-align: center; padding: 20px;">
+                        <p style="color: var(--error); margin-bottom: 16px;">Probe failed: ${error.message}</p>
+                        <button class="btn" onclick="showDeviceDetail('${path}', null)">Try Again</button>
+                    </div>
+                `;
+            }
+        }
+
+        function renderDeviceEditForm(path, chipType) {
+            const content = document.getElementById('device-detail-content');
+            const chipOptions = [
+                { value: 'ESP32', label: 'ESP32' },
+                { value: 'ESP32-S2', label: 'ESP32-S2' },
+                { value: 'ESP32-S3', label: 'ESP32-S3' },
+                { value: 'ESP32-C3', label: 'ESP32-C3' },
+                { value: 'ESP32-C6', label: 'ESP32-C6' },
+                { value: 'ESP32-H2', label: 'ESP32-H2' },
+            ];
+
+            const optionsHtml = chipOptions.map(opt =>
+                `<option value="${opt.value}" ${opt.value === chipType ? 'selected' : ''}>${opt.label}</option>`
+            ).join('');
+
+            content.innerHTML = `
+                <div class="warning-banner" style="margin-bottom: 16px;">
+                    Device not identified. Enter details manually or probe the device.
+                </div>
+                <form id="device-edit-form" onsubmit="saveDeviceInfo(event)">
+                    <div class="form-group">
+                        <label>MAC Address</label>
+                        <input type="text" id="edit-mac" placeholder="AA:BB:CC:DD:EE:FF" pattern="^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$">
+                        <span style="font-size: 11px; color: var(--text-secondary);">Optional. Format: AA:BB:CC:DD:EE:FF</span>
+                    </div>
+                    <div class="form-group">
+                        <label>Chip Type *</label>
+                        <select id="edit-chip" required>
+                            <option value="">Select chip...</option>
+                            ${optionsHtml}
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Chip Revision</label>
+                        <input type="text" id="edit-chiprev" placeholder="e.g. 1.0">
+                    </div>
+                    <div class="form-group">
+                        <label>Flash Size (bytes)</label>
+                        <input type="number" id="edit-flash" placeholder="e.g. 4194304 (4MB)">
+                    </div>
+                    <div class="form-group">
+                        <label>PSRAM Size (bytes)</label>
+                        <input type="number" id="edit-psram" placeholder="e.g. 8388608 (8MB)">
+                    </div>
+                    <div class="form-group">
+                        <label>Board Model</label>
+                        <input type="text" id="edit-board" placeholder="e.g. ESP32-S3-DevKitC-1">
+                    </div>
+                    <div class="form-group">
+                        <label>Description</label>
+                        <input type="text" id="edit-desc" placeholder="Optional notes">
+                    </div>
+                    <div style="display: flex; gap: 12px; margin-top: 20px;">
+                        <button type="button" class="btn" onclick="probeDevice('${path}')" style="flex: 1;">Probe Device</button>
+                        <button type="submit" class="btn btn-secondary" style="flex: 1;">Save Info</button>
+                    </div>
+                    <div style="margin-top: 16px; padding: 12px; background: var(--bg-tertiary); border-radius: 8px; font-size: 12px; color: var(--text-secondary);">
+                        <strong>Probe:</strong> Reset device to read boot log and auto-fill details (MAC required for unique ID).<br>
+                        <strong>Save Info:</strong> Manually enter device details (MAC optional, Chip Type required).
+                    </div>
+                </form>
+            `;
+        }
+
+        async function saveDeviceInfo(event) {
+            event.preventDefault();
+
+            const mac = document.getElementById('edit-mac').value.trim();
+            const chipType = document.getElementById('edit-chip').value;
+            const chipRev = document.getElementById('edit-chiprev').value.trim();
+            const flashSize = parseInt(document.getElementById('edit-flash').value) || 0;
+            const psramSize = parseInt(document.getElementById('edit-psram').value) || 0;
+            const boardModel = document.getElementById('edit-board').value.trim();
+            const description = document.getElementById('edit-desc').value.trim();
+
+            // Validate chip_type is still required
+            if (!chipType) {
+                alert('Chip Type is required');
+                return;
+            }
+
+            // Validate MAC format if provided
+            if (mac && !/^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$/.test(mac)) {
+                alert('Invalid MAC address format. Use AA:BB:CC:DD:EE:FF');
+                return;
+            }
+
+            const content = document.getElementById('device-detail-content');
+            content.innerHTML = '<div style="text-align: center; padding: 30px;"><span class="spinner"></span> Saving device info...</div>';
+
+            try {
+                const response = await fetch('/api/v1/devices', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        path: currentDevicePath,
+                        mac_address: mac,
+                        chip_type: chipType,
+                        chip_rev: chipRev,
+                        flash_size: flashSize,
+                        psram_size: psramSize,
+                        board_model: boardModel,
+                        description: description,
+                        tags: [],
+                        aliases: []
+                    })
+                });
+
+                if (response.ok) {
+                    const result = await response.json();
+                    // Refresh device list and show the newly created device
+                    refreshData();
+                    setTimeout(() => showDeviceDetail('', result.device_id), 500);
+                } else {
+                    const error = await response.json();
+                    content.innerHTML = `
+                        <div style="text-align: center; padding: 20px;">
+                            <p style="color: var(--error); margin-bottom: 16px;">Failed to save: ${error.error || 'Unknown error'}</p>
+                            <button class="btn" onclick="showDeviceDetail('${currentDevicePath}', null)">Try Again</button>
+                        </div>
+                    `;
+                }
+            } catch (error) {
+                content.innerHTML = `
+                    <div style="text-align: center; padding: 20px;">
+                        <p style="color: var(--error); margin-bottom: 16px;">Failed to save: ${error.message}</p>
+                        <button class="btn" onclick="showDeviceDetail('${currentDevicePath}', null)">Try Again</button>
+                    </div>
+                `;
+            }
+        }
+
+        let currentDeviceData = null;
+
+        function renderDeviceDetail(dev) {
+            const content = document.getElementById('device-detail-content');
+            currentDeviceData = dev;
+
+            const needsProbe = !dev.device_id && !dev.chip_type;
+            const warningHtml = needsProbe ? `
+                <div class="warning-banner">
+                    ⚠ Device not probed. <button class="btn" style="padding: 4px 12px; font-size: 12px; margin-left: 10px;" onclick="probeDevice('${currentDevicePath}')">Probe Now</button>
+                </div>
+            ` : '';
+
+            const formatBytes = (bytes) => {
+                if (!bytes) return '-';
+                const units = ['B', 'KB', 'MB', 'GB'];
+                let i = 0;
+                while (bytes >= 1024 && i < units.length - 1) {
+                    bytes /= 1024;
+                    i++;
+                }
+                return Math.round(bytes * 10) / 10 + ' ' + units[i];
+            };
+
+            content.innerHTML = `
+                ${warningHtml}
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+                    <span style="font-size: 14px; font-weight: 500; color: var(--text-secondary);">Device Information</span>
+                    <button class="btn btn-secondary" style="padding: 6px 12px; font-size: 13px;" onclick="showDeviceEditForm()">Edit</button>
+                </div>
+                <div class="detail-row">
+                    <span class="detail-label">Device ID</span>
+                    <span class="detail-value">${dev.device_id || 'N/A'}</span>
+                </div>
+                <div class="detail-row">
+                    <span class="detail-label">MAC Address</span>
+                    <span class="detail-value">${dev.mac_address || 'N/A'}</span>
+                </div>
+                <div class="detail-row">
+                    <span class="detail-label">Chip Type</span>
+                    <span class="detail-value">${dev.chip_type || 'N/A'}</span>
+                </div>
+                <div class="detail-row">
+                    <span class="detail-label">Chip Revision</span>
+                    <span class="detail-value">${dev.chip_rev || 'N/A'}</span>
+                </div>
+                <div class="detail-row">
+                    <span class="detail-label">Flash Size</span>
+                    <span class="detail-value">${formatBytes(dev.flash_size)}</span>
+                </div>
+                <div class="detail-row">
+                    <span class="detail-label">PSRAM Size</span>
+                    <span class="detail-value">${formatBytes(dev.psram_size)}${dev.psram_type ? ` (${dev.psram_type})` : ''}</span>
+                </div>
+                <div class="detail-row">
+                    <span class="detail-label">Board Model</span>
+                    <span class="detail-value">${dev.board_model || 'N/A'}</span>
+                </div>
+                <div class="detail-row">
+                    <span class="detail-label">Status</span>
+                    <span class="detail-value">
+                        <span class="status-dot ${dev.status}"></span>
+                        ${dev.connected ? 'Connected' : 'Offline'}
+                    </span>
+                </div>
+                ${dev.last_path || dev.current_path ? `
+                <div class="detail-row">
+                    <span class="detail-label">Last Path</span>
+                    <span class="detail-value">${dev.last_path || dev.current_path || 'N/A'}</span>
+                </div>
+                ` : ''}
+                ${dev.description ? `
+                <div class="detail-row">
+                    <span class="detail-label">Description</span>
+                    <span class="detail-value">${dev.description}</span>
+                </div>
+                ` : ''}
+                <div class="detail-row" style="flex-direction: column; align-items: flex-start;">
+                    <span class="detail-label">Aliases</span>
+                    <div style="width: 100%; margin-top: 8px;">
+                        ${dev.aliases && dev.aliases.length > 0 ? `
+                            <div class="tag-list">
+                                ${dev.aliases.map(a => `<span class="tag">${a}</span>`).join('')}
+                            </div>
+                        ` : '<span style="color: var(--text-secondary); font-size: 13px;">No aliases</span>'}
+                    </div>
+                </div>
+                <div class="detail-row" style="flex-direction: column; align-items: flex-start; border-bottom: none;">
+                    <span class="detail-label">Tags</span>
+                    <div style="width: 100%; margin-top: 8px;">
+                        ${dev.tags && dev.tags.length > 0 ? `
+                            <div class="tag-list">
+                                ${dev.tags.map(t => `<span class="tag">${t}<span class="remove" onclick="removeTag('${t}')">&times;</span></span>`).join('')}
+                            </div>
+                        ` : '<span style="color: var(--text-secondary); font-size: 13px;">No tags</span>'}
+                        <div class="add-tag-form">
+                            <input type="text" id="new-tag" placeholder="Add tag..." onkeypress="if(event.key === 'Enter') addTag()">
+                            <button class="btn" onclick="addTag()">Add</button>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function showDeviceEditForm() {
+            if (!currentDeviceData) return;
+
+            const dev = currentDeviceData;
+            const chipOptions = [
+                { value: 'ESP32', label: 'ESP32' },
+                { value: 'ESP32-S2', label: 'ESP32-S2' },
+                { value: 'ESP32-S3', label: 'ESP32-S3' },
+                { value: 'ESP32-C3', label: 'ESP32-C3' },
+                { value: 'ESP32-C6', label: 'ESP32-C6' },
+                { value: 'ESP32-H2', label: 'ESP32-H2' },
+            ];
+
+            const optionsHtml = chipOptions.map(opt =>
+                `<option value="${opt.value}" ${opt.value === dev.chip_type ? 'selected' : ''}>${opt.label}</option>`
+            ).join('');
+
+            const content = document.getElementById('device-detail-content');
+            content.innerHTML = `
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+                    <span style="font-size: 14px; font-weight: 500; color: var(--text-secondary);">Edit Device</span>
+                    <button class="btn btn-secondary" style="padding: 6px 12px; font-size: 13px;" onclick="renderDeviceDetail(currentDeviceData)">Cancel</button>
+                </div>
+                <form id="device-edit-form" onsubmit="updateDeviceInfo(event)">
+                    <div class="form-group">
+                        <label>Device ID</label>
+                        <input type="text" value="${dev.device_id || ''}" disabled style="opacity: 0.6; cursor: not-allowed;">
+                        <span style="font-size: 11px; color: var(--text-secondary);">Cannot change device ID</span>
+                    </div>
+                    <div class="form-group">
+                        <label>MAC Address</label>
+                        <input type="text" id="edit-mac" value="${dev.mac_address || ''}" placeholder="AA:BB:CC:DD:EE:FF" pattern="^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$">
+                        <span style="font-size: 11px; color: var(--text-secondary);">Optional. Format: AA:BB:CC:DD:EE:FF</span>
+                    </div>
+                    <div class="form-group">
+                        <label>Chip Type *</label>
+                        <select id="edit-chip" required>
+                            <option value="">Select chip...</option>
+                            ${optionsHtml}
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Chip Revision</label>
+                        <input type="text" id="edit-chiprev" value="${dev.chip_rev || ''}" placeholder="e.g. 1.0">
+                    </div>
+                    <div class="form-group">
+                        <label>Flash Size (bytes)</label>
+                        <input type="number" id="edit-flash" value="${dev.flash_size || ''}" placeholder="e.g. 4194304 (4MB)">
+                    </div>
+                    <div class="form-group">
+                        <label>PSRAM Size (bytes)</label>
+                        <input type="number" id="edit-psram" value="${dev.psram_size || ''}" placeholder="e.g. 8388608 (8MB)">
+                    </div>
+                    <div class="form-group">
+                        <label>PSRAM Type</label>
+                        <input type="text" id="edit-psram-type" value="${dev.psram_type || ''}" placeholder="e.g. QSPI">
+                    </div>
+                    <div class="form-group">
+                        <label>Board Model</label>
+                        <input type="text" id="edit-board" value="${dev.board_model || ''}" placeholder="e.g. ESP32-S3-DevKitC-1">
+                    </div>
+                    <div class="form-group">
+                        <label>Description</label>
+                        <input type="text" id="edit-desc" value="${dev.description || ''}" placeholder="Optional notes">
+                    </div>
+                    <div style="display: flex; gap: 12px; margin-top: 20px;">
+                        <button type="submit" class="btn" style="flex: 1;">Save Changes</button>
+                        <button type="button" class="btn btn-secondary" style="flex: 1;" onclick="renderDeviceDetail(currentDeviceData)">Cancel</button>
+                    </div>
+                </form>
+            `;
+        }
+
+        async function updateDeviceInfo(event) {
+            event.preventDefault();
+
+            if (!currentDeviceId) {
+                alert('No device selected');
+                return;
+            }
+
+            const mac = document.getElementById('edit-mac').value.trim();
+            const chipType = document.getElementById('edit-chip').value;
+            const chipRev = document.getElementById('edit-chiprev').value.trim();
+            const flashSize = parseInt(document.getElementById('edit-flash').value) || 0;
+            const psramSize = parseInt(document.getElementById('edit-psram').value) || 0;
+            const psramType = document.getElementById('edit-psram-type').value.trim();
+            const boardModel = document.getElementById('edit-board').value.trim();
+            const description = document.getElementById('edit-desc').value.trim();
+
+            if (!chipType) {
+                alert('Chip Type is required');
+                return;
+            }
+
+            if (mac && !/^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$/.test(mac)) {
+                alert('Invalid MAC address format. Use AA:BB:CC:DD:EE:FF');
+                return;
+            }
+
+            const content = document.getElementById('device-detail-content');
+            content.innerHTML = '<div style="text-align: center; padding: 30px;"><span class="spinner"></span> Updating device info...</div>';
+
+            try {
+                const response = await fetch(`/api/v1/devices/${currentDeviceId}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        mac_address: mac,
+                        chip_type: chipType,
+                        chip_rev: chipRev,
+                        flash_size: flashSize,
+                        psram_size: psramSize,
+                        psram_type: psramType,
+                        board_model: boardModel,
+                        description: description,
+                    })
+                });
+
+                if (response.ok) {
+                    const dev = await (await fetch(`/api/v1/devices/${currentDeviceId}`)).json();
+                    currentDeviceData = dev;
+                    renderDeviceDetail(dev);
+                    refreshData();
+                } else {
+                    const error = await response.json();
+                    content.innerHTML = `
+                        <div style="text-align: center; padding: 20px;">
+                            <p style="color: var(--error); margin-bottom: 16px;">Failed to update: ${error.error || 'Unknown error'}</p>
+                            <button class="btn" onclick="showDeviceEditForm()">Try Again</button>
+                        </div>
+                    `;
+                }
+            } catch (error) {
+                content.innerHTML = `
+                    <div style="text-align: center; padding: 20px;">
+                        <p style="color: var(--error); margin-bottom: 16px;">Failed to update: ${error.message}</p>
+                        <button class="btn" onclick="showDeviceEditForm()">Try Again</button>
+                    </div>
+                `;
+            }
+        }
+
+        function closeDeviceModal() {
+            document.getElementById('device-modal').classList.remove('active');
+            currentDeviceId = null;
+            currentDeviceData = null;
+        }
+
+        function closeDeviceModal() {
+            document.getElementById('device-modal').classList.remove('active');
+            currentDeviceId = null;
+        }
+
+        async function addTag() {
+            const input = document.getElementById('new-tag');
+            const tag = input.value.trim();
+
+            if (!tag || !currentDeviceId) return;
+
+            const content = document.getElementById('device-detail-content');
+            const dev = await (await fetch(`/api/v1/devices/${currentDeviceId}`)).json();
+            const currentTags = dev.tags || [];
+
+            if (currentTags.includes(tag)) {
+                alert('Tag already exists');
+                return;
+            }
+
+            const newTags = [...currentTags, tag];
+
+            try {
+                const response = await fetch(`/api/v1/devices/${currentDeviceId}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ tags: newTags })
+                });
+
+                if (response.ok) {
+                    input.value = '';
+                    // Refresh device details
+                    showDeviceDetail('', currentDeviceId);
+                } else {
+                    alert('Failed to add tag');
+                }
+            } catch (error) {
+                console.error('Failed to add tag:', error);
+                alert('Failed to add tag: ' + error.message);
+            }
+        }
+
+        async function removeTag(tag) {
+            if (!currentDeviceId) return;
+
+            const content = document.getElementById('device-detail-content');
+            const dev = await (await fetch(`/api/v1/devices/${currentDeviceId}`)).json();
+            const newTags = (dev.tags || []).filter(t => t !== tag);
+
+            try {
+                const response = await fetch(`/api/v1/devices/${currentDeviceId}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ tags: newTags })
+                });
+
+                if (response.ok) {
+                    showDeviceDetail('', currentDeviceId);
+                } else {
+                    alert('Failed to remove tag');
+                }
+            } catch (error) {
+                console.error('Failed to remove tag:', error);
+                alert('Failed to remove tag: ' + error.message);
             }
         }
 

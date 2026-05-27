@@ -8,6 +8,8 @@ import (
 
 	"codeberg.org/georgik/espbrew-go/internal/camera"
 	"codeberg.org/georgik/espbrew-go/internal/device"
+	"codeberg.org/georgik/espbrew-go/internal/inventory"
+	"codeberg.org/georgik/espbrew-go/internal/inventory/rom"
 	"codeberg.org/georgik/espbrew-go/pkg/protocol"
 	"github.com/rs/zerolog/log"
 )
@@ -320,14 +322,103 @@ func (l *LeaderNode) handleDeviceEvent(event device.DeviceEvent) {
 			NodeID: l.id,
 			Status: "available",
 		}
+
 		l.state.Devices[event.Path] = dev
 		l.devices.Register(event.Path)
 		log.Info().Str("path", event.Path).Msg("Device added on leader")
+
+		// Quick probe immediately (device likely in bootloader right after connect)
+		l.wg.Add(1)
+		go l.probeDeviceQuickAsync(dev)
 
 	case device.DeviceRemoved:
 		delete(l.state.Devices, event.Path)
 		log.Info().Str("path", event.Path).Msg("Device removed from leader")
 	}
+}
+
+// probeDeviceQuickAsync probes device using boot log (no bootloader entry required)
+func (l *LeaderNode) probeDeviceQuickAsync(dev *protocol.DeviceInfo) {
+	defer l.wg.Done()
+
+	// Use boot log monitoring (works even if device is running app)
+	identity, err := inventory.ProbeFromBootLog(dev.Path)
+	if err != nil {
+		log.Debug().Str("path", dev.Path).Err(err).Msg("Boot log probe failed (device may not be ESP or not responding)")
+		return
+	}
+
+	deviceID := rom.DeviceID(identity.MAC)
+
+	l.mu.Lock()
+	dev.DeviceID = deviceID
+	dev.ChipType = identity.Chip
+	dev.SerialNumber = identity.MAC
+	l.mu.Unlock()
+
+	inv, err := inventory.NewInventory()
+	if err != nil {
+		log.Warn().Err(err).Msg("Failed to open inventory")
+		return
+	}
+
+	_, err = inv.GetOrCreate(identity, dev.Path, l.id)
+	if err != nil {
+		log.Warn().Err(err).Msg("Failed to update inventory")
+		return
+	}
+
+	log.Info().
+		Str("path", dev.Path).
+		Str("device_id", deviceID).
+		Str("chip", identity.Chip).
+		Msg("Device identified from boot log")
+}
+
+// ProbeDevice manually probes a device using boot log monitoring
+func (l *LeaderNode) ProbeDevice(path string) (*protocol.DeviceInfo, error) {
+	// Use boot log monitoring - resets device and reads boot messages
+	identity, err := inventory.ProbeFromBootLog(path)
+	if err != nil {
+		return nil, fmt.Errorf("boot log probe failed: %w", err)
+	}
+
+	deviceID := rom.DeviceID(identity.MAC)
+
+	l.mu.Lock()
+	dev, exists := l.state.Devices[path]
+	if !exists {
+		dev = &protocol.DeviceInfo{
+			Path:   path,
+			NodeID: l.id,
+			Status: "available",
+		}
+		l.state.Devices[path] = dev
+		l.devices.Register(path)
+	}
+	dev.DeviceID = deviceID
+	dev.ChipType = identity.Chip
+	dev.SerialNumber = identity.MAC
+	l.mu.Unlock()
+
+	// Update inventory
+	inv, err := inventory.NewInventory()
+	if err != nil {
+		return nil, fmt.Errorf("open inventory: %w", err)
+	}
+
+	_, err = inv.GetOrCreate(identity, path, l.id)
+	if err != nil {
+		return nil, fmt.Errorf("update inventory: %w", err)
+	}
+
+	log.Info().
+		Str("path", path).
+		Str("device_id", deviceID).
+		Str("chip", identity.Chip).
+		Msg("Manual probe successful")
+
+	return dev, nil
 }
 
 func (l *LeaderNode) registerVirtualDevices() {
@@ -529,4 +620,22 @@ func (l *LeaderNode) discoverCameras() {
 	}
 
 	log.Info().Int("count", len(cameras)).Msg("Cameras discovered")
+}
+
+// UpdateDeviceInfo updates device info in cluster state (for manual entry)
+func (l *LeaderNode) UpdateDeviceInfo(path, deviceID, chipType, serialNumber string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	if dev, exists := l.state.Devices[path]; exists {
+		dev.DeviceID = deviceID
+		dev.ChipType = chipType
+		dev.SerialNumber = serialNumber
+		l.state.Devices[path] = dev
+		log.Info().
+			Str("path", path).
+			Str("device_id", deviceID).
+			Str("chip", chipType).
+			Msg("Device info updated in cluster state")
+	}
 }
