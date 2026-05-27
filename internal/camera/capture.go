@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"image"
 	"image/jpeg"
+	"os"
 	"os/exec"
 	"runtime"
 	"time"
@@ -74,21 +75,21 @@ func (c *Capturer) Capture(ctx context.Context, req *CaptureRequest) (*CaptureRe
 	ctx, cancel = context.WithTimeout(ctx, req.Timeout)
 	defer cancel()
 
-	// Find camera
+	// Find camera ID
 	var cameraID string
 	if req.CameraID != "" {
 		cameraID = req.CameraID
 	} else {
-		// Use first available camera
+		// Try to discover cameras first
 		cameras, err := c.discoverer.Discover()
-		if err != nil {
-			return nil, fmt.Errorf("discover cameras: %w", err)
+		if err == nil && len(cameras) > 0 {
+			cameraID = cameras[0].ID
+			log.Info().Str("camera", cameras[0].Name).Msg("Using discovered camera")
+		} else {
+			// Fallback: use default camera ID for platform tool
+			cameraID = "default"
+			log.Debug().Msg("No cameras discovered, using platform default")
 		}
-		if len(cameras) == 0 {
-			return nil, fmt.Errorf("no cameras found")
-		}
-		cameraID = cameras[0].ID
-		log.Info().Str("camera", cameras[0].Name).Msg("Using first available camera")
 	}
 
 	log.Info().
@@ -153,20 +154,20 @@ func (c *Capturer) captureMacOS(ctx context.Context, cameraID string, width, hei
 	// Create temp file for capture
 	tmpFile := "/tmp/espbrew-capture.jpg"
 
-	// Build command
-	cmd := exec.CommandContext(ctx, "imagesnap", "-q", tmpFile)
+	// Build command - imagesnap uses default camera when no device specified
+	cmd := exec.CommandContext(ctx, "imagesnap", tmpFile)
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return nil, 0, 0, fmt.Errorf("imagesnap failed: %w, output: %s", err, output)
 	}
 
 	// Read captured file
-	data, err := exec.Command("cat", tmpFile).CombinedOutput()
+	data, err := os.ReadFile(tmpFile)
 	if err != nil {
 		return nil, 0, 0, fmt.Errorf("read capture file: %w", err)
 	}
 
 	// Clean up temp file
-	_ = exec.Command("rm", tmpFile).Run()
+	_ = os.Remove(tmpFile)
 
 	// Decode to get dimensions
 	img, err := jpeg.Decode(bytes.NewReader(data))
@@ -187,12 +188,12 @@ func (c *Capturer) captureLinux(ctx context.Context, cameraID string, width, hei
 	// Create temp file for capture
 	tmpFile := "/tmp/espbrew-capture.jpg"
 
-	// Build command
+	// Build command - fswebcam uses /dev/video0 by default
 	args := []string{
 		"-r", fmt.Sprintf("%dx%d", width, height),
 		"--jpeg", fmt.Sprintf("%d", quality),
 		"-q",       // Skip banner
-		"-S", "10", // Skip frames
+		"-S", "10", // Skip frames for stability
 		tmpFile,
 	}
 
@@ -202,13 +203,13 @@ func (c *Capturer) captureLinux(ctx context.Context, cameraID string, width, hei
 	}
 
 	// Read captured file
-	data, err := exec.Command("cat", tmpFile).CombinedOutput()
+	data, err := os.ReadFile(tmpFile)
 	if err != nil {
 		return nil, 0, 0, fmt.Errorf("read capture file: %w", err)
 	}
 
 	// Clean up temp file
-	_ = exec.Command("rm", tmpFile).Run()
+	_ = os.Remove(tmpFile)
 
 	// Decode to get dimensions
 	img, err := jpeg.Decode(bytes.NewReader(data))

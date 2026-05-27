@@ -6,6 +6,8 @@ import (
 	"sync"
 
 	"github.com/pion/mediadevices"
+	// Platform-specific camera drivers - must be imported for side effects
+	_ "github.com/pion/mediadevices/pkg/driver/camera"
 	"github.com/rs/zerolog/log"
 )
 

@@ -99,12 +99,9 @@ idf.py build
 ### Camera
 
 ```bash
-./espbrew camera list              # List available cameras
-./espbrew camera list --json       # Output as JSON
+./espbrew capture --list           # List available cameras
 ./espbrew capture                  # Capture image with defaults
-./espbrew capture --list           # List cameras before capturing
-./espbrew capture --camera-id cam-001 --width 1920 --height 1080
-./espbrew capture --format jpg --quality 90
+./espbrew capture --width 1920 --height 1080 --quality 90
 ./espbrew capture my-photo.jpg     # Save to specific file
 ```
 
@@ -305,13 +302,11 @@ Camera support uses platform-specific tools:
 
 ### Discovery
 
-Camera discovery uses pion/mediadevices library to enumerate video input devices:
+Camera discovery uses pion/mediadevices library. Note that on some platforms (especially macOS), camera access requires permissions and may not work from CLI. The capture command will attempt to use the system default camera if discovery fails.
 
 ```bash
-espbrew camera list
+espbrew capture --list
 ```
-
-Output includes camera ID, name, backend type, and supported formats.
 
 ### Capture
 
