@@ -7,6 +7,7 @@ import (
 	"sort"
 	"time"
 
+	"codeberg.org/georgik/espbrew-go/internal/camera"
 	"codeberg.org/georgik/espbrew-go/internal/cluster"
 	"codeberg.org/georgik/espbrew-go/internal/device"
 	"codeberg.org/georgik/espbrew-go/pkg/protocol"
@@ -41,6 +42,7 @@ func (h *APIHandler) RegisterRoutes(r *mux.Router) {
 	api.HandleFunc("/status", h.handleStatus).Methods("GET")
 	api.HandleFunc("/nodes", h.handleNodes).Methods("GET")
 	api.HandleFunc("/devices", h.handleDevices).Methods("GET")
+	api.HandleFunc("/cameras", h.handleCameras).Methods("GET")
 
 	// Device reservation (use device name without /dev/ prefix)
 	api.HandleFunc("/devices/{name}/reserve", h.handleReserveDevice).Methods("POST", "DELETE")
@@ -58,6 +60,7 @@ func (h *APIHandler) RegisterRoutes(r *mux.Router) {
 	// Leader-specific
 	if h.leader != nil {
 		api.HandleFunc("/queue", h.handleQueue).Methods("GET")
+		api.HandleFunc("/cameras/capture", h.handleCameraCapture).Methods("POST")
 	}
 }
 
@@ -67,6 +70,7 @@ func (h *APIHandler) handleStatus(w http.ResponseWriter, r *http.Request) {
 	response := map[string]interface{}{
 		"nodes_count":   len(state.Nodes),
 		"devices_count": len(state.Devices),
+		"cameras_count": len(state.Cameras),
 		"jobs_count":    len(state.Jobs),
 	}
 
@@ -352,6 +356,127 @@ func (h *APIHandler) handleReserveDevice(w http.ResponseWriter, r *http.Request)
 	}
 
 	respondError(w, http.StatusMethodNotAllowed, "Method not allowed")
+}
+
+func (h *APIHandler) handleCameras(w http.ResponseWriter, r *http.Request) {
+	state := h.node.State()
+
+	cameras := make([]interface{}, 0, len(state.Cameras))
+	for _, c := range state.Cameras {
+		cameras = append(cameras, c)
+	}
+
+	respondJSON(w, map[string]interface{}{
+		"cameras": cameras,
+		"count":   len(cameras),
+	})
+}
+
+type CameraCaptureRequest struct {
+	CameraID string `json:"camera_id"`
+	Width    uint32 `json:"width"`
+	Height   uint32 `json:"height"`
+	Format   string `json:"format"`
+	Quality  int    `json:"quality"`
+}
+
+func (h *APIHandler) handleCameraCapture(w http.ResponseWriter, r *http.Request) {
+	if h.leader == nil {
+		respondError(w, http.StatusNotImplemented, "Camera capture only available on leader")
+		return
+	}
+
+	var req CameraCaptureRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		log.Debug().Err(err).Msg("Failed to decode capture request")
+		respondError(w, http.StatusBadRequest, "Invalid request body: "+err.Error())
+		return
+	}
+
+	// Set defaults
+	if req.Width == 0 {
+		req.Width = 1280
+	}
+	if req.Height == 0 {
+		req.Height = 720
+	}
+	if req.Format == "" {
+		req.Format = "jpg"
+	}
+	if req.Quality == 0 {
+		req.Quality = 85
+	}
+
+	log.Info().
+		Str("camera_id", req.CameraID).
+		Uint32("width", req.Width).
+		Uint32("height", req.Height).
+		Msg("Camera capture request")
+
+	// Find camera - if no ID specified, use first available
+	state := h.leader.State()
+	var targetCam *protocol.CameraInfo
+
+	if req.CameraID != "" {
+		if cam, exists := state.Cameras[req.CameraID]; exists {
+			targetCam = cam
+		} else {
+			respondError(w, http.StatusNotFound, "Camera not found")
+			return
+		}
+	} else {
+		// Use first available camera
+		for _, cam := range state.Cameras {
+			if cam.Status == "available" {
+				targetCam = cam
+				break
+			}
+		}
+		if targetCam == nil {
+			respondError(w, http.StatusServiceUnavailable, "No cameras available")
+			return
+		}
+	}
+
+	// Perform actual capture
+	store, err := camera.DefaultStore()
+	if err != nil {
+		log.Error().Err(err).Msg("Failed to create store")
+		respondError(w, http.StatusInternalServerError, "Failed to initialize storage: "+err.Error())
+		return
+	}
+	capturer := camera.NewCapturer(store)
+
+	captureReq := &camera.CaptureRequest{
+		CameraID: targetCam.ID,
+		Width:    req.Width,
+		Height:   req.Height,
+		Format:   "jpg",
+		Quality:  req.Quality,
+	}
+
+	result, err := capturer.Capture(r.Context(), captureReq)
+	if err != nil {
+		log.Error().Err(err).Str("camera_id", targetCam.ID).Msg("Capture failed")
+		respondError(w, http.StatusInternalServerError, "Capture failed: "+err.Error())
+		return
+	}
+
+	savedPath, err := store.Save(targetCam.ID, req.Format, result.Data)
+	if err != nil {
+		log.Error().Err(err).Msg("Failed to save capture")
+		respondError(w, http.StatusInternalServerError, "Failed to save capture")
+		return
+	}
+
+	relPath, _ := store.GetRelativePath(savedPath)
+
+	respondJSON(w, map[string]interface{}{
+		"status":    "success",
+		"camera_id": targetCam.ID,
+		"path":      "/captures/" + relPath,
+		"timestamp": time.Now().Unix(),
+	})
 }
 
 func (h *APIHandler) handleRegisterNode(w http.ResponseWriter, r *http.Request) {

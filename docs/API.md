@@ -389,6 +389,113 @@ State update:
 }
 ```
 
+### List Cameras
+
+```
+GET /api/v1/cameras
+```
+
+Response:
+```json
+{
+  "cameras": [
+    {
+      "id": "cam-abc123",
+      "name": "FaceTime HD Camera",
+      "backend": "darwin",
+      "node_id": "node-1",
+      "status": "available"
+    }
+  ],
+  "count": 1
+}
+```
+
+### Capture Image
+
+```
+POST /api/v1/cameras/capture
+Content-Type: application/json
+```
+
+Request:
+```json
+{
+  "camera_id": "cam-abc123",
+  "width": 1280,
+  "height": 720,
+  "format": "jpg",
+  "quality": 85
+}
+```
+
+All fields are optional. Defaults: first available camera, 1280x720, jpg, quality 85.
+
+Response:
+```json
+{
+  "status": "success",
+  "camera_id": "cam-abc123",
+  "path": "/captures/2026-05-27/cam-abc123-20260527-123456.jpg",
+  "timestamp": 1716816246
+}
+```
+
+### List Captures
+
+```
+GET /api/v1/captures
+```
+
+Response:
+```json
+{
+  "captures": [
+    {
+      "path": "/captures/2026-05-27/cam-abc123-001.jpg",
+      "filename": "cam-abc123-001.jpg",
+      "camera_id": "cam-abc123",
+      "camera_name": "FaceTime HD Camera",
+      "timestamp": 1716816246,
+      "size": 183500
+    }
+  ],
+  "count": 1
+}
+```
+
+### Get Capture Image
+
+```
+GET /captures/{path}
+```
+
+Returns the image file with proper Content-Type header.
+
+Path format: `YYYY-MM-DD/cam-{id}-{timestamp}.jpg`
+
+Example: `GET /captures/2026-05-27/cam-abc123-001.jpg`
+
+### Delete Capture
+
+```
+DELETE /captures/{path}
+```
+
+Deletes a captured image. Path is validated to prevent directory traversal - only files within the captures directory can be deleted, and only image files (.jpg, .jpeg, .png) are allowed.
+
+Response:
+```json
+{
+  "status": "deleted",
+  "path": "2026-05-27/cam-abc123-001.jpg"
+}
+```
+
+Error responses:
+- `400 Bad Request` - Invalid or unsafe path
+- `404 Not Found` - File doesn't exist
+
 ## Error Responses
 
 All error responses follow this format:

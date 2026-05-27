@@ -35,12 +35,33 @@
             display: flex;
             justify-content: space-between;
             align-items: center;
-            margin-bottom: 30px;
+            margin-bottom: 20px;
             padding-bottom: 20px;
             border-bottom: 1px solid var(--border);
         }
 
+        .header-left { display: flex; flex-direction: column; gap: 12px; }
         h1 { font-size: 24px; font-weight: 600; }
+
+        .nav-tabs {
+            display: flex;
+            gap: 8px;
+        }
+
+        .nav-tab {
+            background: transparent;
+            color: var(--text-secondary);
+            border: none;
+            padding: 8px 16px;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .nav-tab:hover { color: var(--text-primary); background: var(--bg-tertiary); }
+        .nav-tab.active { background: var(--accent); color: white; }
 
         .status-badge {
             display: inline-flex;
@@ -54,6 +75,9 @@
 
         .status-badge.online { background: var(--success); color: white; }
         .status-badge.offline { background: var(--error); color: white; }
+
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
 
         .grid {
             display: grid;
@@ -170,6 +194,10 @@
 
         .btn:hover { background: var(--accent-hover); }
         .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        .btn-secondary { background: var(--bg-tertiary); }
+        .btn-secondary:hover { background: var(--border); }
+        .btn-danger { background: #d32f2f; }
+        .btn-danger:hover { background: #b71c1c; }
 
         .form-group { margin-bottom: 16px; }
 
@@ -202,90 +230,252 @@
             font-size: 14px;
         }
 
-        .log-entry {
-            font-family: monospace;
-            font-size: 12px;
-            padding: 4px 0;
-            color: var(--text-secondary);
-        }
-
-        .log-entry.error { color: var(--error); }
-        .log-entry.success { color: var(--success); }
-
         @keyframes pulse {
             0%, 100% { opacity: 1; }
             50% { opacity: 0.5; }
         }
 
         .connecting { animation: pulse 1.5s infinite; }
+
+        .camera-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 16px;
+        }
+
+        .camera-card {
+            background: var(--bg-tertiary);
+            border-radius: 8px;
+            padding: 16px;
+        }
+
+        .camera-name {
+            font-weight: 600;
+            margin-bottom: 4px;
+        }
+
+        .camera-info {
+            font-size: 12px;
+            color: var(--text-secondary);
+            margin-bottom: 12px;
+        }
+
+        .capture-controls {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
+        .capture-controls input[type="number"] {
+            width: 70px;
+            padding: 6px 8px;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            color: var(--text-primary);
+            font-size: 12px;
+        }
+
+        .gallery-section {
+            margin-top: 30px;
+        }
+
+        .gallery-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 16px;
+        }
+
+        .gallery-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 16px;
+        }
+
+        .gallery-item {
+            background: var(--bg-tertiary);
+            border-radius: 8px;
+            overflow: hidden;
+            cursor: pointer;
+            transition: transform 0.2s;
+        }
+
+        .gallery-item:hover { transform: scale(1.02); }
+
+        .gallery-item img {
+            width: 100%;
+            height: 150px;
+            object-fit: cover;
+        }
+
+        .gallery-item-info {
+            padding: 8px 12px;
+            font-size: 11px;
+            color: var(--text-secondary);
+        }
+
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.8);
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+        }
+
+        .modal.active { display: flex; }
+
+        .modal-content {
+            max-width: 90%;
+            max-height: 90%;
+        }
+
+        .modal-content img {
+            max-width: 100%;
+            max-height: 90vh;
+            border-radius: 8px;
+        }
+
+        .modal-close {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: var(--bg-tertiary);
+            color: var(--text-primary);
+            border: none;
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            cursor: pointer;
+            font-size: 20px;
+        }
+
+        .spinner {
+            display: inline-block;
+            width: 14px;
+            height: 14px;
+            border: 2px solid var(--bg-tertiary);
+            border-top-color: currentColor;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+            margin-right: 6px;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
     </style>
 </head>
 <body>
     <div class="container">
         <header>
-            <div>
+            <div class="header-left">
                 <h1>ESPBrew Cluster</h1>
-                <div id="connection-status" class="status-badge offline connecting">Connecting...</div>
+                <div class="nav-tabs">
+                    <button class="nav-tab active" onclick="switchTab('dashboard')">Dashboard</button>
+                    <button class="nav-tab" onclick="switchTab('cameras')">Cameras</button>
+                </div>
             </div>
-            <button class="btn" onclick="refreshData()">Refresh</button>
+            <div style="display: flex; gap: 12px; align-items: center;">
+                <div id="connection-status" class="status-badge offline connecting">Connecting...</div>
+                <button class="btn" onclick="refreshData()">Refresh</button>
+            </div>
         </header>
 
-        <div class="grid">
-            <div class="card stat-card">
-                <div class="stat-value" id="stat-nodes">-</div>
-                <div class="stat-label">Nodes</div>
+        <div id="tab-dashboard" class="tab-content active">
+            <div class="grid">
+                <div class="card stat-card">
+                    <div class="stat-value" id="stat-nodes">-</div>
+                    <div class="stat-label">Nodes</div>
+                </div>
+                <div class="card stat-card">
+                    <div class="stat-value" id="stat-devices">-</div>
+                    <div class="stat-label">Devices</div>
+                </div>
+                <div class="card stat-card">
+                    <div class="stat-value" id="stat-cameras">-</div>
+                    <div class="stat-label">Cameras</div>
+                </div>
+                <div class="card stat-card">
+                    <div class="stat-value" id="stat-jobs">-</div>
+                    <div class="stat-label">Jobs</div>
+                </div>
+                <div class="card stat-card">
+                    <div class="stat-value" id="stat-queued">-</div>
+                    <div class="stat-label">Queued</div>
+                </div>
             </div>
-            <div class="card stat-card">
-                <div class="stat-value" id="stat-devices">-</div>
-                <div class="stat-label">Devices</div>
-            </div>
-            <div class="card stat-card">
-                <div class="stat-value" id="stat-jobs">-</div>
-                <div class="stat-label">Jobs</div>
-            </div>
-            <div class="card stat-card">
-                <div class="stat-value" id="stat-queued">-</div>
-                <div class="stat-label">Queued</div>
+
+            <div class="grid">
+                <div class="card">
+                    <div class="card-title">Devices</div>
+                    <ul class="device-list" id="device-list">
+                        <li class="empty-state">Loading devices...</li>
+                    </ul>
+                </div>
+
+                <div class="card">
+                    <div class="card-title">Jobs</div>
+                    <ul class="job-list" id="job-list">
+                        <li class="empty-state">Loading jobs...</li>
+                    </ul>
+                </div>
+
+                <div class="card">
+                    <div class="card-title">Create Job</div>
+                    <form id="job-form" onsubmit="createJob(event)">
+                        <div class="form-group">
+                            <label>Firmware File</label>
+                            <input type="text" id="firmware" placeholder="/path/to/firmware.bin" required>
+                        </div>
+                        <div class="form-group">
+                            <label>Target Device</label>
+                            <select id="device" required>
+                                <option value="">Select device...</option>
+                            </select>
+                        </div>
+                        <button type="submit" class="btn" style="width: 100%">Flash Device</button>
+                    </form>
+                </div>
             </div>
         </div>
 
-        <div class="grid">
-            <div class="card">
-                <div class="card-title">Devices</div>
-                <ul class="device-list" id="device-list">
-                    <li class="empty-state">Loading devices...</li>
-                </ul>
+        <div id="tab-cameras" class="tab-content">
+            <div class="card" style="margin-bottom: 20px;">
+                <div class="card-title">Available Cameras</div>
+                <div id="camera-list" class="camera-grid">
+                    <div class="empty-state">Loading cameras...</div>
+                </div>
             </div>
 
-            <div class="card">
-                <div class="card-title">Jobs</div>
-                <ul class="job-list" id="job-list">
-                    <li class="empty-state">Loading jobs...</li>
-                </ul>
+            <div class="gallery-section">
+                <div class="gallery-header">
+                    <div class="card-title">Capture Gallery</div>
+                    <button class="btn btn-secondary" onclick="loadGallery()">Refresh Gallery</button>
+                </div>
+                <div id="gallery-grid" class="gallery-grid">
+                    <div class="empty-state">No captures yet. Take a photo above!</div>
+                </div>
             </div>
+        </div>
+    </div>
 
-            <div class="card">
-                <div class="card-title">Create Job</div>
-                <form id="job-form" onsubmit="createJob(event)">
-                    <div class="form-group">
-                        <label>Firmware File</label>
-                        <input type="text" id="firmware" placeholder="/path/to/firmware.bin" required>
-                    </div>
-                    <div class="form-group">
-                        <label>Target Device</label>
-                        <select id="device" required>
-                            <option value="">Select device...</option>
-                        </select>
-                    </div>
-                    <button type="submit" class="btn" style="width: 100%">Flash Device</button>
-                </form>
-            </div>
+    <div id="image-modal" class="modal" onclick="closeModal(event)">
+        <button class="modal-close" onclick="closeModal(event)">&times;</button>
+        <div class="modal-content">
+            <img id="modal-image" src="" alt="Full size capture">
         </div>
     </div>
 
     <script>
         let ws;
         let reconnectInterval;
+        let cameras = [];
 
         function connect() {
             const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -328,8 +518,22 @@
             if (data.type === 'state' || data.type === 'state_update') {
                 document.getElementById('stat-nodes').textContent = data.nodes;
                 document.getElementById('stat-devices').textContent = data.devices;
+                document.getElementById('stat-cameras').textContent = data.cameras || 0;
                 document.getElementById('stat-jobs').textContent = data.jobs;
                 document.getElementById('stat-queued').textContent = data.queue_size || 0;
+            }
+        }
+
+        function switchTab(tabName) {
+            document.querySelectorAll('.nav-tab').forEach(tab => tab.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
+
+            event.target.classList.add('active');
+            document.getElementById('tab-' + tabName).classList.add('active');
+
+            if (tabName === 'cameras') {
+                loadCameras();
+                loadGallery();
             }
         }
 
@@ -345,7 +549,6 @@
             } catch (error) {
                 console.error('Failed to refresh:', error);
             }
-            // Schedule next refresh after this one completes (prevents pile-up)
             setTimeout(refreshData, 5000);
         }
 
@@ -427,9 +630,153 @@
             }
         }
 
-        // Initialize
+        async function loadCameras() {
+            try {
+                const response = await fetch('/api/v1/cameras');
+                const data = await response.json();
+                cameras = data.cameras || [];
+
+                renderCameras(cameras);
+            } catch (error) {
+                console.error('Failed to load cameras:', error);
+                document.getElementById('camera-list').innerHTML =
+                    '<div class="empty-state">Failed to load cameras</div>';
+            }
+        }
+
+        function renderCameras(cameras) {
+            const list = document.getElementById('camera-list');
+
+            if (cameras.length === 0) {
+                list.innerHTML = '<div class="empty-state">No cameras found</div>';
+                return;
+            }
+
+            list.innerHTML = cameras.map(cam => `
+                <div class="camera-card">
+                    <div class="camera-name">${cam.name || cam.id}</div>
+                    <div class="camera-info">
+                        ${cam.backend} • ${cam.node_id || 'local'} • ${cam.status}
+                    </div>
+                    <div class="capture-controls">
+                        <button class="btn" onclick="capture('${cam.id}')">Capture</button>
+                        <input type="number" id="width-${cam.id}" placeholder="W" value="1280" min="320" max="3840">
+                        <input type="number" id="height-${cam.id}" placeholder="H" value="720" min="240" max="2160">
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        async function capture(cameraId) {
+            const width = parseInt(document.getElementById(`width-${cameraId}`).value) || 1280;
+            const height = parseInt(document.getElementById(`height-${cameraId}`).value) || 720;
+
+            const btn = event.target;
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner"></span>Capturing...';
+
+            try {
+                const response = await fetch('/api/v1/cameras/capture', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ camera_id: cameraId, width, height, format: 'jpg', quality: 85 })
+                });
+
+                if (response.ok) {
+                    const result = await response.json();
+                    setTimeout(() => {
+                        loadGallery();
+                        btn.disabled = false;
+                        btn.textContent = 'Capture';
+                    }, 2000);
+                } else {
+                    const error = await response.json();
+                    alert('Capture failed: ' + error.error);
+                    btn.disabled = false;
+                    btn.textContent = 'Capture';
+                }
+            } catch (error) {
+                alert('Capture failed: ' + error.message);
+                btn.disabled = false;
+                btn.textContent = 'Capture';
+            }
+        }
+
+        async function loadGallery() {
+            try {
+                const response = await fetch('/api/v1/captures');
+                const data = await response.json();
+                renderGallery(data.captures || []);
+            } catch (error) {
+                console.error('Failed to load gallery:', error);
+            }
+        }
+
+        function renderGallery(captures) {
+            const grid = document.getElementById('gallery-grid');
+
+            if (captures.length === 0) {
+                grid.innerHTML = '<div class="empty-state">No captures yet</div>';
+                return;
+            }
+
+            grid.innerHTML = captures.map(cap => `
+                <div class="gallery-item">
+                    <img src="${cap.path}" alt="${cap.filename}" loading="lazy" onclick="openModal('${cap.path}')">
+                    <div class="gallery-item-info">
+                        <div>${cap.camera_name || cap.camera_id}</div>
+                        <div>${new Date(cap.timestamp * 1000).toLocaleString()}</div>
+                        <button class="btn btn-danger" onclick="deleteCapture(event, '${cap.path}')" style="margin-top: 8px; padding: 4px 12px; font-size: 12px;">Delete</button>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        function openModal(imagePath) {
+            document.getElementById('modal-image').src = imagePath;
+            document.getElementById('image-modal').classList.add('active');
+        }
+
+        function closeModal(event) {
+            if (event.target.id === 'image-modal' || event.target.classList.contains('modal-close')) {
+                document.getElementById('image-modal').classList.remove('active');
+            }
+        }
+
+        async function deleteCapture(event, path) {
+            event.stopPropagation();
+
+            if (!confirm('Delete this capture?')) {
+                return;
+            }
+
+            const btn = event.target;
+            btn.disabled = true;
+            btn.textContent = 'Deleting...';
+
+            try {
+                const response = await fetch(path, {
+                    method: 'DELETE'
+                });
+
+                if (response.ok) {
+                    loadGallery();
+                } else {
+                    const error = await response.json();
+                    alert('Failed to delete: ' + (error.error || 'Unknown error'));
+                    btn.disabled = false;
+                    btn.textContent = 'Delete';
+                }
+            } catch (error) {
+                console.error('Failed to delete capture:', error);
+                alert('Failed to delete: ' + error.message);
+                btn.disabled = false;
+                btn.textContent = 'Delete';
+            }
+        }
+
         connect();
-        refreshData();  // Starts recursive refresh loop
+        refreshData();
     </script>
 </body>
 </html>

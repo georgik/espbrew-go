@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"codeberg.org/georgik/espbrew-go/internal/camera"
 	"codeberg.org/georgik/espbrew-go/internal/device"
 	"codeberg.org/georgik/espbrew-go/internal/flash"
 	"codeberg.org/georgik/espbrew-go/pkg/protocol"
@@ -28,6 +29,7 @@ type PeerNode struct {
 	mdns       *mDNSService
 	watcher    *device.Watcher
 	flasher    *flash.Flasher
+	cameras    *camera.Discoverer
 	registered bool // Tracks successful registration with leader
 }
 
@@ -50,6 +52,7 @@ func NewPeerNode(id, leaderURL string, cfg *PeerConfig) *PeerNode {
 		config:    cfg,
 		state:     NewClusterState(),
 		flasher:   flash.NewFlasher(nil),
+		cameras:   camera.NewDiscoverer(),
 	}
 }
 
@@ -76,6 +79,9 @@ func (p *PeerNode) Start(ctx context.Context) error {
 		p.wg.Add(1)
 		go p.watchDevices()
 	}
+
+	// Discover cameras on startup
+	p.discoverCameras()
 
 	p.wg.Add(1)
 	go p.heartbeatLoop()
@@ -166,18 +172,26 @@ func (p *PeerNode) sendHeartbeat() {
 		devices = append(devices, dev)
 	}
 
+	cameras := make([]*protocol.CameraInfo, 0, len(p.state.Cameras))
+	for _, cam := range p.state.Cameras {
+		cameras = append(cameras, cam)
+	}
+
 	payload := &protocol.HeartbeatPayload{
 		NodeID:      p.id,
 		DeviceCount: len(devices),
+		CameraCount: len(cameras),
 		ActiveJobs:  0,
 		Timestamp:   time.Now().Unix(),
 		Devices:     devices,
+		Cameras:     cameras,
 	}
 
 	log.Info().
 		Str("node_id", p.id).
 		Str("leader", p.leaderURL).
 		Int("devices", payload.DeviceCount).
+		Int("cameras", payload.CameraCount).
 		Msg("Sending heartbeat to leader")
 
 	// Send heartbeat to leader via HTTP
@@ -293,4 +307,29 @@ func (p *PeerNode) ExecuteJob(ctx context.Context, job *Job) error {
 	job.CompletedAt = &now
 
 	return nil
+}
+
+// discoverCameras scans for available cameras
+func (p *PeerNode) discoverCameras() {
+	cameras, err := p.cameras.Discover()
+	if err != nil {
+		log.Warn().Err(err).Msg("Camera discovery failed")
+		return
+	}
+
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	for _, cam := range cameras {
+		protoCam := &protocol.CameraInfo{
+			ID:      cam.ID,
+			Name:    cam.Name,
+			Backend: string(cam.Backend),
+			NodeID:  p.id,
+			Status:  "available",
+		}
+		p.state.Cameras[cam.ID] = protoCam
+	}
+
+	log.Info().Int("count", len(cameras)).Msg("Cameras discovered")
 }

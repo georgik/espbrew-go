@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"codeberg.org/georgik/espbrew-go/internal/camera"
 	"codeberg.org/georgik/espbrew-go/internal/device"
 	"codeberg.org/georgik/espbrew-go/pkg/protocol"
 	"github.com/rs/zerolog/log"
@@ -86,6 +87,9 @@ func (l *LeaderNode) Start(ctx context.Context) error {
 
 	l.wg.Add(1)
 	go l.runMaintenanceLoop()
+
+	// Discover cameras on startup
+	l.discoverCameras()
 
 	// Register virtual devices
 	l.registerVirtualDevices()
@@ -180,6 +184,34 @@ func (l *LeaderNode) UpdateHeartbeat(nodeID string, payload *protocol.HeartbeatP
 			Int("devices", len(payload.Devices)).
 			Msg("Peer devices aggregated")
 	}
+
+	// Aggregate cameras from peer
+	if payload.Cameras != nil {
+		for _, cam := range payload.Cameras {
+			// Ensure node_id is set correctly
+			cam.NodeID = nodeID
+			l.state.Cameras[cam.ID] = cam
+		}
+
+		// Remove cameras from this node that are no longer in heartbeat
+		currentIDs := make(map[string]bool)
+		for _, cam := range payload.Cameras {
+			currentIDs[cam.ID] = true
+		}
+
+		for id, cam := range l.state.Cameras {
+			if cam.NodeID == nodeID && !currentIDs[id] {
+				delete(l.state.Cameras, id)
+				log.Info().Str("camera_id", id).Str("node_id", nodeID).
+					Msg("Camera removed from peer")
+			}
+		}
+
+		log.Debug().
+			Str("node_id", nodeID).
+			Int("cameras", len(payload.Cameras)).
+			Msg("Peer cameras aggregated")
+	}
 }
 
 func (l *LeaderNode) RegisterDevice(device *protocol.DeviceInfo) {
@@ -190,6 +222,28 @@ func (l *LeaderNode) RegisterDevice(device *protocol.DeviceInfo) {
 	l.state.Devices[device.Path] = device
 	l.devices.Register(device.Path)
 	log.Info().Str("path", device.Path).Msg("Device registered on leader")
+}
+
+// RegisterCamera registers a camera on the leader node
+func (l *LeaderNode) RegisterCamera(camera *protocol.CameraInfo) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	camera.NodeID = l.id
+	l.state.Cameras[camera.ID] = camera
+	log.Info().Str("camera_id", camera.ID).Str("name", camera.Name).Msg("Camera registered on leader")
+}
+
+// GetCameras returns all registered cameras
+func (l *LeaderNode) GetCameras() []*protocol.CameraInfo {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+
+	cameras := make([]*protocol.CameraInfo, 0, len(l.state.Cameras))
+	for _, cam := range l.state.Cameras {
+		cameras = append(cameras, cam)
+	}
+	return cameras
 }
 
 func (l *LeaderNode) EnqueueJob(firmwarePath, devicePath string) (*Job, error) {
@@ -452,4 +506,27 @@ func (l *LeaderNode) cleanupOrphanedDevices() {
 		}
 	}
 	l.mu.Unlock()
+}
+
+// discoverCameras scans for available cameras and registers them
+func (l *LeaderNode) discoverCameras() {
+	discoverer := camera.NewDiscoverer()
+	cameras, err := discoverer.Discover()
+	if err != nil {
+		log.Warn().Err(err).Msg("Camera discovery failed")
+		return
+	}
+
+	for _, cam := range cameras {
+		protoCam := &protocol.CameraInfo{
+			ID:      cam.ID,
+			Name:    cam.Name,
+			Backend: string(cam.Backend),
+			NodeID:  l.id,
+			Status:  "available",
+		}
+		l.RegisterCamera(protoCam)
+	}
+
+	log.Info().Int("count", len(cameras)).Msg("Cameras discovered")
 }

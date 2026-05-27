@@ -1,0 +1,217 @@
+package http
+
+import (
+	"encoding/json"
+	"io/fs"
+	"net/http"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+
+	"github.com/gorilla/mux"
+	"github.com/rs/zerolog/log"
+)
+
+type CameraHandler struct {
+	capturesDir string
+}
+
+type CaptureInfo struct {
+	Path       string `json:"path"`
+	Filename   string `json:"filename"`
+	CameraID   string `json:"camera_id"`
+	CameraName string `json:"camera_name"`
+	Timestamp  int64  `json:"timestamp"`
+	Size       int64  `json:"size"`
+}
+
+type CaptureMetadata struct {
+	CameraID   string `json:"camera_id"`
+	CameraName string `json:"camera_name"`
+	Timestamp  int64  `json:"timestamp"`
+	Width      int    `json:"width"`
+	Height     int    `json:"height"`
+	Quality    int    `json:"quality"`
+}
+
+func NewCameraHandler() *CameraHandler {
+	homeDir, _ := os.UserHomeDir()
+	capturesDir := filepath.Join(homeDir, ".espbrew", "captures")
+	return &CameraHandler{
+		capturesDir: capturesDir,
+	}
+}
+
+func (h *CameraHandler) RegisterRoutes(r *mux.Router) {
+	r.HandleFunc("/api/v1/captures", h.handleListCaptures).Methods("GET")
+	r.HandleFunc("/captures/{path:.*}", h.handleServeCapture).Methods("GET")
+	r.HandleFunc("/captures/{path:.*}", h.handleDeleteCapture).Methods("DELETE")
+}
+
+func (h *CameraHandler) handleListCaptures(w http.ResponseWriter, r *http.Request) {
+	captures, err := h.scanCaptures()
+	if err != nil {
+		log.Error().Err(err).Msg("Failed to scan captures")
+		respondJSON(w, map[string]interface{}{
+			"captures": []interface{}{},
+		})
+		return
+	}
+
+	respondJSON(w, map[string]interface{}{
+		"captures": captures,
+		"count":    len(captures),
+	})
+}
+
+func (h *CameraHandler) handleServeCapture(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	path := vars["path"]
+	if path == "" {
+		respondError(w, http.StatusNotFound, "Not found")
+		return
+	}
+
+	fullPath := filepath.Join(h.capturesDir, path)
+
+	if _, err := os.Stat(fullPath); os.IsNotExist(err) {
+		respondError(w, http.StatusNotFound, "File not found")
+		return
+	}
+
+	ext := strings.ToLower(filepath.Ext(path))
+	switch ext {
+	case ".jpg", ".jpeg":
+		w.Header().Set("Content-Type", "image/jpeg")
+	case ".png":
+		w.Header().Set("Content-Type", "image/png")
+	default:
+		w.Header().Set("Content-Type", "application/octet-stream")
+	}
+
+	http.ServeFile(w, r, fullPath)
+}
+
+func (h *CameraHandler) scanCaptures() ([]*CaptureInfo, error) {
+	var captures []*CaptureInfo
+
+	err := filepath.Walk(h.capturesDir, func(path string, info fs.FileInfo, err error) error {
+		if err != nil {
+			return nil
+		}
+		if info.IsDir() {
+			return nil
+		}
+
+		ext := strings.ToLower(filepath.Ext(path))
+		if ext != ".jpg" && ext != ".jpeg" && ext != ".png" {
+			return nil
+		}
+
+		relPath, _ := filepath.Rel(h.capturesDir, path)
+		urlPath := "/captures/" + relPath
+
+		stat, _ := os.Stat(path)
+		size := stat.Size()
+		modTime := stat.ModTime().Unix()
+
+		cameraID := "unknown"
+		cameraName := "Unknown Camera"
+
+		metadataPath := filepath.Join(filepath.Dir(path), "metadata.json")
+		if metadataData, err := os.ReadFile(metadataPath); err == nil {
+			var metadata struct {
+				Captures map[string]CaptureMetadata `json:"captures"`
+			}
+			if json.Unmarshal(metadataData, &metadata) == nil {
+				filename := filepath.Base(path)
+				if meta, ok := metadata.Captures[filename]; ok {
+					cameraID = meta.CameraID
+					cameraName = meta.CameraName
+					modTime = meta.Timestamp
+				}
+			}
+		}
+
+		captures = append(captures, &CaptureInfo{
+			Path:       urlPath,
+			Filename:   filepath.Base(path),
+			CameraID:   cameraID,
+			CameraName: cameraName,
+			Timestamp:  modTime,
+			Size:       size,
+		})
+
+		return nil
+	})
+
+	if err != nil && !os.IsNotExist(err) {
+		return nil, err
+	}
+
+	sort.Slice(captures, func(i, j int) bool {
+		return captures[i].Timestamp > captures[j].Timestamp
+	})
+
+	return captures, nil
+}
+
+// sanitizePath validates the path is within captures directory and safe
+func (h *CameraHandler) sanitizePath(path string) (string, bool) {
+	// Remove any leading slashes
+	path = strings.TrimPrefix(path, "/")
+	// Clean the path to resolve any .. components
+	path = filepath.Clean(path)
+
+	// Ensure path doesn't escape captures directory
+	fullPath := filepath.Join(h.capturesDir, path)
+	relPath, err := filepath.Rel(h.capturesDir, fullPath)
+	if err != nil || strings.HasPrefix(relPath, "..") {
+		return "", false
+	}
+
+	// Only allow image files
+	ext := strings.ToLower(filepath.Ext(fullPath))
+	if ext != ".jpg" && ext != ".jpeg" && ext != ".png" {
+		return "", false
+	}
+
+	return fullPath, true
+}
+
+func (h *CameraHandler) handleDeleteCapture(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	path := vars["path"]
+	if path == "" {
+		respondError(w, http.StatusBadRequest, "Path required")
+		return
+	}
+
+	fullPath, ok := h.sanitizePath(path)
+	if !ok {
+		log.Warn().Str("path", path).Msg("Rejecting unsafe delete request")
+		respondError(w, http.StatusBadRequest, "Invalid path")
+		return
+	}
+
+	// Verify file exists and is within captures dir
+	if _, err := os.Stat(fullPath); os.IsNotExist(err) {
+		respondError(w, http.StatusNotFound, "File not found")
+		return
+	}
+
+	// Delete the file
+	if err := os.Remove(fullPath); err != nil {
+		log.Error().Err(err).Str("path", fullPath).Msg("Failed to delete capture")
+		respondError(w, http.StatusInternalServerError, "Failed to delete file")
+		return
+	}
+
+	log.Info().Str("path", fullPath).Msg("Capture deleted")
+
+	respondJSON(w, map[string]interface{}{
+		"status": "deleted",
+		"path":   path,
+	})
+}

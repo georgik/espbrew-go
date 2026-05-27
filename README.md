@@ -105,6 +105,16 @@ idf.py build
 ./espbrew capture my-photo.jpg     # Save to specific file
 ```
 
+### Captures Management
+
+```bash
+./espbrew captures list                                    # List all captured images
+./espbrew captures delete "2026-05-27/*.jpg"              # Delete by pattern
+./espbrew captures delete --all                           # Delete all (with confirmation)
+./espbrew captures delete --older-than 7d                 # Delete captures older than 7 days
+./espbrew captures delete --yes "2026-05-27/*"            # Delete without confirmation
+```
+
 ### Cluster
 
 ```bash
@@ -332,8 +342,29 @@ Captured images are organized by date:
 
 - **Location**: `~/.espbrew/captures/`
 - **Organization**: Daily directories with metadata.json
-- **Formats**: JPEG (default), PNG support planned
+- **Formats**: JPEG (default), PNG
 - **Metadata**: Camera ID, timestamp, dimensions, file size
+
+### Managing Captures
+
+List and delete captured images via CLI:
+
+```bash
+espbrew captures list                    # List all captures with size and date
+espbrew captures delete --all            # Delete all (prompts for confirmation)
+espbrew captures delete --older-than 7d  # Delete captures older than 7 days
+espbrew captures delete "2026-05-*"      # Delete by pattern
+```
+
+### Web Dashboard
+
+The ESPBrew dashboard includes camera controls and capture gallery:
+
+- **Camera Tab**: View available cameras, trigger captures with custom resolution
+- **Gallery Tab**: Browse captured images with modal viewer
+- **Delete**: Remove individual captures via web UI
+
+Access at `http://localhost:8080` when cluster is running.
 
 ### Use Cases
 

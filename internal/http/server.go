@@ -10,6 +10,7 @@ import (
 
 	"codeberg.org/georgik/espbrew-go/internal/cluster"
 	"codeberg.org/georgik/espbrew-go/internal/dashboard"
+	"codeberg.org/georgik/espbrew-go/pkg/protocol"
 	"github.com/gorilla/mux"
 	"github.com/gorilla/websocket"
 	"github.com/rs/zerolog/log"
@@ -52,6 +53,10 @@ func (s *Server) setupRoutes() {
 	// API routes
 	s.api = NewAPIHandler(s.node)
 	s.api.RegisterRoutes(s.router)
+
+	// Camera gallery routes
+	cameraHandler := NewCameraHandler()
+	cameraHandler.RegisterRoutes(s.router)
 
 	// Flash API routes
 	if leader, ok := s.node.(*cluster.LeaderNode); ok {
@@ -220,10 +225,13 @@ func (s *Server) sendState(conn *websocket.Conn) {
 	state := s.node.State()
 
 	data := map[string]interface{}{
-		"type":    "state",
-		"nodes":   len(state.Nodes),
-		"devices": len(state.Devices),
-		"jobs":    len(state.Jobs),
+		"type":         "state",
+		"nodes":        len(state.Nodes),
+		"devices":      len(state.Devices),
+		"cameras":      len(state.Cameras),
+		"jobs":         len(state.Jobs),
+		"devices_list": deviceListToMap(state.Devices),
+		"cameras_list": cameraListToMap(state.Cameras),
 	}
 
 	if s.api.leader != nil {
@@ -261,6 +269,7 @@ func (s *Server) broadcastState() {
 			"type":    "state_update",
 			"nodes":   len(state.Nodes),
 			"devices": len(state.Devices),
+			"cameras": len(state.Cameras),
 			"jobs":    len(state.Jobs),
 		}
 
@@ -287,6 +296,35 @@ func (s *Server) closeAllClients() {
 		conn.Close()
 	}
 	s.clients = make(map[*websocket.Conn]bool)
+}
+
+func deviceListToMap(devices map[string]*protocol.DeviceInfo) []map[string]interface{} {
+	result := make([]map[string]interface{}, 0, len(devices))
+	for _, d := range devices {
+		result = append(result, map[string]interface{}{
+			"path":    d.Path,
+			"vid":     d.VID,
+			"pid":     d.PID,
+			"status":  d.Status,
+			"node_id": d.NodeID,
+			"serial":  d.SerialNumber,
+		})
+	}
+	return result
+}
+
+func cameraListToMap(cameras map[string]*protocol.CameraInfo) []map[string]interface{} {
+	result := make([]map[string]interface{}, 0, len(cameras))
+	for _, c := range cameras {
+		result = append(result, map[string]interface{}{
+			"id":      c.ID,
+			"name":    c.Name,
+			"backend": c.Backend,
+			"node_id": c.NodeID,
+			"status":  c.Status,
+		})
+	}
+	return result
 }
 
 // Fallback dashboard if embedded files not available

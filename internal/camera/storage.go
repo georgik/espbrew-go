@@ -255,3 +255,12 @@ func (s *Store) CleanupOld(olderThan time.Duration) error {
 func (s *Store) GetBaseDir() string {
 	return s.baseDir
 }
+
+// GetRelativePath returns a relative path from baseDir to the given file path
+func (s *Store) GetRelativePath(fullPath string) (string, error) {
+	relPath, err := filepath.Rel(s.baseDir, fullPath)
+	if err != nil {
+		return "", err
+	}
+	return relPath, nil
+}
