@@ -263,15 +263,11 @@ func (l *LeaderNode) EnqueueJob(firmwarePath, devicePath string) (*Job, error) {
 
 func (l *LeaderNode) EnqueueJobWithOffset(firmwarePath, devicePath string, offset int) (*Job, error) {
 	l.mu.RLock()
-	dev, exists := l.state.Devices[devicePath]
+	_, exists := l.state.Devices[devicePath]
 	l.mu.RUnlock()
 
 	if !exists {
 		return nil, fmt.Errorf("device not found: %s", devicePath)
-	}
-
-	if dev.Disabled {
-		return nil, fmt.Errorf("device is disabled: %s", devicePath)
 	}
 
 	job := l.queue.Enqueue(firmwarePath, devicePath, offset)
@@ -283,7 +279,7 @@ func (l *LeaderNode) EnqueueJobWithOffset(firmwarePath, devicePath string, offse
 	}
 
 	l.mu.Lock()
-	dev = l.state.Devices[devicePath]
+	dev := l.state.Devices[devicePath]
 	dev.Status = "busy"
 	l.state.Devices[devicePath] = dev
 	l.mu.Unlock()
@@ -767,19 +763,12 @@ func (l *LeaderNode) loadPersistedDevices() {
 
 		l.mu.Lock()
 		dev := &protocol.DeviceInfo{
-			Path:           record.LastPath,
-			DeviceID:       record.DeviceID,
-			ChipType:       record.ChipType,
-			SerialNumber:   record.MACAddress,
-			NodeID:         l.id,
-			Status:         "available", // Assume available on restart
-			Disabled:       record.Disabled,
-			DisabledReason: record.DisabledReason,
-			DisabledBy:     record.DisabledBy,
-			DisabledAt:     record.DisabledAt,
-		}
-		if record.Disabled {
-			dev.Status = "disabled"
+			Path:         record.LastPath,
+			DeviceID:     record.DeviceID,
+			ChipType:     record.ChipType,
+			SerialNumber: record.MACAddress,
+			NodeID:       l.id,
+			Status:       "available", // Assume available on restart
 		}
 		l.state.Devices[record.LastPath] = dev
 		l.devices.Register(record.LastPath)

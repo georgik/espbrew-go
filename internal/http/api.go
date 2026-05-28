@@ -207,6 +207,14 @@ func (h *APIHandler) handleDevices(w http.ResponseWriter, r *http.Request) {
 		if len(dev.Tags) > 0 {
 			devMap["tags"] = dev.Tags
 		}
+		if dev.Disabled {
+			devMap["disabled"] = true
+			devMap["disabled_reason"] = dev.DisabledReason
+			devMap["disabled_by"] = dev.DisabledBy
+			if !dev.DisabledAt.IsZero() {
+				devMap["disabled_at"] = dev.DisabledAt.Format(time.RFC3339)
+			}
+		}
 
 		devices = append(devices, devMap)
 	}
@@ -245,6 +253,14 @@ func (h *APIHandler) handleDevices(w http.ResponseWriter, r *http.Request) {
 			}
 			if conn.SerialNumber != "" {
 				devMap["serial"] = conn.SerialNumber
+			}
+			if conn.Disabled {
+				devMap["disabled"] = true
+				devMap["disabled_reason"] = conn.DisabledReason
+				devMap["disabled_by"] = conn.DisabledBy
+				if !conn.DisabledAt.IsZero() {
+					devMap["disabled_at"] = conn.DisabledAt.Format(time.RFC3339)
+				}
 			}
 			// Check for virtual device
 			if len(conn.Path) > 6 && conn.Path[:6] == "wokwi-" {
@@ -411,6 +427,12 @@ func (h *APIHandler) handleReserveDevice(w http.ResponseWriter, r *http.Request)
 	devicePath, device, exists := h.findDeviceByName(deviceName)
 	if !exists {
 		respondError(w, http.StatusNotFound, "Device not found")
+		return
+	}
+
+	// Check if device is disabled
+	if device.Disabled {
+		respondError(w, http.StatusForbidden, "Device is disabled and cannot be reserved")
 		return
 	}
 
@@ -701,6 +723,16 @@ func (h *APIHandler) handleDeviceDetail(w http.ResponseWriter, r *http.Request) 
 		"node_id":     dev.NodeID,
 		"aliases":     dev.Aliases,
 		"tags":        dev.Tags,
+	}
+
+	// Add disabled fields if disabled
+	if dev.Disabled {
+		response["disabled"] = true
+		response["disabled_reason"] = dev.DisabledReason
+		response["disabled_by"] = dev.DisabledBy
+		if !dev.DisabledAt.IsZero() {
+			response["disabled_at"] = dev.DisabledAt.Format(time.RFC3339)
+		}
 	}
 
 	// Check if device is currently connected

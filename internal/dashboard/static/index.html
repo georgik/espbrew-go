@@ -144,6 +144,25 @@
             font-size: 13px;
         }
 
+        .device-item.disabled .device-name {
+            color: var(--text-secondary);
+        }
+
+        .device-item.disabled {
+            opacity: 0.7;
+        }
+
+        .device-item.disabled:hover {
+            background: var(--bg-tertiary);
+            cursor: pointer;
+        }
+
+        .device-item.disabled .device-name::after {
+            content: " (disabled)";
+            font-size: 11px;
+            opacity: 0.7;
+        }
+
         .status-dot {
             width: 8px;
             height: 8px;
@@ -153,6 +172,16 @@
         .status-dot.available { background: var(--success); }
         .status-dot.busy { background: var(--warning); }
         .status-dot.offline { background: var(--error); }
+        .status-dot.disabled { background: var(--text-secondary); }
+
+        .disabled-badge {
+            background: var(--bg-tertiary);
+            color: var(--text-secondary);
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: 10px;
+            margin-left: 8px;
+        }
 
         .progress-bar {
             width: 100%;
@@ -198,6 +227,8 @@
         .btn-secondary:hover { background: var(--border); }
         .btn-danger { background: #d32f2f; }
         .btn-danger:hover { background: #b71c1c; }
+        .btn-warning { background: var(--warning); color: #1f2937; }
+        .btn-warning:hover { background: #d97706; }
 
         .form-group { margin-bottom: 16px; }
 
@@ -208,7 +239,7 @@
             margin-bottom: 6px;
         }
 
-        .form-group input, .form-group select {
+        .form-group input, .form-group select, .form-group textarea {
             width: 100%;
             padding: 10px 12px;
             background: var(--bg-tertiary);
@@ -218,7 +249,12 @@
             font-size: 14px;
         }
 
-        .form-group input:focus, .form-group select:focus {
+        .form-group textarea {
+            resize: vertical;
+            min-height: 60px;
+        }
+
+        .form-group input:focus, .form-group select:focus, .form-group textarea:focus {
             outline: none;
             border-color: var(--accent);
         }
@@ -478,6 +514,15 @@
             margin-bottom: 16px;
             font-size: 13px;
         }
+
+        .disabled-banner {
+            background: var(--text-secondary);
+            color: var(--bg-primary);
+            padding: 12px 14px;
+            border-radius: 8px;
+            margin-bottom: 16px;
+            font-size: 13px;
+        }
     </style>
 </head>
 <body>
@@ -697,12 +742,14 @@
             list.innerHTML = devices.map(d => {
                 // Show warning indicator if device is not probed
                 const needsProbe = !d.device_id && !d.chip_type;
+                const isDisabled = d.disabled || d.status === 'disabled';
                 return `
-                <li class="device-item" onclick="showDeviceDetail('${d.path}', '${d.device_id || ''}', '${d.chip_type || ''}')" title="Click for details">
+                <li class="device-item ${isDisabled ? 'disabled' : ''}" onclick="showDeviceDetail('${d.path}', '${d.device_id || ''}', '${d.chip_type || ''}')" title="${isDisabled ? 'Click to enable device' : 'Click for details'}">
                     <div class="device-info">
-                        <span class="status-dot ${d.status}"></span>
+                        <span class="status-dot ${isDisabled ? 'disabled' : d.status}"></span>
                         <span class="device-name">${d.path}</span>
                         ${needsProbe ? '<span style="color: var(--warning); margin-left: 8px;" title="Device not probed">⚠</span>' : ''}
+                        ${isDisabled ? '<span class="disabled-badge">DISABLED</span>' : ''}
                     </div>
                     <span style="font-size: 12px; color: var(--text-secondary)">
                         ${d.chip_type || 'Unknown chip'}
@@ -711,7 +758,7 @@
             `}).join('');
 
             select.innerHTML = '<option value="">Select device...</option>' +
-                devices.filter(d => d.status === 'available').map(d =>
+                devices.filter(d => d.status === 'available' && !d.disabled).map(d =>
                     `<option value="${d.path}">${d.path}</option>`
                 ).join('');
         }
@@ -1138,9 +1185,17 @@
             currentDeviceData = dev;
 
             const needsProbe = !dev.device_id && !dev.chip_type;
+            const isDisabled = dev.disabled || dev.status === 'disabled';
+
             const warningHtml = needsProbe ? `
                 <div class="warning-banner">
                     ⚠ Device not probed. <button class="btn" style="padding: 4px 12px; font-size: 12px; margin-left: 10px;" onclick="probeDevice('${currentDevicePath}')">Probe Now</button>
+                </div>
+            ` : '';
+
+            const disabledHtml = isDisabled ? `
+                <div class="disabled-banner">
+                    🚫 Device is disabled${dev.disabled_reason ? ': ' + dev.disabled_reason : ''}${dev.disabled_by ? ' (by ' + dev.disabled_by + ')' : ''}
                 </div>
             ` : '';
 
@@ -1155,11 +1210,18 @@
                 return Math.round(bytes * 10) / 10 + ' ' + units[i];
             };
 
+            // Disable/Enable button
+            const toggleDisableBtn = isDisabled
+                ? `<button class="btn" style="padding: 6px 12px; font-size: 13px;" onclick="enableDevice()">Enable Device</button>`
+                : `<button class="btn btn-warning" style="padding: 6px 12px; font-size: 13px;" onclick="disableDevice()">Disable Device</button>`;
+
             content.innerHTML = `
+                ${disabledHtml}
                 ${warningHtml}
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
                     <span style="font-size: 14px; font-weight: 500; color: var(--text-secondary);">Device Information</span>
                     <div style="display: flex; gap: 8px;">
+                        ${toggleDisableBtn}
                         <button class="btn btn-danger" style="padding: 6px 12px; font-size: 13px;" onclick="deleteDevice()">Delete</button>
                         <button class="btn btn-secondary" style="padding: 6px 12px; font-size: 13px;" onclick="showDeviceEditForm()">Edit</button>
                     </div>
@@ -1195,8 +1257,8 @@
                 <div class="detail-row">
                     <span class="detail-label">Status</span>
                     <span class="detail-value">
-                        <span class="status-dot ${dev.status}"></span>
-                        ${dev.connected ? 'Connected' : 'Offline'}
+                        <span class="status-dot ${isDisabled ? 'disabled' : dev.status}"></span>
+                        ${isDisabled ? 'Disabled' : (dev.connected ? 'Connected' : 'Offline')}
                     </span>
                 </div>
                 ${dev.last_path || dev.current_path ? `
@@ -1236,6 +1298,75 @@
                     </div>
                 </div>
             `;
+        }
+
+        async function disableDevice() {
+            const reason = prompt('Enter reason for disabling this device (optional):');
+            if (reason === null) return; // User cancelled
+
+            const content = document.getElementById('device-detail-content');
+            content.innerHTML = '<div style="text-align: center; padding: 30px;"><span class="spinner"></span> Disabling device...</div>';
+
+            try {
+                const response = await fetch(`/api/v1/devices/${currentDeviceId}/disable`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ reason: reason || '', client_id: 'web-dashboard' })
+                });
+
+                if (response.ok) {
+                    refreshData();
+                    showDeviceDetail('', currentDeviceId);
+                } else {
+                    const error = await response.json();
+                    content.innerHTML = `
+                        <div style="text-align: center; padding: 20px;">
+                            <p style="color: var(--error); margin-bottom: 16px;">Failed to disable: ${error.error || 'Unknown error'}</p>
+                            <button class="btn" onclick="showDeviceDetail('', '${currentDeviceId}')">Try Again</button>
+                        </div>
+                    `;
+                }
+            } catch (error) {
+                content.innerHTML = `
+                    <div style="text-align: center; padding: 20px;">
+                        <p style="color: var(--error); margin-bottom: 16px;">Failed to disable: ${error.message}</p>
+                        <button class="btn" onclick="showDeviceDetail('', '${currentDeviceId}')">Try Again</button>
+                    </div>
+                `;
+            }
+        }
+
+        async function enableDevice() {
+            const content = document.getElementById('device-detail-content');
+            content.innerHTML = '<div style="text-align: center; padding: 30px;"><span class="spinner"></span> Enabling device...</div>';
+
+            try {
+                const response = await fetch(`/api/v1/devices/${currentDeviceId}/enable`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ client_id: 'web-dashboard' })
+                });
+
+                if (response.ok) {
+                    refreshData();
+                    showDeviceDetail('', currentDeviceId);
+                } else {
+                    const error = await response.json();
+                    content.innerHTML = `
+                        <div style="text-align: center; padding: 20px;">
+                            <p style="color: var(--error); margin-bottom: 16px;">Failed to enable: ${error.error || 'Unknown error'}</p>
+                            <button class="btn" onclick="showDeviceDetail('', '${currentDeviceId}')">Try Again</button>
+                        </div>
+                    `;
+                }
+            } catch (error) {
+                content.innerHTML = `
+                    <div style="text-align: center; padding: 20px;">
+                        <p style="color: var(--error); margin-bottom: 16px;">Failed to enable: ${error.message}</p>
+                        <button class="btn" onclick="showDeviceDetail('', '${currentDeviceId}')">Try Again</button>
+                    </div>
+                `;
+            }
         }
 
         function showDeviceEditForm() {

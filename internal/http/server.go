@@ -59,6 +59,10 @@ func (s *Server) setupRoutes(store *persistence.Store) {
 	cameraHandler := NewCameraHandler()
 	cameraHandler.RegisterRoutes(s.router)
 
+	// Device disable/enable routes
+	deviceDisableHandler := NewDeviceDisableHandler(s.node, store)
+	deviceDisableHandler.RegisterRoutes(s.router)
+
 	// Flash API routes
 	if leader, ok := s.node.(*cluster.LeaderNode); ok {
 		progressHandler := NewProgressHandler(leader, s.hub)

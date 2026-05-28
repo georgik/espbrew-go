@@ -84,6 +84,7 @@ Device states:
 - `busy` - Device is in use
 - `reserved` - Device is reserved for a client
 - `offline` - Device is not currently connected
+- `disabled` - Device is administratively disabled
 
 Device response fields:
 - `path` - Current connection path (empty if offline)
@@ -95,6 +96,10 @@ Device response fields:
 - `serial` - MAC address (if available)
 - `aliases` - Custom device names
 - `tags` - User-defined labels
+- `disabled` - Boolean indicating if device is administratively disabled
+- `disabled_reason` - Reason for disabling (if disabled)
+- `disabled_by` - Identifier of user/client who disabled the device
+- `disabled_at` - Timestamp when device was disabled
 
 ### Device Detail
 
@@ -183,6 +188,85 @@ Response:
 ```
 
 Note: This only removes the device record from inventory. It does not affect the physical device or prevent it from being re-registered later.
+
+### Disable Device
+
+```
+PUT /api/v1/devices/{id}/disable
+POST /api/v1/devices/{id}/disable
+Content-Type: application/json
+```
+
+Administratively disables a device to prevent it from being used for flashing or monitoring. The disabled state persists across cluster restarts.
+
+Request body (optional):
+```json
+{
+  "reason": "Device under maintenance",
+  "client_id": "admin-user"
+}
+```
+
+Response (200 OK):
+```json
+{
+  "status": "disabled",
+  "device_id": "esp-aa:bb:cc:dd:ee:ff",
+  "path": "/dev/ttyUSB0"
+}
+```
+
+Response (404 Not Found):
+```json
+{
+  "error": "device not found"
+}
+```
+
+Response (409 Conflict):
+```json
+{
+  "error": "cannot disable device that is currently in use"
+}
+```
+
+Notes:
+- Disabled devices cannot be flashed or reserved
+- The device can be identified by device ID, path, or serial number
+- Disabled state is persisted and survives cluster restarts
+- A device cannot be disabled if it is currently busy or reserved
+
+### Enable Device
+
+```
+PUT /api/v1/devices/{id}/enable
+POST /api/v1/devices/{id}/enable
+Content-Type: application/json
+```
+
+Re-enables a previously disabled device.
+
+Request body (optional):
+```json
+{
+  "client_id": "admin-user"
+}
+```
+
+Response (200 OK):
+```json
+{
+  "status": "enabled",
+  "device_id": "esp-aa:bb:cc:dd:ee:ff"
+}
+```
+
+Response (404 Not Found):
+```json
+{
+  "error": "device not found"
+}
+```
 
 ### Add Device (Manual)
 

@@ -9,21 +9,25 @@ import (
 )
 
 type DeviceRecord struct {
-	DeviceID    string    `json:"device_id"`
-	MACAddress  string    `json:"mac_address"`
-	ChipType    string    `json:"chip_type"`
-	ChipRev     string    `json:"chip_rev"`
-	FlashSize   uint32    `json:"flash_size"`
-	PSRAMSize   uint32    `json:"psram_size"`
-	PSRAMType   string    `json:"psram_type"`
-	BoardModel  string    `json:"board_model"`
-	Description string    `json:"description"`
-	Aliases     []string  `json:"aliases"`
-	Tags        []string  `json:"tags"`
-	FirstSeen   time.Time `json:"first_seen"`
-	LastSeen    time.Time `json:"last_seen"`
-	LastPath    string    `json:"last_path"`
-	NodeID      string    `json:"node_id"`
+	DeviceID       string    `json:"device_id"`
+	MACAddress     string    `json:"mac_address"`
+	ChipType       string    `json:"chip_type"`
+	ChipRev        string    `json:"chip_rev"`
+	FlashSize      uint32    `json:"flash_size"`
+	PSRAMSize      uint32    `json:"psram_size"`
+	PSRAMType      string    `json:"psram_type"`
+	BoardModel     string    `json:"board_model"`
+	Description    string    `json:"description"`
+	Aliases        []string  `json:"aliases"`
+	Tags           []string  `json:"tags"`
+	FirstSeen      time.Time `json:"first_seen"`
+	LastSeen       time.Time `json:"last_seen"`
+	LastPath       string    `json:"last_path"`
+	NodeID         string    `json:"node_id"`
+	Disabled       bool      `json:"disabled"`
+	DisabledReason string    `json:"disabled_reason,omitempty"`
+	DisabledBy     string    `json:"disabled_by,omitempty"`
+	DisabledAt     time.Time `json:"disabled_at,omitempty"`
 }
 
 func (s *Store) SaveDevice(dev *DeviceRecord) error {
@@ -279,3 +283,60 @@ func (s *Store) GenerateManualID(chipType string) (string, error) {
 
 	return fmt.Sprintf("manual-%s-%d", chipType, nextID), nil
 }
+
+// SetDeviceDisabled sets the disabled state of a device
+func (s *Store) SetDeviceDisabled(deviceID string, disabled bool, reason, by string) error {
+	return s.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte(bucketDevices))
+		if b == nil {
+			return fmt.Errorf("devices bucket not found")
+		}
+
+		key := deviceKey(deviceID)
+		data := b.Get(key)
+		if data == nil {
+			return fmt.Errorf("device not found: %s", deviceID)
+		}
+
+		codec := &codec{}
+		dev, err := codec.DecodeDevice(data)
+		if err != nil {
+			return err
+		}
+
+		dev.Disabled = disabled
+		if disabled {
+			dev.DisabledReason = reason
+			dev.DisabledBy = by
+			dev.DisabledAt = time.Now()
+		} else {
+			dev.DisabledReason = ""
+			dev.DisabledBy = ""
+			dev.DisabledAt = time.Time{}
+		}
+
+		encoded, err := codec.Encode(dev)
+		if err != nil {
+			return err
+		}
+
+		return b.Put(key, encoded)
+	})
+}
+
+// GetDeviceByPath finds a device by its last known connection path
+func (s *Store) GetDeviceByPath(path string) (*DeviceRecord, error) {
+	devices, err := s.ListDevices()
+	if err != nil {
+		return nil, err
+	}
+
+	for _, dev := range devices {
+		if dev.LastPath == path {
+			return dev, nil
+		}
+	}
+
+	return nil, fmt.Errorf("device not found with path: %s", path)
+}
+

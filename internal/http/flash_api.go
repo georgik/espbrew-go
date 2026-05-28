@@ -111,6 +111,12 @@ func (h *FlashHandler) handleFlashSubmit(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	// Check if device is disabled
+	if IsDeviceDisabled(h.leader.State(), req.DevicePath) {
+		respondError(w, http.StatusForbidden, "device is disabled and cannot be flashed")
+		return
+	}
+
 	// Determine firmware path
 	var firmwarePath string
 	if req.FileID != "" {
@@ -217,6 +223,19 @@ func (h *PeerFlashHandler) handleFlashSubmit(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	// Check if device exists locally
+	state := h.peer.State()
+	if _, exists := state.Devices[req.DevicePath]; !exists {
+		respondError(w, http.StatusNotFound, fmt.Sprintf("device not found: %s", req.DevicePath))
+		return
+	}
+
+	// Check if device is disabled
+	if IsDeviceDisabled(state, req.DevicePath) {
+		respondError(w, http.StatusForbidden, "device is disabled and cannot be flashed")
+		return
+	}
+
 	// Determine firmware path
 	var firmwarePath string
 	if req.FileID != "" {
@@ -227,13 +246,6 @@ func (h *PeerFlashHandler) handleFlashSubmit(w http.ResponseWriter, r *http.Requ
 		}
 	} else {
 		respondError(w, http.StatusBadRequest, "file_id required")
-		return
-	}
-
-	// Check if device exists locally
-	state := h.peer.State()
-	if _, exists := state.Devices[req.DevicePath]; !exists {
-		respondError(w, http.StatusNotFound, fmt.Sprintf("device not found: %s", req.DevicePath))
 		return
 	}
 

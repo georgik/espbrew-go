@@ -13,6 +13,7 @@ ESP32 cluster flashing tool written in Go. Manages multiple ESP32 devices across
 - **Device Discovery**: Automatic ESP device detection via USB serial
 - **Device Persistence**: Device information survives cluster restart
 - **Device Management**: View, edit, and delete device records via web UI
+- **Device Disabling**: Administratively disable devices to prevent accidental flashing
 - **Camera Support**: Discover and capture images from connected cameras
 - **Job Queue**: Queue and manage flash jobs across all available devices
 - **Device Locking**: Prevents concurrent access to serial ports
