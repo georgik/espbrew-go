@@ -9,18 +9,26 @@ import (
 	"time"
 
 	"codeberg.org/georgik/espbrew-go/internal/cluster"
+	"codeberg.org/georgik/espbrew-go/internal/persistence"
 )
 
 func TestHandleDevicesIncludesVirtual(t *testing.T) {
 	ctx := context.Background()
 
+	store, err := persistence.Open(persistence.DefaultConfig(t.TempDir() + "/test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
 	leader := cluster.NewLeaderNode("test-leader", &cluster.LeaderConfig{
-		HeartbeatInterval: time.Second,
-		NodeTimeout:       5 * time.Second,
-		HTTPPort:          8080,
-		DisablemDNS:       true,
-		DisableWatcher:    true,
-	})
+		HeartbeatInterval:  time.Second,
+		NodeTimeout:        5 * time.Second,
+		HTTPPort:           8080,
+		DisablemDNS:        true,
+		DisableWatcher:     true,
+		DisableMaintenance: true,
+	}, store)
 
 	if err := leader.Start(ctx); err != nil {
 		t.Fatalf("Failed to start leader: %v", err)
@@ -30,7 +38,7 @@ func TestHandleDevicesIncludesVirtual(t *testing.T) {
 	// Wait for virtual device registration
 	time.Sleep(200 * time.Millisecond)
 
-	handler := NewAPIHandler(leader)
+	handler := NewAPIHandler(leader, store)
 
 	req := httptest.NewRequest("GET", "/api/v1/devices", nil)
 	w := httptest.NewRecorder()

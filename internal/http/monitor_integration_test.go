@@ -40,10 +40,11 @@ func TestMonitorWebSocket_DataFlow(t *testing.T) {
 
 	// Create a minimal leader node
 	leader := cluster.NewLeaderNode("test", &cluster.LeaderConfig{
-		HTTPPort:          8081,
-		DisablemDNS:       true,
-		HeartbeatInterval: time.Second,
-		NodeTimeout:       5 * time.Second,
+		HTTPPort:           8081,
+		DisablemDNS:        true,
+		DisableMaintenance: true,
+		HeartbeatInterval:  time.Second,
+		NodeTimeout:        5 * time.Second,
 	})
 	require.NoError(t, leader.Start(context.Background()))
 	defer leader.Stop()

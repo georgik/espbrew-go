@@ -5,17 +5,26 @@ import (
 	"testing"
 	"time"
 
+	"codeberg.org/georgik/espbrew-go/internal/persistence"
 	"codeberg.org/georgik/espbrew-go/pkg/protocol"
 	"github.com/stretchr/testify/assert"
 )
 
 func TestLeaderNodeRegistersDevice(t *testing.T) {
+	store, err := persistence.Open(persistence.DefaultConfig(t.TempDir() + "/test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
 	leader := NewLeaderNode("test-leader", &LeaderConfig{
-		HeartbeatInterval: time.Second,
-		NodeTimeout:       5 * time.Second,
-		HTTPPort:          8080,
-		DisablemDNS:       true, // Disable mDNS in tests
-	})
+		HeartbeatInterval:  time.Second,
+		NodeTimeout:        5 * time.Second,
+		HTTPPort:           8080,
+		DisablemDNS:        true, // Disable mDNS in tests
+		DisableWatcher:     true,
+		DisableMaintenance: true,
+	}, store)
 
 	ctx := context.Background()
 	assert.NoError(t, leader.Start(ctx))
@@ -37,12 +46,20 @@ func TestLeaderNodeRegistersDevice(t *testing.T) {
 }
 
 func TestLeaderNodeTimeoutCleanup(t *testing.T) {
+	store, err := persistence.Open(persistence.DefaultConfig(t.TempDir() + "/test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
 	leader := NewLeaderNode("test-leader", &LeaderConfig{
-		HeartbeatInterval: 100 * time.Millisecond,
-		NodeTimeout:       200 * time.Millisecond,
-		HTTPPort:          8080,
-		DisablemDNS:       true,
-	})
+		HeartbeatInterval:  100 * time.Millisecond,
+		NodeTimeout:        200 * time.Millisecond,
+		HTTPPort:           8080,
+		DisablemDNS:        true,
+		DisableWatcher:     true,
+		DisableMaintenance: true,
+	}, store)
 
 	ctx := context.Background()
 	assert.NoError(t, leader.Start(ctx))

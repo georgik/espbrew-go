@@ -13,14 +13,22 @@ import (
 	"testing"
 
 	"codeberg.org/georgik/espbrew-go/internal/cluster"
+	"codeberg.org/georgik/espbrew-go/internal/persistence"
 	"codeberg.org/georgik/espbrew-go/pkg/protocol"
 )
 
 func TestFlashHandler_handleUpload(t *testing.T) {
 	// Create a mock master
+	store, err := persistence.Open(persistence.DefaultConfig(t.TempDir() + "/test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
 	master := cluster.NewLeaderNode("test-master", &cluster.LeaderConfig{
-		DisablemDNS: true,
-	})
+		DisablemDNS:        true,
+		DisableMaintenance: true,
+	}, store)
 
 	handler := NewFlashHandler(master, os.TempDir(), nil)
 
@@ -70,9 +78,16 @@ func TestFlashHandler_handleUpload(t *testing.T) {
 }
 
 func TestFlashHandler_handleUpload_NoFile(t *testing.T) {
+	store, err := persistence.Open(persistence.DefaultConfig(t.TempDir() + "/test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
 	master := cluster.NewLeaderNode("test-master", &cluster.LeaderConfig{
-		DisablemDNS: true,
-	})
+		DisablemDNS:        true,
+		DisableMaintenance: true,
+	}, store)
 
 	handler := NewFlashHandler(master, os.TempDir(), nil)
 
@@ -89,9 +104,16 @@ func TestFlashHandler_handleUpload_NoFile(t *testing.T) {
 }
 
 func TestFlashHandler_handleFlashSubmit(t *testing.T) {
+	store, err := persistence.Open(persistence.DefaultConfig(t.TempDir() + "/test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
 	master := cluster.NewLeaderNode("test-master", &cluster.LeaderConfig{
-		DisablemDNS: true,
-	})
+		DisablemDNS:        true,
+		DisableMaintenance: true,
+	}, store)
 
 	// Register a test device
 	master.RegisterDevice(&protocol.DeviceInfo{
@@ -162,9 +184,16 @@ func TestFlashHandler_handleFlashSubmit(t *testing.T) {
 }
 
 func TestFlashHandler_handleFlashSubmit_DeviceNotFound(t *testing.T) {
+	store, err := persistence.Open(persistence.DefaultConfig(t.TempDir() + "/test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
 	master := cluster.NewLeaderNode("test-master", &cluster.LeaderConfig{
-		DisablemDNS: true,
-	})
+		DisablemDNS:        true,
+		DisableMaintenance: true,
+	}, store)
 
 	handler := NewFlashHandler(master, os.TempDir(), nil)
 

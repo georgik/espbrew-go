@@ -10,6 +10,7 @@ import (
 	"codeberg.org/georgik/espbrew-go/internal/device"
 	"codeberg.org/georgik/espbrew-go/internal/inventory"
 	"codeberg.org/georgik/espbrew-go/internal/inventory/rom"
+	"codeberg.org/georgik/espbrew-go/internal/persistence"
 	"codeberg.org/georgik/espbrew-go/pkg/protocol"
 	"github.com/rs/zerolog/log"
 )
@@ -35,6 +36,7 @@ type LeaderNode struct {
 	queue    *JobQueue
 	executor *JobExecutor
 	devices  *DeviceRegistry
+	store    *persistence.Store
 	mu       sync.RWMutex
 	ctx      context.Context
 	cancel   context.CancelFunc
@@ -44,20 +46,22 @@ type LeaderNode struct {
 }
 
 type LeaderConfig struct {
-	HeartbeatInterval time.Duration
-	NodeTimeout       time.Duration
-	HTTPPort          int
-	DisablemDNS       bool // For testing
-	DisableWatcher    bool // For testing
+	HeartbeatInterval  time.Duration
+	NodeTimeout        time.Duration
+	HTTPPort           int
+	DisablemDNS        bool // For testing
+	DisableWatcher     bool // For testing
+	DisableMaintenance bool // For testing - skips maintenance loop
 }
 
-func NewLeaderNode(id string, cfg *LeaderConfig) *LeaderNode {
+func NewLeaderNode(id string, cfg *LeaderConfig, store *persistence.Store) *LeaderNode {
 	return &LeaderNode{
 		id:      id,
 		config:  cfg,
 		state:   NewClusterState(),
 		queue:   NewJobQueue(),
 		devices: NewDeviceRegistry(),
+		store:   store,
 	}
 }
 
@@ -87,11 +91,16 @@ func (l *LeaderNode) Start(ctx context.Context) error {
 	l.wg.Add(1)
 	go l.runJobDispatcher()
 
-	l.wg.Add(1)
-	go l.runMaintenanceLoop()
+	if !l.config.DisableMaintenance {
+		l.wg.Add(1)
+		go l.runMaintenanceLoop()
+	}
 
 	// Discover cameras on startup
 	l.discoverCameras()
+
+	// Load persisted devices from store
+	l.loadPersistedDevices()
 
 	// Register virtual devices
 	l.registerVirtualDevices()
@@ -315,21 +324,35 @@ func (l *LeaderNode) handleDeviceEvent(event device.DeviceEvent) {
 
 	switch event.Type {
 	case device.DeviceAdded:
-		dev := &protocol.DeviceInfo{
-			Path:   event.Path,
-			VID:    event.VID,
-			PID:    event.PID,
-			NodeID: l.id,
-			Status: "available",
+		// Check if device already exists (from persistence or previous session)
+		existingDev, exists := l.state.Devices[event.Path]
+
+		if exists {
+			// Device exists - update VID/PID/Status but preserve identity
+			existingDev.VID = event.VID
+			existingDev.PID = event.PID
+			existingDev.Status = "available"
+			l.state.Devices[event.Path] = existingDev
+			log.Info().Str("path", event.Path).Str("device_id", existingDev.DeviceID).
+				Msg("Device re-connected, preserving identity")
+		} else {
+			// New device - create fresh entry
+			dev := &protocol.DeviceInfo{
+				Path:   event.Path,
+				VID:    event.VID,
+				PID:    event.PID,
+				NodeID: l.id,
+				Status: "available",
+			}
+			l.state.Devices[event.Path] = dev
+
+			// Quick probe immediately for new devices
+			l.wg.Add(1)
+			go l.probeDeviceQuickAsync(dev)
+			log.Info().Str("path", event.Path).Msg("Device added on leader")
 		}
 
-		l.state.Devices[event.Path] = dev
 		l.devices.Register(event.Path)
-		log.Info().Str("path", event.Path).Msg("Device added on leader")
-
-		// Quick probe immediately (device likely in bootloader right after connect)
-		l.wg.Add(1)
-		go l.probeDeviceQuickAsync(dev)
 
 	case device.DeviceRemoved:
 		delete(l.state.Devices, event.Path)
@@ -356,15 +379,39 @@ func (l *LeaderNode) probeDeviceQuickAsync(dev *protocol.DeviceInfo) {
 	dev.SerialNumber = identity.MAC
 	l.mu.Unlock()
 
-	inv, err := inventory.NewInventory()
-	if err != nil {
-		log.Warn().Err(err).Msg("Failed to open inventory")
-		return
+	// Store in persistence - load existing to preserve FirstSeen
+	now := time.Now()
+	existing, err := l.store.GetDevice(deviceID)
+	var record *persistence.DeviceRecord
+	if err == nil && existing != nil {
+		// Update existing record
+		record = existing
+		record.MACAddress = identity.MAC
+		record.ChipType = identity.Chip
+		record.ChipRev = fmt.Sprintf("%d.%d", identity.ChipMajor, identity.ChipMinor)
+		record.FlashSize = identity.FlashSize
+		record.PSRAMSize = identity.PSRAMSize
+		record.LastSeen = now
+		record.LastPath = dev.Path
+		record.NodeID = l.id
+	} else {
+		// New record
+		record = &persistence.DeviceRecord{
+			DeviceID:   deviceID,
+			MACAddress: identity.MAC,
+			ChipType:   identity.Chip,
+			ChipRev:    fmt.Sprintf("%d.%d", identity.ChipMajor, identity.ChipMinor),
+			FlashSize:  identity.FlashSize,
+			PSRAMSize:  identity.PSRAMSize,
+			FirstSeen:  now,
+			LastSeen:   now,
+			LastPath:   dev.Path,
+			NodeID:     l.id,
+		}
 	}
 
-	_, err = inv.GetOrCreate(identity, dev.Path, l.id)
-	if err != nil {
-		log.Warn().Err(err).Msg("Failed to update inventory")
+	if err := l.store.SaveDevice(record); err != nil {
+		log.Warn().Err(err).Msg("Failed to save device to persistence")
 		return
 	}
 
@@ -401,15 +448,39 @@ func (l *LeaderNode) ProbeDevice(path string) (*protocol.DeviceInfo, error) {
 	dev.SerialNumber = identity.MAC
 	l.mu.Unlock()
 
-	// Update inventory
-	inv, err := inventory.NewInventory()
-	if err != nil {
-		return nil, fmt.Errorf("open inventory: %w", err)
+	// Store in persistence - load existing to preserve FirstSeen
+	now := time.Now()
+	existing, err := l.store.GetDevice(deviceID)
+	var record *persistence.DeviceRecord
+	if err == nil && existing != nil {
+		// Update existing record
+		record = existing
+		record.MACAddress = identity.MAC
+		record.ChipType = identity.Chip
+		record.ChipRev = fmt.Sprintf("%d.%d", identity.ChipMajor, identity.ChipMinor)
+		record.FlashSize = identity.FlashSize
+		record.PSRAMSize = identity.PSRAMSize
+		record.LastSeen = now
+		record.LastPath = path
+		record.NodeID = l.id
+	} else {
+		// New record
+		record = &persistence.DeviceRecord{
+			DeviceID:   deviceID,
+			MACAddress: identity.MAC,
+			ChipType:   identity.Chip,
+			ChipRev:    fmt.Sprintf("%d.%d", identity.ChipMajor, identity.ChipMinor),
+			FlashSize:  identity.FlashSize,
+			PSRAMSize:  identity.PSRAMSize,
+			FirstSeen:  now,
+			LastSeen:   now,
+			LastPath:   path,
+			NodeID:     l.id,
+		}
 	}
 
-	_, err = inv.GetOrCreate(identity, path, l.id)
-	if err != nil {
-		return nil, fmt.Errorf("update inventory: %w", err)
+	if err := l.store.SaveDevice(record); err != nil {
+		log.Warn().Err(err).Msg("Failed to save device to persistence")
 	}
 
 	log.Info().
@@ -632,10 +703,79 @@ func (l *LeaderNode) UpdateDeviceInfo(path, deviceID, chipType, serialNumber str
 		dev.ChipType = chipType
 		dev.SerialNumber = serialNumber
 		l.state.Devices[path] = dev
+
+		// Persist to store - load existing first to preserve fields
+		var record *persistence.DeviceRecord
+		existing, err := l.store.GetDevice(deviceID)
+		if err == nil && existing != nil {
+			// Update existing record, preserving FirstSeen and other fields
+			record = existing
+			record.DeviceID = deviceID
+			record.MACAddress = serialNumber
+			record.ChipType = chipType
+			record.LastSeen = time.Now()
+			record.LastPath = path
+			record.NodeID = l.id
+		} else {
+			// New record
+			now := time.Now()
+			record = &persistence.DeviceRecord{
+				DeviceID:   deviceID,
+				MACAddress: serialNumber,
+				ChipType:   chipType,
+				FirstSeen:  now,
+				LastSeen:   now,
+				LastPath:   path,
+				NodeID:     l.id,
+			}
+		}
+
+		if err := l.store.SaveDevice(record); err != nil {
+			log.Warn().Err(err).Msg("Failed to persist device info update")
+		}
+
 		log.Info().
 			Str("path", path).
 			Str("device_id", deviceID).
 			Str("chip", chipType).
 			Msg("Device info updated in cluster state")
 	}
+}
+
+// loadPersistedDevices restores devices from persistence store on startup
+func (l *LeaderNode) loadPersistedDevices() {
+	devices, err := l.store.ListDevices()
+	if err != nil {
+		log.Warn().Err(err).Msg("Failed to list devices from store")
+		return
+	}
+
+	loaded := 0
+	for _, record := range devices {
+		// For now, only restore devices that were last seen on this node
+		// Using LastPath as the device identifier (user's approach for early phase)
+		if record.NodeID != l.id {
+			continue
+		}
+		if record.LastPath == "" {
+			continue
+		}
+
+		l.mu.Lock()
+		dev := &protocol.DeviceInfo{
+			Path:         record.LastPath,
+			DeviceID:     record.DeviceID,
+			ChipType:     record.ChipType,
+			SerialNumber: record.MACAddress,
+			NodeID:       l.id,
+			Status:       "available", // Assume available on restart
+		}
+		l.state.Devices[record.LastPath] = dev
+		l.devices.Register(record.LastPath)
+		l.mu.Unlock()
+
+		loaded++
+	}
+
+	log.Info().Int("count", loaded).Msg("Devices loaded from persistence")
 }

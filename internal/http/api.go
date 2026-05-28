@@ -9,8 +9,7 @@ import (
 
 	"codeberg.org/georgik/espbrew-go/internal/camera"
 	"codeberg.org/georgik/espbrew-go/internal/cluster"
-	"codeberg.org/georgik/espbrew-go/internal/device"
-	"codeberg.org/georgik/espbrew-go/internal/inventory"
+	"codeberg.org/georgik/espbrew-go/internal/persistence"
 	"codeberg.org/georgik/espbrew-go/pkg/protocol"
 	"github.com/gorilla/mux"
 	"github.com/rs/zerolog/log"
@@ -20,10 +19,11 @@ type APIHandler struct {
 	node   cluster.Node
 	leader *cluster.LeaderNode
 	peer   *cluster.PeerNode
+	store  *persistence.Store
 }
 
-func NewAPIHandler(node cluster.Node) *APIHandler {
-	h := &APIHandler{node: node}
+func NewAPIHandler(node cluster.Node, store *persistence.Store) *APIHandler {
+	h := &APIHandler{node: node, store: store}
 
 	// Type assertions for leader/peer specific APIs
 	if l, ok := node.(*cluster.LeaderNode); ok {
@@ -47,6 +47,7 @@ func (h *APIHandler) RegisterRoutes(r *mux.Router) {
 	api.HandleFunc("/devices/probe", h.handleProbeDevice).Methods("POST")
 	api.HandleFunc("/devices/{id}", h.handleDeviceDetail).Methods("GET")
 	api.HandleFunc("/devices/{id}", h.handleUpdateDevice).Methods("PUT", "PATCH")
+	api.HandleFunc("/devices/{id}", h.handleDeleteDevice).Methods("DELETE")
 	api.HandleFunc("/cameras", h.handleCameras).Methods("GET")
 
 	// Device reservation (use device name without /dev/ prefix)
@@ -117,42 +118,150 @@ func (h *APIHandler) handleNodes(w http.ResponseWriter, r *http.Request) {
 func (h *APIHandler) handleDevices(w http.ResponseWriter, r *http.Request) {
 	state := h.node.State()
 
-	// Collect device paths and sort them
-	paths := make([]string, 0, len(state.Devices))
-	for path := range state.Devices {
-		paths = append(paths, path)
+	// Get all devices from store (authoritative source for known devices)
+	storeDevices, err := h.store.ListDevices()
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "Failed to list devices")
+		return
 	}
-	sort.Strings(paths)
 
-	devices := make([]map[string]interface{}, 0, len(state.Devices))
-	for _, path := range paths {
-		d := state.Devices[path]
+	// Build map of store devices by device_id and MAC for quick lookup
+	knownByDeviceID := make(map[string]*persistence.DeviceRecord)
+	knownByMAC := make(map[string]*persistence.DeviceRecord)
+	for _, dev := range storeDevices {
+		if dev.DeviceID != "" {
+			knownByDeviceID[dev.DeviceID] = dev
+		}
+		if dev.MACAddress != "" {
+			knownByMAC[dev.MACAddress] = dev
+		}
+	}
 
-		// Filter to only show ESP devices or virtual devices
-		isVirtual := len(path) > 6 && path[:6] == "wokwi-"
-		if !isVirtual && !device.IsESPDevice(d.VID, d.PID) {
+	// Build response: combine store devices with in-memory connection status
+	devices := make([]map[string]interface{}, 0)
+
+	// First, add all known devices from store with their current connection status
+	for _, dev := range storeDevices {
+		status := "offline"
+		currentPath := dev.LastPath
+		nodeID := dev.NodeID
+		vid := ""
+		pid := ""
+		serial := dev.MACAddress
+
+		// Check if currently connected
+		if dev.MACAddress != "" {
+			if conn, ok := state.Devices[dev.LastPath]; ok && (conn.DeviceID == dev.DeviceID || conn.SerialNumber == dev.MACAddress) {
+				status = conn.Status
+				vid = fmt.Sprintf("0x%04x", conn.VID)
+				pid = fmt.Sprintf("0x%04x", conn.PID)
+				nodeID = conn.NodeID
+				if conn.SerialNumber != "" {
+					serial = conn.SerialNumber
+				}
+			}
+		}
+		if dev.DeviceID != "" {
+			for _, conn := range state.Devices {
+				if conn.DeviceID == dev.DeviceID {
+					status = conn.Status
+					currentPath = conn.Path
+					vid = fmt.Sprintf("0x%04x", conn.VID)
+					pid = fmt.Sprintf("0x%04x", conn.PID)
+					nodeID = conn.NodeID
+					if conn.SerialNumber != "" {
+						serial = conn.SerialNumber
+					}
+					break
+				}
+			}
+		}
+
+		// Skip garbage records (offline with no chip_type)
+		if status == "offline" && dev.ChipType == "" {
 			continue
 		}
 
-		dev := map[string]interface{}{
-			"path":      d.Path,
-			"vid":       fmt.Sprintf("0x%04x", d.VID),
-			"pid":       fmt.Sprintf("0x%04x", d.PID),
-			"state":     d.Status,
-			"status":    d.Status,
-			"node_id":   d.NodeID,
-			"device_id": d.DeviceID,
-			"chip_type": d.ChipType,
+		devMap := map[string]interface{}{
+			"path":      currentPath,
+			"device_id": dev.DeviceID,
+			"chip_type": dev.ChipType,
+			"status":    status,
+			"connected": status != "offline",
 		}
-		if isVirtual {
-			dev["virtual"] = true
-			dev["label"] = "Wokwi " + path[6:]
+		if vid != "" {
+			devMap["vid"] = vid
 		}
-		if d.SerialNumber != "" {
-			dev["serial"] = d.SerialNumber
+		if pid != "" {
+			devMap["pid"] = pid
 		}
-		devices = append(devices, dev)
+		if nodeID != "" {
+			devMap["node_id"] = nodeID
+		}
+		if serial != "" {
+			devMap["serial"] = serial
+		}
+		if len(dev.Aliases) > 0 {
+			devMap["aliases"] = dev.Aliases
+		}
+		if len(dev.Tags) > 0 {
+			devMap["tags"] = dev.Tags
+		}
+
+		devices = append(devices, devMap)
 	}
+
+	// Add in-memory devices that aren't in store (virtual devices, newly connected)
+	for _, conn := range state.Devices {
+		alreadyListed := false
+		if conn.DeviceID != "" {
+			if _, ok := knownByDeviceID[conn.DeviceID]; ok {
+				alreadyListed = true
+			}
+		}
+		if conn.SerialNumber != "" {
+			if _, ok := knownByMAC[conn.SerialNumber]; ok {
+				alreadyListed = true
+			}
+		}
+
+		if !alreadyListed {
+			// Virtual device or unprobed device - add to list
+			devMap := map[string]interface{}{
+				"path":      conn.Path,
+				"vid":       fmt.Sprintf("0x%04x", conn.VID),
+				"pid":       fmt.Sprintf("0x%04x", conn.PID),
+				"status":    conn.Status,
+				"connected": true,
+			}
+			if conn.DeviceID != "" {
+				devMap["device_id"] = conn.DeviceID
+			}
+			if conn.ChipType != "" {
+				devMap["chip_type"] = conn.ChipType
+			}
+			if conn.NodeID != "" {
+				devMap["node_id"] = conn.NodeID
+			}
+			if conn.SerialNumber != "" {
+				devMap["serial"] = conn.SerialNumber
+			}
+			// Check for virtual device
+			if len(conn.Path) > 6 && conn.Path[:6] == "wokwi-" {
+				devMap["virtual"] = true
+				devMap["label"] = "Wokwi " + conn.Path[6:]
+			}
+			devices = append(devices, devMap)
+		}
+	}
+
+	// Sort devices by path (use empty string for devices without path)
+	sort.Slice(devices, func(i, j int) bool {
+		pathI, _ := devices[i]["path"].(string)
+		pathJ, _ := devices[j]["path"].(string)
+		return pathI < pathJ
+	})
+
 	respondJSON(w, devices)
 }
 
@@ -549,27 +658,24 @@ func (h *APIHandler) handleNodeHeartbeat(w http.ResponseWriter, r *http.Request)
 	})
 }
 
-// handleDeviceDetail returns detailed device information from inventory
+// handleDeviceDetail returns detailed device information from persistence
 func (h *APIHandler) handleDeviceDetail(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	deviceID := vars["id"]
 
-	// Open inventory
-	inv, err := inventory.NewInventory()
-	if err != nil {
-		respondError(w, http.StatusInternalServerError, "Failed to open inventory")
-		return
-	}
-
 	// Try to find by device ID
-	dev, err := inv.Get(deviceID)
+	dev, err := h.store.GetDevice(deviceID)
 	if err != nil {
 		// Try by alias
-		dev, err = inv.FindByAlias(deviceID)
+		dev, err = h.store.GetDeviceByAlias(deviceID)
 		if err != nil {
 			// Try by MAC (with esp- prefix)
 			if len(deviceID) == 17 && deviceID[2] == ':' {
-				dev, err = inv.Get("esp-" + deviceID)
+				dev, err = h.store.GetDeviceByMAC(deviceID)
+				if err == nil {
+					// Found by MAC, but need full device record
+					dev, err = h.store.GetDevice(dev.DeviceID)
+				}
 			}
 			if err != nil {
 				respondError(w, http.StatusNotFound, "Device not found in inventory")
@@ -635,20 +741,16 @@ func (h *APIHandler) handleUpdateDevice(w http.ResponseWriter, r *http.Request) 
 	vars := mux.Vars(r)
 	deviceID := vars["id"]
 
-	// Open inventory
-	inv, err := inventory.NewInventory()
-	if err != nil {
-		respondError(w, http.StatusInternalServerError, "Failed to open inventory")
-		return
-	}
-
 	// Find device (reuse logic from handleDeviceDetail)
-	dev, err := inv.Get(deviceID)
+	dev, err := h.store.GetDevice(deviceID)
 	if err != nil {
-		dev, err = inv.FindByAlias(deviceID)
+		dev, err = h.store.GetDeviceByAlias(deviceID)
 		if err != nil {
 			if len(deviceID) == 17 && deviceID[2] == ':' {
-				dev, err = inv.Get("esp-" + deviceID)
+				macDev, err := h.store.GetDeviceByMAC(deviceID)
+				if err == nil {
+					dev = macDev
+				}
 			}
 			if err != nil {
 				respondError(w, http.StatusNotFound, "Device not found in inventory")
@@ -664,7 +766,7 @@ func (h *APIHandler) handleUpdateDevice(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// Update device fields (only update non-empty values)
-	updated := &inventory.DeviceInventory{
+	updated := &persistence.DeviceRecord{
 		DeviceID:    dev.DeviceID,
 		MACAddress:  dev.MACAddress,
 		ChipType:    dev.ChipType,
@@ -714,13 +816,70 @@ func (h *APIHandler) handleUpdateDevice(w http.ResponseWriter, r *http.Request) 
 		updated.Tags = req.Tags
 	}
 
-	if err := inv.Save(updated); err != nil {
+	if err := h.store.SaveDevice(updated); err != nil {
 		respondError(w, http.StatusInternalServerError, "Failed to update device")
 		return
 	}
 
+	// Update in-memory state if device is currently connected
+	// Use the device's LastPath from store to find the correct in-memory entry
+	if h.leader != nil && updated.LastPath != "" {
+		state := h.leader.State()
+		if dev, exists := state.Devices[updated.LastPath]; exists {
+			// Verify this is the correct device before updating
+			if dev.DeviceID == updated.DeviceID || dev.SerialNumber == updated.MACAddress {
+				h.leader.UpdateDeviceInfo(updated.LastPath, updated.DeviceID, updated.ChipType, updated.MACAddress)
+				log.Debug().Str("path", updated.LastPath).Str("device_id", updated.DeviceID).
+					Msg("In-memory state updated via API")
+			}
+		}
+	}
+
 	respondJSON(w, map[string]interface{}{
 		"status":    "updated",
+		"device_id": dev.DeviceID,
+	})
+}
+
+// handleDeleteDevice removes a device from inventory
+func (h *APIHandler) handleDeleteDevice(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	deviceID := vars["id"]
+
+	// Find device
+	dev, err := h.store.GetDevice(deviceID)
+	if err != nil {
+		dev, err = h.store.GetDeviceByAlias(deviceID)
+		if err != nil {
+			respondError(w, http.StatusNotFound, "Device not found")
+			return
+		}
+	}
+
+	// Delete from persistence
+	if err := h.store.DeleteDevice(dev.DeviceID); err != nil {
+		respondError(w, http.StatusInternalServerError, "Failed to delete device")
+		return
+	}
+
+	// Remove from in-memory state if present
+	if h.leader != nil {
+		state := h.leader.State()
+		for path, stateDev := range state.Devices {
+			if stateDev.DeviceID == dev.DeviceID || stateDev.SerialNumber == dev.MACAddress {
+				// Remove from state (need to access internal state through leader)
+				// This is a bit of a hack - we're directly manipulating the map
+				// In production, add a proper method to LeaderNode
+				delete(state.Devices, path)
+				log.Info().Str("path", path).Str("device_id", dev.DeviceID).
+					Msg("Device removed from cluster state via API")
+				break
+			}
+		}
+	}
+
+	respondJSON(w, map[string]interface{}{
+		"status":    "deleted",
 		"device_id": dev.DeviceID,
 	})
 }
@@ -754,30 +913,28 @@ func (h *APIHandler) handleAddDevice(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Open inventory
-	inv, err := inventory.NewInventory()
-	if err != nil {
-		respondError(w, http.StatusInternalServerError, "Failed to open inventory")
-		return
-	}
-
-	// Generate device ID from MAC if provided, otherwise use timestamp-based ID
+	// Generate device ID from MAC if provided, otherwise generate one
 	var deviceID string
 	if req.MACAddress != "" {
 		deviceID = "esp-" + req.MACAddress
 		// Check if device already exists
-		if _, err := inv.Get(deviceID); err == nil {
+		if _, err := h.store.GetDevice(deviceID); err == nil {
 			respondError(w, http.StatusConflict, "Device with this MAC already exists")
 			return
 		}
 	} else {
-		// Generate ID from chip type + timestamp
-		deviceID = fmt.Sprintf("manual-%s-%d", req.ChipType, time.Now().Unix())
+		// Generate ID from store
+		var err error
+		deviceID, err = h.store.GenerateManualID(req.ChipType)
+		if err != nil {
+			respondError(w, http.StatusInternalServerError, "Failed to generate device ID")
+			return
+		}
 	}
 
 	// Create new device entry
 	now := time.Now()
-	dev := &inventory.DeviceInventory{
+	dev := &persistence.DeviceRecord{
 		DeviceID:    deviceID,
 		MACAddress:  req.MACAddress,
 		ChipType:    req.ChipType,
@@ -791,6 +948,7 @@ func (h *APIHandler) handleAddDevice(w http.ResponseWriter, r *http.Request) {
 		Tags:        req.Tags,
 		FirstSeen:   now,
 		LastSeen:    now,
+		LastPath:    req.Path,
 	}
 
 	if req.Aliases == nil {
@@ -800,12 +958,7 @@ func (h *APIHandler) handleAddDevice(w http.ResponseWriter, r *http.Request) {
 		dev.Tags = []string{}
 	}
 
-	// Store path if provided (for linking to cluster state)
-	if req.Path != "" {
-		dev.LastPath = req.Path
-	}
-
-	if err := inv.Save(dev); err != nil {
+	if err := h.store.SaveDevice(dev); err != nil {
 		respondError(w, http.StatusInternalServerError, "Failed to save device")
 		return
 	}

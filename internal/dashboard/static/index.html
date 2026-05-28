@@ -1159,7 +1159,10 @@
                 ${warningHtml}
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
                     <span style="font-size: 14px; font-weight: 500; color: var(--text-secondary);">Device Information</span>
-                    <button class="btn btn-secondary" style="padding: 6px 12px; font-size: 13px;" onclick="showDeviceEditForm()">Edit</button>
+                    <div style="display: flex; gap: 8px;">
+                        <button class="btn btn-danger" style="padding: 6px 12px; font-size: 13px;" onclick="deleteDevice()">Delete</button>
+                        <button class="btn btn-secondary" style="padding: 6px 12px; font-size: 13px;" onclick="showDeviceEditForm()">Edit</button>
+                    </div>
                 </div>
                 <div class="detail-row">
                     <span class="detail-label">Device ID</span>
@@ -1448,6 +1451,52 @@
             } catch (error) {
                 console.error('Failed to remove tag:', error);
                 alert('Failed to remove tag: ' + error.message);
+            }
+        }
+
+        async function deleteDevice() {
+            if (!currentDeviceId) {
+                alert('No device selected');
+                return;
+            }
+
+            const dev = currentDeviceData;
+            const confirmMsg = dev && dev.device_id
+                ? `Delete device ${dev.device_id} from inventory?\n\nThis will remove the device record but will not affect the physical device.`
+                : 'Delete this device from inventory?';
+
+            if (!confirm(confirmMsg)) {
+                return;
+            }
+
+            const content = document.getElementById('device-detail-content');
+            content.innerHTML = '<div style="text-align: center; padding: 30px;"><span class="spinner"></span> Deleting device...</div>';
+
+            try {
+                const response = await fetch(`/api/v1/devices/${currentDeviceId}`, {
+                    method: 'DELETE'
+                });
+
+                if (response.ok) {
+                    closeDeviceModal();
+                    refreshData();
+                } else {
+                    const error = await response.json();
+                    content.innerHTML = `
+                        <div style="text-align: center; padding: 20px;">
+                            <p style="color: var(--error); margin-bottom: 16px;">Failed to delete: ${error.error || 'Unknown error'}</p>
+                            <button class="btn" onclick="showDeviceDetail('', '${currentDeviceId}')">Try Again</button>
+                        </div>
+                    `;
+                }
+            } catch (error) {
+                console.error('Failed to delete device:', error);
+                content.innerHTML = `
+                    <div style="text-align: center; padding: 20px;">
+                        <p style="color: var(--error); margin-bottom: 16px;">Failed to delete: ${error.message}</p>
+                        <button class="btn" onclick="showDeviceDetail('', '${currentDeviceId}')">Try Again</button>
+                    </div>
+                `;
             }
         }
 

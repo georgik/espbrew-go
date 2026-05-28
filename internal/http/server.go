@@ -10,6 +10,7 @@ import (
 
 	"codeberg.org/georgik/espbrew-go/internal/cluster"
 	"codeberg.org/georgik/espbrew-go/internal/dashboard"
+	"codeberg.org/georgik/espbrew-go/internal/persistence"
 	"codeberg.org/georgik/espbrew-go/pkg/protocol"
 	"github.com/gorilla/mux"
 	"github.com/gorilla/websocket"
@@ -36,22 +37,22 @@ type Server struct {
 	mu      sync.RWMutex
 }
 
-func NewServer(addr string, node cluster.Node) *Server {
+func NewServer(addr string, node cluster.Node, store *persistence.Store) *Server {
 	s := &Server{
 		addr:    addr,
 		node:    node,
 		clients: make(map[*websocket.Conn]bool),
 	}
-	s.setupRoutes()
+	s.setupRoutes(store)
 	return s
 }
 
-func (s *Server) setupRoutes() {
+func (s *Server) setupRoutes(store *persistence.Store) {
 	s.router = mux.NewRouter()
 	s.hub = NewProgressHub()
 
 	// API routes
-	s.api = NewAPIHandler(s.node)
+	s.api = NewAPIHandler(s.node, store)
 	s.api.RegisterRoutes(s.router)
 
 	// Camera gallery routes

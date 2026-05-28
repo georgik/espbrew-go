@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"codeberg.org/georgik/espbrew-go/internal/persistence"
 	"codeberg.org/georgik/espbrew-go/pkg/protocol"
 	"github.com/stretchr/testify/assert"
 )
@@ -57,12 +58,20 @@ func TestJobExecutor_StartStop(t *testing.T) {
 }
 
 func TestLeaderNode_JobExecutor(t *testing.T) {
+	store, err := persistence.Open(persistence.DefaultConfig(t.TempDir() + "/test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
 	leader := NewLeaderNode("test", &LeaderConfig{
-		HTTPPort:          8080,
-		DisablemDNS:       true,
-		HeartbeatInterval: time.Second,
-		NodeTimeout:       5 * time.Second,
-	})
+		HTTPPort:           8080,
+		DisablemDNS:        true,
+		DisableWatcher:     true,
+		DisableMaintenance: true,
+		HeartbeatInterval:  time.Second,
+		NodeTimeout:        5 * time.Second,
+	}, store)
 
 	ctx := context.Background()
 	leader.Start(ctx)

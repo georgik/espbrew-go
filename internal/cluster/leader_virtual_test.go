@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 	"time"
+
+	"codeberg.org/georgik/espbrew-go/internal/persistence"
 )
 
 func TestVirtualDevicesRegistered(t *testing.T) {
@@ -11,14 +13,21 @@ func TestVirtualDevicesRegistered(t *testing.T) {
 	defer cancel()
 
 	cfg := &LeaderConfig{
-		HeartbeatInterval: 1 * time.Second,
-		NodeTimeout:       5 * time.Second,
-		HTTPPort:          8081,
-		DisablemDNS:       true,
-		DisableWatcher:    true,
+		HeartbeatInterval:  1 * time.Second,
+		NodeTimeout:        5 * time.Second,
+		HTTPPort:           8081,
+		DisablemDNS:        true,
+		DisableWatcher:     true,
+		DisableMaintenance: true,
 	}
 
-	leader := NewLeaderNode("test-leader", cfg)
+	store, err := persistence.Open(persistence.DefaultConfig(t.TempDir() + "/test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	leader := NewLeaderNode("test-leader", cfg, store)
 	if err := leader.Start(ctx); err != nil {
 		t.Fatalf("Failed to start leader: %v", err)
 	}
@@ -59,14 +68,21 @@ func TestVirtualDeviceFlashJob(t *testing.T) {
 	defer cancel()
 
 	cfg := &LeaderConfig{
-		HeartbeatInterval: 1 * time.Second,
-		NodeTimeout:       5 * time.Second,
-		HTTPPort:          8082,
-		DisablemDNS:       true,
-		DisableWatcher:    true,
+		HeartbeatInterval:  1 * time.Second,
+		NodeTimeout:        5 * time.Second,
+		HTTPPort:           8082,
+		DisablemDNS:        true,
+		DisableWatcher:     true,
+		DisableMaintenance: true,
 	}
 
-	leader := NewLeaderNode("test-leader", cfg)
+	store, err := persistence.Open(persistence.DefaultConfig(t.TempDir() + "/test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	leader := NewLeaderNode("test-leader", cfg, store)
 	leader.executor = NewJobExecutor(1)
 
 	if err := leader.Start(ctx); err != nil {

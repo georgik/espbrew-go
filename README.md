@@ -11,6 +11,8 @@ ESP32 cluster flashing tool written in Go. Manages multiple ESP32 devices across
 - **ESP-IDF Integration**: Read flash_args directly from build directory
 - **Cluster Mode**: Leader/peer architecture for distributed flashing
 - **Device Discovery**: Automatic ESP device detection via USB serial
+- **Device Persistence**: Device information survives cluster restart
+- **Device Management**: View, edit, and delete device records via web UI
 - **Camera Support**: Discover and capture images from connected cameras
 - **Job Queue**: Queue and manage flash jobs across all available devices
 - **Device Locking**: Prevents concurrent access to serial ports
@@ -123,6 +125,40 @@ idf.py build
 ./espbrew --cluster http://IP:8080 flash firmware.bin                   # Remote flash
 ./espbrew --cluster http://IP:8080 monitor                                # Remote monitor
 ```
+
+### Device Management
+
+Device information is persisted in the embedded database and survives cluster restart. Use the web dashboard to manage devices:
+
+```bash
+open http://localhost:8080    # Access dashboard
+```
+
+**Device Operations via Web UI:**
+
+- **View Details**: Click on any device to view complete information including MAC address, chip type, flash size, PSRAM, board model, and custom tags
+- **Edit Device**: Update chip type, board model, description, aliases, and tags
+- **Delete Device**: Remove incorrect device registrations from inventory
+- **Manual Addition**: Add devices that cannot be auto-detected
+
+**Device Identification:**
+
+Devices are identified by MAC address when available. The system maintains:
+- `device_id`: Unique identifier (ESP-<MAC> format)
+- `mac_address`: Hardware MAC address
+- `chip_type`: Detected or specified chip variant
+- `last_path`: Most recent connection path
+- `first_seen` / `last_seen`: Connection timestamps
+- `aliases`: Custom names for device identification
+- `tags`: User-defined labels for organization
+
+**Device Lookup:**
+
+Devices can be looked up by:
+- Device ID (ESP-<MAC>)
+- MAC address
+- Alias
+- Connection path (/dev/ttyUSB0, etc.)
 
 ## Project Structure
 

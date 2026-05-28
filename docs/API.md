@@ -83,6 +83,173 @@ Device states:
 - `available` - Device is free to use
 - `busy` - Device is in use
 - `reserved` - Device is reserved for a client
+- `offline` - Device is not currently connected
+
+Device response fields:
+- `path` - Current connection path (empty if offline)
+- `device_id` - Unique device identifier
+- `chip_type` - Detected chip variant
+- `status` - Connection status
+- `connected` - Boolean indicating if device is currently connected
+- `vid` / `pid` - Vendor/product IDs (if connected)
+- `serial` - MAC address (if available)
+- `aliases` - Custom device names
+- `tags` - User-defined labels
+
+### Device Detail
+
+```
+GET /api/v1/devices/{id}
+```
+
+Retrieves detailed information about a specific device. The device can be looked up by:
+- Device ID (ESP-<MAC>)
+- MAC address
+- Alias
+- Last connection path
+
+Response:
+```json
+{
+  "device_id": "esp-aa:bb:cc:dd:ee:ff",
+  "mac_address": "aa:bb:cc:dd:ee:ff",
+  "chip_type": "ESP32-S3",
+  "chip_rev": "1.0",
+  "flash_size": 8388608,
+  "psram_size": 8388608,
+  "psram_type": "QSPI",
+  "board_model": "ESP32-S3-DevKitC-1",
+  "description": "Development board",
+  "first_seen": "2026-05-01T10:00:00Z",
+  "last_seen": "2026-05-28T15:30:00Z",
+  "last_path": "/dev/ttyUSB0",
+  "node_id": "node-abc123",
+  "aliases": ["devkit-s3", "station-1"],
+  "tags": ["dev", "testing"],
+  "connected": true,
+  "current_path": "/dev/ttyUSB0",
+  "status": "available"
+}
+```
+
+### Update Device
+
+```
+PUT /api/v1/devices/{id}
+PATCH /api/v1/devices/{id}
+Content-Type: application/json
+```
+
+Updates device information. Only provided fields are updated. Empty fields are ignored.
+
+Request:
+```json
+{
+  "mac_address": "aa:bb:cc:dd:ee:ff",
+  "chip_type": "ESP32-S3",
+  "chip_rev": "1.0",
+  "flash_size": 8388608,
+  "psram_size": 8388608,
+  "psram_type": "QSPI",
+  "board_model": "ESP32-S3-DevKitC-1",
+  "description": "Development board",
+  "aliases": ["devkit-s3"],
+  "tags": ["dev", "testing"]
+}
+```
+
+Response:
+```json
+{
+  "status": "updated",
+  "device_id": "esp-aa:bb:cc:dd:ee:ff"
+}
+```
+
+### Delete Device
+
+```
+DELETE /api/v1/devices/{id}
+```
+
+Removes a device from inventory. Also removes the device from in-memory cluster state if currently connected.
+
+Response:
+```json
+{
+  "status": "deleted",
+  "device_id": "esp-aa:bb:cc:dd:ee:ff"
+}
+```
+
+Note: This only removes the device record from inventory. It does not affect the physical device or prevent it from being re-registered later.
+
+### Add Device (Manual)
+
+```
+POST /api/v1/devices
+Content-Type: application/json
+```
+
+Manually adds a device to inventory for devices that cannot be auto-detected or probed.
+
+Request:
+```json
+{
+  "path": "/dev/ttyUSB0",
+  "mac_address": "aa:bb:cc:dd:ee:ff",
+  "chip_type": "ESP32-S3",
+  "chip_rev": "1.0",
+  "flash_size": 8388608,
+  "psram_size": 8388608,
+  "psram_type": "QSPI",
+  "board_model": "ESP32-S3-DevKitC-1",
+  "description": "Development board",
+  "aliases": ["devkit-s3"],
+  "tags": ["dev"]
+}
+```
+
+Required field: `chip_type`. All other fields are optional.
+
+Response:
+```json
+{
+  "status": "created",
+  "device_id": "esp-aa:bb:cc:dd:ee:ff"
+}
+```
+
+### Probe Device
+
+```
+POST /api/v1/devices/probe
+Content-Type: application/json
+```
+
+Probes a device to read its boot log and extract device information. Device must be in bootloader mode.
+
+Request:
+```json
+{
+  "path": "/dev/ttyUSB0"
+}
+```
+
+Response:
+```json
+{
+  "status": "probed",
+  "device_id": "esp-aa:bb:cc:dd:ee:ff",
+  "chip_type": "ESP32-S3",
+  "path": "/dev/ttyUSB0"
+}
+```
+
+Note: To put ESP32 devices in bootloader mode:
+1. Hold BOOT button
+2. Press RESET button
+3. Release BOOT button
 
 ### Reserve Device
 

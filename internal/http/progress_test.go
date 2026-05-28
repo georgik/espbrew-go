@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"codeberg.org/georgik/espbrew-go/internal/cluster"
+	"codeberg.org/georgik/espbrew-go/internal/persistence"
 	"codeberg.org/georgik/espbrew-go/pkg/protocol"
 	"github.com/gorilla/mux"
 	"github.com/gorilla/websocket"
@@ -56,9 +57,16 @@ func TestProgressHub_Broadcast(t *testing.T) {
 }
 
 func TestProgressHandler_WebSocket(t *testing.T) {
+	store, err := persistence.Open(persistence.DefaultConfig(t.TempDir() + "/test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
 	master := cluster.NewLeaderNode("test-master", &cluster.LeaderConfig{
-		DisablemDNS: true,
-	})
+		DisablemDNS:        true,
+		DisableMaintenance: true,
+	}, store)
 
 	hub := NewProgressHub()
 	handler := NewProgressHandler(master, hub)
@@ -125,9 +133,16 @@ func TestProgressHandler_WebSocket(t *testing.T) {
 }
 
 func TestProgressHandler_JobNotFound(t *testing.T) {
+	store, err := persistence.Open(persistence.DefaultConfig(t.TempDir() + "/test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
 	master := cluster.NewLeaderNode("test-master", &cluster.LeaderConfig{
-		DisablemDNS: true,
-	})
+		DisablemDNS:        true,
+		DisableMaintenance: true,
+	}, store)
 
 	hub := NewProgressHub()
 	handler := NewProgressHandler(master, hub)
@@ -144,9 +159,16 @@ func TestProgressHandler_JobNotFound(t *testing.T) {
 }
 
 func TestProgressHandler_MultipleSubscribers(t *testing.T) {
+	store, err := persistence.Open(persistence.DefaultConfig(t.TempDir() + "/test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
 	master := cluster.NewLeaderNode("test-master", &cluster.LeaderConfig{
-		DisablemDNS: true,
-	})
+		DisablemDNS:        true,
+		DisableMaintenance: true,
+	}, store)
 
 	hub := NewProgressHub()
 	handler := NewProgressHandler(master, hub)
@@ -202,9 +224,16 @@ func TestProgressHandler_MultipleSubscribers(t *testing.T) {
 
 func TestClient_ProgressStream(t *testing.T) {
 	// Start a real test server
+	store, err := persistence.Open(persistence.DefaultConfig(t.TempDir() + "/test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
 	master := cluster.NewLeaderNode("test-master", &cluster.LeaderConfig{
-		DisablemDNS: true,
-	})
+		DisablemDNS:        true,
+		DisableMaintenance: true,
+	}, store)
 
 	hub := NewProgressHub()
 	progressHandler := NewProgressHandler(master, hub)
