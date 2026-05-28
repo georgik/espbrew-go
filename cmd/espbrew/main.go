@@ -11,6 +11,7 @@ import (
 	"codeberg.org/georgik/espbrew-go/internal/cluster"
 	"codeberg.org/georgik/espbrew-go/internal/config"
 	httpserver "codeberg.org/georgik/espbrew-go/internal/http"
+	"codeberg.org/georgik/espbrew-go/internal/persistence"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
@@ -73,6 +74,20 @@ func runServer(cmd *cobra.Command, args []string) error {
 		appCfg = config.Default()
 	}
 
+	// Get home directory for database
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("get home dir: %w", err)
+	}
+	dbPath := homeDir + "/.espbrew/espbrew.db"
+
+	// Open persistence store
+	store, err := persistence.Open(persistence.DefaultConfig(dbPath))
+	if err != nil {
+		return fmt.Errorf("open persistence store: %w", err)
+	}
+	defer store.Close()
+
 	if cmd.Flags().Changed("role") {
 		appCfg.Role = cfg.role
 	}
@@ -109,7 +124,7 @@ func runServer(cmd *cobra.Command, args []string) error {
 			NodeTimeout:       appCfg.NodeTimeout,
 			HTTPPort:          appCfg.HTTPPort,
 			DisablemDNS:       cfg.disablemDNS,
-		})
+		}, store)
 		node = leader
 		if err := node.Start(ctx); err != nil {
 			return err
@@ -137,14 +152,14 @@ func runServer(cmd *cobra.Command, args []string) error {
 			NodeTimeout:       appCfg.NodeTimeout,
 			HTTPPort:          appCfg.HTTPPort,
 			DisablemDNS:       true,
-		})
+		}, store)
 		node = leader
 		if err := node.Start(ctx); err != nil {
 			return err
 		}
 	}
 
-	srv := httpserver.NewServer(addr, node)
+	srv := httpserver.NewServer(addr, node, store)
 
 	// Start executor with progress callback for leader nodes
 	if l, ok := node.(*cluster.LeaderNode); ok {

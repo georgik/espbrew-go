@@ -16,6 +16,7 @@ require (
 	github.com/spf13/viper v1.21.0
 	github.com/stretchr/testify v1.11.1
 	go.bug.st/serial v1.7.0
+	go.etcd.io/bbolt v1.4.3
 	golang.org/x/term v0.43.0
 	tinygo.org/x/espflasher v0.6.0
 )
