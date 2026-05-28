@@ -85,6 +85,7 @@ var projectRegistry = func() *project.Registry {
 	r := project.NewRegistry()
 	r.Register(&project.ESPIDFDetector{})
 	r.Register(&project.RustESPDetector{})
+	r.Register(&project.TinyGoDetector{})
 	return r
 }()
 

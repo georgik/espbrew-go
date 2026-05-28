@@ -7,7 +7,7 @@ ESP32 cluster flashing tool written in Go. Manages multiple ESP32 devices across
 - **Smart File Detection**: Auto-detects ELF, ESP32 binary, and raw firmware files
 - **Chip-Specific Offsets**: Correct bootloader offsets per chip variant
 - **Multi-Image Flashing**: Flash bootloader, partitions, and app in one command
-- **Project Detection**: Automatically detects ESP-IDF projects and populates flash paths
+- **Project Detection**: Automatically detects ESP-IDF, TinyGo, and Rust no_std projects and populates flash paths
 - **ESP-IDF Integration**: Read flash_args directly from build directory
 - **Cluster Mode**: Leader/peer architecture for distributed flashing
 - **Device Discovery**: Automatic ESP device detection via USB serial
@@ -213,7 +213,7 @@ ESPBrew automatically detects and processes firmware file types:
 
 ### ELF File Support
 
-When flashing ELF files (Rust no_std ESP projects), ESPBrew:
+When flashing ELF files (Rust no_std or TinyGo ESP projects), ESPBrew:
 
 1. Extracts ROM and RAM segments from the ELF
 2. Downloads appropriate bootloader for the target chip
@@ -221,7 +221,7 @@ When flashing ELF files (Rust no_std ESP projects), ESPBrew:
 4. Creates ESP-IDF format image with proper checksums
 5. Flashes the complete image
 
-This enables direct flashing of Rust ESP projects without intermediate conversion steps.
+This enables direct flashing of Rust ESP and TinyGo projects without intermediate conversion steps.
 
 ### Technical Implementation Notes
 
@@ -263,6 +263,46 @@ cd esp-idf-project
 idf.py build
 espbrew --cluster http://leader:8080 flash
 # Output: Detected ESP-IDF project, auto-populated flash paths
+```
+
+### TinyGo Projects
+
+Detection requires:
+- `go.mod` in project root
+- `tinygo.org/x/*` dependencies (e.g., `tinygo.org/x/drivers`)
+- OR source files importing `"machine"` package
+
+When detected, ESPBrew automatically:
+- Converts ELF output to ESP-IDF format with bootloader
+- Injects partition table
+- Flashes complete image to device
+
+```bash
+cd tinygo-project
+tinygo build -target=esp32s3-box-3 .
+espbrew --cluster http://leader:8080 flash
+# Output: Detected tinygo project, auto-populated flash paths
+```
+
+**Supported TinyGo targets:** ESP32, ESP32-S2, ESP32-S3, ESP32-C3, ESP32-C6, ESP32-H2
+
+### Rust no_std Projects
+
+Detection requires:
+- `Cargo.toml` in project root
+- ESP HAL dependencies (e.g., `esp-hal`, `esp-backtrace`)
+- `.cargo/config.toml` with ESP target triple
+
+When detected, ESPBrew automatically:
+- Converts ELF output to ESP-IDF format with bootloader
+- Injects partition table
+- Flashes complete image to device
+
+```bash
+cd rust-esp-project
+cargo build --release
+espbrew --cluster http://leader:8080 flash
+# Output: Detected rust-esp project, auto-populated flash paths
 ```
 
 ### Disabling Auto-Detection

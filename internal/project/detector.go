@@ -6,6 +6,8 @@ type ProjectType string
 const (
 	ProjectTypeNone       ProjectType = ""
 	ProjectTypeESPIDF     ProjectType = "esp-idf"
+	ProjectTypeRustESP    ProjectType = "rust-esp"
+	ProjectTypeTinyGo     ProjectType = "tinygo"
 	ProjectTypePlatformIO ProjectType = "platformio" // Future
 	ProjectTypeArduino    ProjectType = "arduino"    // Future
 )

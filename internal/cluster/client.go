@@ -107,7 +107,7 @@ type DeviceInfo struct {
 	Path       string      `json:"path"`
 	VID        string      `json:"vid,omitempty"`
 	PID        string      `json:"pid,omitempty"`
-	State      DeviceState `json:"state"`
+	State      DeviceState `json:"status"`
 	NodeID     string      `json:"node_id,omitempty"`
 	ChipType   string      `json:"chip_type,omitempty"`
 	ReservedBy string      `json:"reserved_by,omitempty"`
