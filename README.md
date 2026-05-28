@@ -98,6 +98,21 @@ idf.py build
 ./espbrew monitor --exit-on "ready" # Exit on pattern
 ```
 
+### Read Flash
+
+```bash
+./espbrew read-flash app.bin                                    # Read to file (auto-detect device)
+./espbrew read-flash -p /dev/ttyUSB0 --address 0x10000 app.bin  # Specific port and address
+./espbrew read-flash --size 0x100000 app.bin                     # Read 1MB
+./espbrew read-flash --chip esp32s3 app.bin                      # Specify chip type
+```
+
+**Cluster Mode:**
+
+```bash
+./espbrew --cluster http://leader:8080 read-flash --device /dev/ttyUSB0 --address 0x10000 --size 0x100000 app.bin
+```
+
 ### Camera
 
 ```bash
@@ -123,7 +138,8 @@ idf.py build
 ./espbrew cluster --role leader --port 8080                             # Start leader
 ./espbrew cluster --role peer --leader IP:8080 --node-id "station-1"    # Start named peer
 ./espbrew --cluster http://IP:8080 flash firmware.bin                   # Remote flash
-./espbrew --cluster http://IP:8080 monitor                                # Remote monitor
+./espbrew --cluster http://IP:8080 monitor                              # Remote monitor
+./espbrew --cluster http://IP:8080 read-flash --device /dev/ttyUSB0 --address 0x10000 --size 0x100000 app.bin  # Remote read flash
 ```
 
 ### Device Management

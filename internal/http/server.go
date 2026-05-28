@@ -66,6 +66,10 @@ func (s *Server) setupRoutes(store *persistence.Store) {
 
 		flashHandler := NewFlashHandler(leader, os.TempDir(), progressHandler)
 		flashHandler.RegisterRoutes(s.router)
+
+		// Read-flash handler
+		readFlashHandler := NewReadFlashHandler(s.node, leader, os.TempDir())
+		readFlashHandler.RegisterRoutes(s.router)
 	} else if peer, ok := s.node.(*cluster.PeerNode); ok {
 		// Register flash handler on peer nodes too
 		flashHandler := NewPeerFlashHandler(peer)

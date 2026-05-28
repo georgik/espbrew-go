@@ -468,6 +468,116 @@ Error:
 }
 ```
 
+### Read Flash Memory
+
+Submits a job to read flash memory from a device. The read operation executes asynchronously and the data is available for download once complete.
+
+```
+POST /api/v1/flash/read
+Content-Type: application/json
+```
+
+Request:
+```json
+{
+  "device_path": "/dev/ttyUSB0",
+  "address": 65536,
+  "size": 1048576,
+  "chip": "esp32s3",
+  "client_id": "cli-session-123"
+}
+```
+
+Fields:
+- `device_path` (required): Serial port path
+- `address` (required): Flash address to read from
+- `size` (required): Number of bytes to read (max 16MB)
+- `chip` (optional): Chip type for auto-detection
+- `client_id` (optional): Client identifier for tracking
+
+Response:
+```json
+{
+  "job_id": "read-abc123",
+  "status": "pending",
+  "device_path": "/dev/ttyUSB0",
+  "size": 1048576
+}
+```
+
+### Read Flash Status
+
+Checks the status of a read job and retrieves download URL when complete.
+
+```
+GET /api/v1/flash/read/{job_id}
+```
+
+Response (pending/running):
+```json
+{
+  "job_id": "read-abc123",
+  "status": "running",
+  "device_path": "/dev/ttyUSB0",
+  "size": 1048576,
+  "download_url": null,
+  "error": null
+}
+```
+
+Response (completed):
+```json
+{
+  "job_id": "read-abc123",
+  "status": "completed",
+  "device_path": "/dev/ttyUSB0",
+  "size": 1048576,
+  "download_url": "/api/v1/flash/download/read-abc123",
+  "error": null
+}
+```
+
+Response (failed):
+```json
+{
+  "job_id": "read-abc123",
+  "status": "failed",
+  "device_path": "/dev/ttyUSB0",
+  "size": 0,
+  "download_url": null,
+  "error": "Connection lost"
+}
+```
+
+### Download Read Data
+
+Downloads the flash read data for a completed job.
+
+```
+GET /api/v1/flash/download/{job_id}
+```
+
+Response: Binary data (`application/octet-stream`)
+
+Headers:
+- `Content-Type: application/octet-stream`
+- `Content-Disposition: attachment; filename="flash-read-{job_id}.bin"`
+- `Content-Length: {actual_size}`
+
+Example curl usage:
+```bash
+# Submit read job
+curl -X POST http://localhost:8080/api/v1/flash/read \
+  -H "Content-Type: application/json" \
+  -d '{"device_path":"/dev/ttyUSB0","address":65536,"size":1048576}'
+
+# Check status
+curl http://localhost:8080/api/v1/flash/read/read-abc123
+
+# Download data
+curl http://localhost:8080/api/v1/flash/download/read-abc123 -o flash_dump.bin
+```
+
 ### Monitor WebSocket
 
 ```

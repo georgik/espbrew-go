@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"codeberg.org/georgik/espbrew-go/internal/cluster"
 	"codeberg.org/georgik/espbrew-go/internal/flash"
@@ -168,7 +169,7 @@ func runReadFlashCluster(outputFile string) error {
 		if err != nil {
 			return fmt.Errorf("get job status: %w", err)
 		}
-		log.Debug().Str("status", status.Status).Msg("Job status")
+		time.Sleep(500 * time.Millisecond)
 	}
 
 	if status.Status != "completed" {
