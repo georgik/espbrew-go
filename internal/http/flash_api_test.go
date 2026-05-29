@@ -233,3 +233,153 @@ func TestFlashHandler_handleFlashSubmit_DeviceNotFound(t *testing.T) {
 		t.Errorf("expected 409, got %d", resp.StatusCode)
 	}
 }
+
+func TestFlashHandler_handleEraseSubmit(t *testing.T) {
+	store, err := persistence.Open(persistence.DefaultConfig(t.TempDir() + "/test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	master := cluster.NewLeaderNode("test-master", &cluster.LeaderConfig{
+		DisablemDNS:        true,
+		DisableMaintenance: true,
+	}, store)
+
+	master.RegisterDevice(&protocol.DeviceInfo{
+		Path:   "/dev/ttyUSB0",
+		VID:    0x4348,
+		PID:    0x0028,
+		Status: "available",
+	})
+
+	handler := NewFlashHandler(master, os.TempDir(), nil)
+
+	req := EraseSubmitRequest{
+		DevicePath: "/dev/ttyUSB0",
+		EraseAll:   true,
+		ClientID:   "test-client",
+	}
+
+	body, _ := json.Marshal(req)
+	httpReq := httptest.NewRequest("POST", "/api/v1/flash/erase", bytes.NewReader(body))
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	w := httptest.NewRecorder()
+	handler.handleEraseSubmit(w, httpReq)
+
+	resp := w.Result()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d: %s", resp.StatusCode, string(body))
+	}
+
+	var submitResp EraseSubmitResponse
+	if err := json.NewDecoder(resp.Body).Decode(&submitResp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+
+	if submitResp.JobID == "" {
+		t.Fatal("expected job_id")
+	}
+
+	if submitResp.DevicePath != "/dev/ttyUSB0" {
+		t.Errorf("expected /dev/ttyUSB0, got %s", submitResp.DevicePath)
+	}
+
+	if submitResp.Status != "pending" {
+		t.Errorf("expected pending status, got %s", submitResp.Status)
+	}
+}
+
+func TestFlashHandler_handleEraseSubmit_DeviceNotFound(t *testing.T) {
+	store, err := persistence.Open(persistence.DefaultConfig(t.TempDir() + "/test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	master := cluster.NewLeaderNode("test-master", &cluster.LeaderConfig{
+		DisablemDNS:        true,
+		DisableMaintenance: true,
+	}, store)
+
+	handler := NewFlashHandler(master, os.TempDir(), nil)
+
+	req := EraseSubmitRequest{
+		DevicePath: "/dev/nonexistent",
+		EraseAll:   true,
+		ClientID:   "test-client",
+	}
+
+	body, _ := json.Marshal(req)
+	httpReq := httptest.NewRequest("POST", "/api/v1/flash/erase", bytes.NewReader(body))
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	w := httptest.NewRecorder()
+	handler.handleEraseSubmit(w, httpReq)
+
+	resp := w.Result()
+	if resp.StatusCode != http.StatusConflict {
+		t.Errorf("expected 409, got %d", resp.StatusCode)
+	}
+}
+
+func TestFlashHandler_handleEraseSubmit_RegionErase(t *testing.T) {
+	store, err := persistence.Open(persistence.DefaultConfig(t.TempDir() + "/test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	master := cluster.NewLeaderNode("test-master", &cluster.LeaderConfig{
+		DisablemDNS:        true,
+		DisableMaintenance: true,
+	}, store)
+
+	master.RegisterDevice(&protocol.DeviceInfo{
+		Path:   "/dev/ttyUSB0",
+		VID:    0x4348,
+		PID:    0x0028,
+		Status: "available",
+	})
+
+	handler := NewFlashHandler(master, os.TempDir(), nil)
+
+	req := EraseSubmitRequest{
+		DevicePath: "/dev/ttyUSB0",
+		Address:    0x10000,
+		Size:       0x1000,
+		ClientID:   "test-client",
+	}
+
+	body, _ := json.Marshal(req)
+	httpReq := httptest.NewRequest("POST", "/api/v1/flash/erase", bytes.NewReader(body))
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	w := httptest.NewRecorder()
+	handler.handleEraseSubmit(w, httpReq)
+
+	resp := w.Result()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d: %s", resp.StatusCode, string(body))
+	}
+
+	var submitResp EraseSubmitResponse
+	if err := json.NewDecoder(resp.Body).Decode(&submitResp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+
+	if submitResp.JobID == "" {
+		t.Fatal("expected job_id")
+	}
+
+	if submitResp.Status != "pending" {
+		t.Errorf("expected pending status, got %s", submitResp.Status)
+	}
+
+	if submitResp.DevicePath != "/dev/ttyUSB0" {
+		t.Errorf("expected /dev/ttyUSB0, got %s", submitResp.DevicePath)
+	}
+}

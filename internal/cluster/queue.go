@@ -21,24 +21,35 @@ const (
 	JobTimedOut  JobStatus = "timeout"
 )
 
+type JobType string
+
+const (
+	JobTypeFlash JobType = "flash"
+	JobTypeErase JobType = "erase"
+)
+
 const (
 	DefaultJobTimeout = 10 * time.Minute
 	DefaultJobTTL     = 24 * time.Hour
 )
 
 type Job struct {
-	ID          string
-	Firmware    string
-	DevicePath  string
-	DeviceNode  string
-	Offset      int
-	Status      JobStatus
-	Progress    int
-	CreatedAt   time.Time
-	StartedAt   *time.Time
-	CompletedAt *time.Time
-	Error       string
-	mu          sync.RWMutex
+	ID           string
+	Type         JobType
+	Firmware     string
+	DevicePath   string
+	DeviceNode   string
+	Offset       int
+	EraseAll     bool
+	EraseAddress uint32
+	EraseSize    uint32
+	Status       JobStatus
+	Progress     int
+	CreatedAt    time.Time
+	StartedAt    *time.Time
+	CompletedAt  *time.Time
+	Error        string
+	mu           sync.RWMutex
 }
 
 type JobQueue struct {
@@ -55,11 +66,16 @@ func NewJobQueue() *JobQueue {
 }
 
 func (q *JobQueue) Enqueue(firmwarePath, devicePath string, offset int) *Job {
+	return q.EnqueueFlash(firmwarePath, devicePath, offset)
+}
+
+func (q *JobQueue) EnqueueFlash(firmwarePath, devicePath string, offset int) *Job {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
 	job := &Job{
 		ID:         uuid.New().String(),
+		Type:       JobTypeFlash,
 		Firmware:   firmwarePath,
 		DevicePath: devicePath,
 		Offset:     offset,
@@ -71,7 +87,32 @@ func (q *JobQueue) Enqueue(firmwarePath, devicePath string, offset int) *Job {
 	q.pending = append(q.pending, job.ID)
 
 	log.Info().Str("job_id", job.ID).Str("device", devicePath).Int("offset", offset).
-		Msg("Job enqueued")
+		Msg("Flash job enqueued")
+
+	return job
+}
+
+func (q *JobQueue) EnqueueErase(devicePath string, eraseAll bool, address, size uint32) *Job {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
+	job := &Job{
+		ID:           uuid.New().String(),
+		Type:         JobTypeErase,
+		DevicePath:   devicePath,
+		EraseAll:     eraseAll,
+		EraseAddress: address,
+		EraseSize:    size,
+		Status:       JobPending,
+		CreatedAt:    time.Now(),
+	}
+
+	q.jobs[job.ID] = job
+	q.pending = append(q.pending, job.ID)
+
+	log.Info().Str("job_id", job.ID).Str("device", devicePath).
+		Bool("erase_all", eraseAll).Uint32("address", address).Uint32("size", size).
+		Msg("Erase job enqueued")
 
 	return job
 }
@@ -260,12 +301,21 @@ func (j *Job) ToMap() map[string]interface{} {
 
 	m := map[string]interface{}{
 		"id":          j.ID,
-		"firmware":    j.Firmware,
+		"type":        j.Type,
 		"device_path": j.DevicePath,
 		"device_node": j.DeviceNode,
 		"status":      j.Status,
 		"progress":    j.Progress,
 		"created_at":  j.CreatedAt,
+	}
+
+	if j.Type == JobTypeFlash {
+		m["firmware"] = j.Firmware
+		m["offset"] = j.Offset
+	} else if j.Type == JobTypeErase {
+		m["erase_all"] = j.EraseAll
+		m["erase_address"] = j.EraseAddress
+		m["erase_size"] = j.EraseSize
 	}
 
 	if j.StartedAt != nil {

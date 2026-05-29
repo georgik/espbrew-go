@@ -339,4 +339,3 @@ func (s *Store) GetDeviceByPath(path string) (*DeviceRecord, error) {
 
 	return nil, fmt.Errorf("device not found with path: %s", path)
 }
-

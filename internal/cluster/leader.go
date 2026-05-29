@@ -291,6 +291,36 @@ func (l *LeaderNode) EnqueueJobWithOffset(firmwarePath, devicePath string, offse
 	return job, nil
 }
 
+func (l *LeaderNode) EnqueueEraseJob(devicePath string, eraseAll bool, address, size uint32) (*Job, error) {
+	l.mu.RLock()
+	dev, exists := l.state.Devices[devicePath]
+	l.mu.RUnlock()
+
+	if !exists {
+		return nil, fmt.Errorf("device not found: %s", devicePath)
+	}
+
+	if dev.Disabled {
+		return nil, fmt.Errorf("device is disabled: %s", devicePath)
+	}
+
+	job := l.queue.EnqueueErase(devicePath, eraseAll, address, size)
+
+	// Reserve device for this job
+	if !l.devices.Reserve(devicePath, job.ID) {
+		l.queue.Complete(job.ID, fmt.Errorf("device reservation failed"))
+		return nil, fmt.Errorf("device not available: %s", devicePath)
+	}
+
+	l.mu.Lock()
+	dev = l.state.Devices[devicePath]
+	dev.Status = "busy"
+	l.state.Devices[devicePath] = dev
+	l.mu.Unlock()
+
+	return job, nil
+}
+
 func (l *LeaderNode) GetJobQueue() *JobQueue {
 	return l.queue
 }
@@ -826,4 +856,3 @@ func (l *LeaderNode) UpdateDeviceDisabled(deviceID string, disabled bool, reason
 		}
 	}
 }
-

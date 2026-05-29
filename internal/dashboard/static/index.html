@@ -1222,6 +1222,7 @@
                     <span style="font-size: 14px; font-weight: 500; color: var(--text-secondary);">Device Information</span>
                     <div style="display: flex; gap: 8px;">
                         ${toggleDisableBtn}
+                        <button class="btn btn-warning" style="padding: 6px 12px; font-size: 13px;" onclick="eraseDevice()">Erase Flash</button>
                         <button class="btn btn-danger" style="padding: 6px 12px; font-size: 13px;" onclick="deleteDevice()">Delete</button>
                         <button class="btn btn-secondary" style="padding: 6px 12px; font-size: 13px;" onclick="showDeviceEditForm()">Edit</button>
                     </div>
@@ -1582,6 +1583,122 @@
             } catch (error) {
                 console.error('Failed to remove tag:', error);
                 alert('Failed to remove tag: ' + error.message);
+            }
+        }
+
+        async function eraseDevice() {
+            if (!currentDeviceId) {
+                alert('No device selected');
+                return;
+            }
+
+            const dev = currentDeviceData;
+            const path = dev && (dev.last_path || dev.current_path);
+            if (!path) {
+                alert('Device has no known path. Cannot erase.');
+                return;
+            }
+
+            const confirmMsg = dev && dev.device_id
+                ? `Erase entire flash on ${dev.device_id} (${path})?\n\nThis will permanently delete all firmware on the device. This action cannot be undone.`
+                : `Erase entire flash on ${path}?\n\nThis will permanently delete all firmware on the device. This action cannot be undone.`;
+
+            if (!confirm(confirmMsg)) {
+                return;
+            }
+
+            const content = document.getElementById('device-detail-content');
+            content.innerHTML = '<div style="text-align: center; padding: 30px;"><span class="spinner"></span> Erasing flash...</div>';
+
+            try {
+                const response = await fetch('/api/v1/flash/erase', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        device_path: path,
+                        erase_all: true,
+                        client_id: 'web-dashboard'
+                    })
+                });
+
+                if (response.ok) {
+                    const result = await response.json();
+
+                    // Show progress
+                    content.innerHTML = `
+                        <div style="text-align: center; padding: 30px;">
+                            <p style="margin-bottom: 16px;">Erasing flash... Job ID: ${result.job_id}</p>
+                            <div style="width: 100%; max-width: 300px; margin: 0 auto; background: var(--bg-secondary); border-radius: 4px; height: 8px; overflow: hidden;">
+                                <div id="erase-progress" style="width: 0%; height: 100%; background: var(--primary); transition: width 0.3s;"></div>
+                            </div>
+                            <p id="erase-status" style="margin-top: 8px; font-size: 12px; color: var(--text-secondary);">Starting...</p>
+                        </div>
+                    `;
+
+                    // Connect to progress WebSocket
+                    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+                    const ws = new WebSocket(`${protocol}//${window.location.host}/api/v1/flash/${result.job_id}/progress`);
+
+                    ws.onmessage = (event) => {
+                        const msg = JSON.parse(event.data);
+                        const progressBar = document.getElementById('erase-progress');
+                        const statusText = document.getElementById('erase-status');
+
+                        if (progressBar && msg.progress !== undefined) {
+                            progressBar.style.width = msg.progress + '%';
+                        }
+                        if (statusText && msg.status) {
+                            statusText.textContent = msg.status;
+                        }
+
+                        if (msg.type === 'complete') {
+                            ws.close();
+                            if (msg.status === 'completed') {
+                                content.innerHTML = `
+                                    <div style="text-align: center; padding: 30px;">
+                                        <p style="color: var(--success); margin-bottom: 16px;">Flash erased successfully!</p>
+                                        <button class="btn" onclick="showDeviceDetail('', '${currentDeviceId}')">Close</button>
+                                    </div>
+                                `;
+                            } else {
+                                content.innerHTML = `
+                                    <div style="text-align: center; padding: 30px;">
+                                        <p style="color: var(--error); margin-bottom: 16px;">Erase failed: ${msg.error || 'Unknown error'}</p>
+                                        <button class="btn" onclick="showDeviceDetail('', '${currentDeviceId}')">Try Again</button>
+                                    </div>
+                                `;
+                            }
+                        }
+                    };
+
+                    ws.onerror = () => {
+                        ws.close();
+                        content.innerHTML = `
+                            <div style="text-align: center; padding: 30px;">
+                                <p style="color: var(--error); margin-bottom: 16px;">Failed to connect to progress stream</p>
+                                <p style="font-size: 12px; color: var(--text-secondary); margin-bottom: 16px;">Job ID: ${result.job_id}</p>
+                                <button class="btn" onclick="showDeviceDetail('', '${currentDeviceId}')">Close</button>
+                            </div>
+                        `;
+                    };
+
+                } else {
+                    const error = await response.json();
+                    content.innerHTML = `
+                        <div style="text-align: center; padding: 20px;">
+                            <p style="color: var(--error); margin-bottom: 16px;">Failed to start erase: ${error.error || 'Unknown error'}</p>
+                            <button class="btn" onclick="showDeviceDetail('', '${currentDeviceId}')">Try Again</button>
+                        </div>
+                    `;
+                }
+            } catch (error) {
+                console.error('Failed to erase flash:', error);
+                content.innerHTML = `
+                    <div style="text-align: center; padding: 20px;">
+                        <p style="color: var(--error); margin-bottom: 16px;">Failed to erase: ${error.message}</p>
+                        <button class="btn" onclick="showDeviceDetail('', '${currentDeviceId}')">Try Again</button>
+                    </div>
+                `;
             }
         }
 

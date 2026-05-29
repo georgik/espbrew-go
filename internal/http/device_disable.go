@@ -13,8 +13,8 @@ import (
 
 // DisableDeviceRequest represents a request to disable a device
 type DisableDeviceRequest struct {
-	Reason    string `json:"reason,omitempty"`
-	ClientID  string `json:"client_id,omitempty"`
+	Reason   string `json:"reason,omitempty"`
+	ClientID string `json:"client_id,omitempty"`
 }
 
 // EnableDeviceRequest represents a request to enable a device
@@ -96,8 +96,8 @@ func (h *DeviceDisableHandler) handleDisable(w http.ResponseWriter, r *http.Requ
 		if deviceInfo.DeviceID != "" {
 			deviceRecord = &persistence.DeviceRecord{
 				DeviceID: deviceInfo.DeviceID,
-				LastPath:  deviceInfo.Path,
-				ChipType:  deviceInfo.ChipType,
+				LastPath: deviceInfo.Path,
+				ChipType: deviceInfo.ChipType,
 			}
 		} else {
 			respondError(w, http.StatusNotFound, "device record not found and no device_id available")

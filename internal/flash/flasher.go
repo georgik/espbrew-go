@@ -363,3 +363,157 @@ func (f *Flasher) ReadFlash(ctx context.Context, req *ReadFlashRequest) *ReadFla
 	log.Info().Int("bytes_read", len(data)).Msg("Flash read completed")
 	return &ReadFlashResult{Success: true, Data: data}
 }
+
+// EraseRequest contains parameters for erasing flash memory
+type EraseRequest struct {
+	Port     string
+	Address  uint32
+	Size     uint32
+	EraseAll bool
+	Progress chan int
+	Chip     chips.Chip
+}
+
+// EraseResult contains the result of a flash erase operation
+type EraseResult struct {
+	Success bool
+	Error   error
+	Bytes   int
+}
+
+// EraseFlash erases the device's flash memory
+func (f *Flasher) EraseFlash(ctx context.Context, req *EraseRequest) *EraseResult {
+	log.Info().Str("port", req.Port).Uint32("address", req.Address).Uint32("size", req.Size).Bool("erase_all", req.EraseAll).Msg("Erasing flash")
+
+	// Check if using virtual device
+	if virtual.IsVirtualPath(req.Port) {
+		return f.eraseVirtual(ctx, req)
+	}
+
+	// Build flasher options
+	espOpts := espflasher.DefaultOptions()
+	espOpts.BaudRate = f.opts.BaudRate
+	espOpts.FlashBaudRate = f.opts.FlashBaudRate
+	espOpts.Compress = f.opts.Compress
+	espOpts.Logger = &flashLogger{port: req.Port}
+
+	// Open connection
+	flasher, err := espflasher.New(req.Port, espOpts)
+	if err != nil {
+		return &EraseResult{Success: false, Error: fmt.Errorf("connect: %w", err)}
+	}
+	defer flasher.Close()
+
+	log.Info().Str("port", req.Port).Msg("Chip detected")
+	log.Info().Str("chip", flasher.ChipName()).Msg("Detected chip")
+
+	// Report initial progress
+	if req.Progress != nil {
+		select {
+		case req.Progress <- 10:
+		default:
+		}
+	}
+
+	var eraseSize int
+	if req.EraseAll {
+		// Erase entire flash
+		if err := flasher.EraseFlash(); err != nil {
+			return &EraseResult{Success: false, Error: fmt.Errorf("erase flash: %w", err)}
+		}
+		// Flash size varies by chip, use 4MB as default reporting value
+		eraseSize = 4 * 1024 * 1024
+		log.Info().Int("bytes", eraseSize).Msg("Entire flash erased")
+	} else {
+		// Erase specific region
+		if err := flasher.EraseRegion(req.Address, req.Size); err != nil {
+			return &EraseResult{Success: false, Error: fmt.Errorf("erase region: %w", err)}
+		}
+		eraseSize = int(req.Size)
+		log.Info().Uint32("address", req.Address).Uint32("size", req.Size).Msg("Flash region erased")
+	}
+
+	// Report completion
+	if req.Progress != nil {
+		select {
+		case req.Progress <- 100:
+		default:
+		}
+	}
+
+	log.Info().Msg("Flash erase completed")
+	return &EraseResult{
+		Success: true,
+		Bytes:   eraseSize,
+	}
+}
+
+// eraseVirtual erases a virtual device's flash memory
+func (f *Flasher) eraseVirtual(ctx context.Context, req *EraseRequest) *EraseResult {
+	chip := virtual.ChipFromVirtualPath(req.Port)
+	deviceID := req.Port
+	if deviceID == ":virtual:" {
+		deviceID = "default"
+	}
+
+	log.Info().Str("device", req.Port).Str("chip", chip).Msg("Using virtual flash device for erase")
+
+	device, err := virtual.OpenDevice(deviceID)
+	if err != nil {
+		log.Error().Err(err).Msg("Failed to open virtual device")
+		return &EraseResult{Success: false, Error: err}
+	}
+	defer device.Close()
+
+	// Report initial progress
+	if req.Progress != nil {
+		select {
+		case req.Progress <- 10:
+		default:
+		}
+	}
+
+	var eraseSize int
+	if req.EraseAll {
+		// For virtual device, get size and zero it out
+		flashSize := device.Size()
+		eraseSize = int(flashSize)
+
+		// Zero out entire flash
+		zeros := make([]byte, 4096)
+		for offset := uint32(0); offset < flashSize; offset += 4096 {
+			remaining := flashSize - offset
+			if remaining < 4096 {
+				zeros = zeros[:remaining]
+			}
+			if err := device.Write(offset, zeros); err != nil {
+				return &EraseResult{Success: false, Error: fmt.Errorf("virtual erase: %w", err)}
+			}
+		}
+		log.Info().Int("bytes", eraseSize).Msg("Entire virtual flash erased")
+	} else {
+		// Erase specific region
+		eraseSize = int(req.Size)
+
+		// Zero out the region
+		zeros := make([]byte, req.Size)
+		if err := device.Write(req.Address, zeros); err != nil {
+			return &EraseResult{Success: false, Error: fmt.Errorf("virtual erase region: %w", err)}
+		}
+		log.Info().Uint32("address", req.Address).Uint32("size", req.Size).Msg("Virtual flash region erased")
+	}
+
+	// Report completion
+	if req.Progress != nil {
+		select {
+		case req.Progress <- 100:
+		default:
+		}
+	}
+
+	log.Info().Msg("Virtual flash erase completed")
+	return &EraseResult{
+		Success: true,
+		Bytes:   eraseSize,
+	}
+}

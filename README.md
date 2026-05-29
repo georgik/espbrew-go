@@ -99,6 +99,22 @@ idf.py build
 ./espbrew monitor --exit-on "ready" # Exit on pattern
 ```
 
+### Erase Flash
+
+```bash
+./espbrew erase --all                                          # Erase entire flash (auto-detect device)
+./espbrew erase -p /dev/ttyUSB0 --all                          # Erase entire flash on specific port
+./espbrew erase --address 0x10000 --size 0x1000                # Erase region (hex)
+./espbrew erase --address 65536 --size 4096                    # Erase region (decimal)
+```
+
+**Cluster Mode:**
+
+```bash
+./espbrew --cluster http://leader:8080 erase --device /dev/ttyUSB0 --all
+./espbrew --cluster http://leader:8080 erase --device esp-aa:bb:cc:dd:ee:ff --address 0x10000 --size 0x1000
+```
+
 ### Read Flash
 
 ```bash

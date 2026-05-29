@@ -32,17 +32,17 @@ type NodeInfo struct {
 }
 
 type DeviceInfo struct {
-	Path           string `json:"path"`
-	VID            uint16 `json:"vid"`
-	PID            uint16 `json:"pid"`
-	SerialNumber   string `json:"serial"`
-	DeviceID       string `json:"device_id,omitempty"` // Device ID from MAC (esp-xx:xx:xx:xx:xx:xx)
-	ChipType       string `json:"chip_type,omitempty"` // ESP32, ESP32-S3, ESP32-C3, etc.
-	NodeID         string `json:"node_id"`
-	Status         string `json:"status"` // available, busy, offline
-	Disabled       bool   `json:"disabled"`
-	DisabledReason string `json:"disabled_reason,omitempty"`
-	DisabledBy     string `json:"disabled_by,omitempty"`
+	Path           string    `json:"path"`
+	VID            uint16    `json:"vid"`
+	PID            uint16    `json:"pid"`
+	SerialNumber   string    `json:"serial"`
+	DeviceID       string    `json:"device_id,omitempty"` // Device ID from MAC (esp-xx:xx:xx:xx:xx:xx)
+	ChipType       string    `json:"chip_type,omitempty"` // ESP32, ESP32-S3, ESP32-C3, etc.
+	NodeID         string    `json:"node_id"`
+	Status         string    `json:"status"` // available, busy, offline
+	Disabled       bool      `json:"disabled"`
+	DisabledReason string    `json:"disabled_reason,omitempty"`
+	DisabledBy     string    `json:"disabled_by,omitempty"`
 	DisabledAt     time.Time `json:"disabled_at,omitempty"`
 }
 
@@ -93,4 +93,15 @@ type CameraCaptureResult struct {
 	Height   int    `json:"height"`
 	Size     int64  `json:"size"`
 	URL      string `json:"url,omitempty"` // Download URL
+}
+
+// EraseJobInfo represents a flash erase job
+type EraseJobInfo struct {
+	ID         string `json:"id"`
+	DevicePath string `json:"device_path"`
+	Address    uint32 `json:"address"`
+	Size       uint32 `json:"size"`
+	EraseAll   bool   `json:"erase_all"`
+	Status     string `json:"status"`
+	Progress   int    `json:"progress"`
 }

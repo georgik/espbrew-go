@@ -34,6 +34,7 @@ func (h *FlashHandler) RegisterRoutes(r *mux.Router) {
 	api := r.PathPrefix("/api/v1").Subrouter()
 	api.HandleFunc("/flash/upload", h.handleUpload).Methods("POST")
 	api.HandleFunc("/flash", h.handleFlashSubmit).Methods("POST")
+	api.HandleFunc("/flash/erase", h.handleEraseSubmit).Methods("POST")
 }
 
 type FlashUploadResponse struct {
@@ -153,6 +154,77 @@ func (h *FlashHandler) handleFlashSubmit(w http.ResponseWriter, r *http.Request)
 		Msg("Remote flash job created")
 
 	respondJSON(w, FlashSubmitResponse{
+		JobID:      job.ID,
+		Status:     string(job.Status),
+		DevicePath: req.DevicePath,
+	})
+}
+
+type EraseSubmitRequest struct {
+	DevicePath string `json:"device_path"`
+	Address    uint32 `json:"address,omitempty"`
+	Size       uint32 `json:"size,omitempty"`
+	EraseAll   bool   `json:"erase_all"`
+	ClientID   string `json:"client_id,omitempty"`
+}
+
+type EraseSubmitResponse struct {
+	JobID      string `json:"job_id"`
+	Status     string `json:"status"`
+	DevicePath string `json:"device_path"`
+}
+
+func (h *FlashHandler) handleEraseSubmit(w http.ResponseWriter, r *http.Request) {
+	if h.leader == nil {
+		respondError(w, http.StatusNotImplemented, "Remote erase only available on leader")
+		return
+	}
+
+	var req EraseSubmitRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, fmt.Sprintf("decode request: %v", err))
+		return
+	}
+
+	// Validate request
+	if req.DevicePath == "" {
+		respondError(w, http.StatusBadRequest, "device_path required")
+		return
+	}
+
+	if !req.EraseAll && (req.Address == 0 || req.Size == 0) {
+		respondError(w, http.StatusBadRequest, "either erase_all=true or address+size required")
+		return
+	}
+
+	// Check if device is disabled
+	if IsDeviceDisabled(h.leader.State(), req.DevicePath) {
+		respondError(w, http.StatusForbidden, "device is disabled and cannot be erased")
+		return
+	}
+
+	// Enqueue erase job
+	job, err := h.leader.EnqueueEraseJob(req.DevicePath, req.EraseAll, req.Address, req.Size)
+	if err != nil {
+		respondError(w, http.StatusConflict, err.Error())
+		return
+	}
+
+	// Start progress streaming in background
+	if h.progress != nil {
+		go h.progress.StartProgressStreamer(job.ID)
+	}
+
+	log.Info().
+		Str("job_id", job.ID).
+		Str("device", req.DevicePath).
+		Bool("erase_all", req.EraseAll).
+		Uint32("address", req.Address).
+		Uint32("size", req.Size).
+		Str("client_id", req.ClientID).
+		Msg("Remote erase job created")
+
+	respondJSON(w, EraseSubmitResponse{
 		JobID:      job.ID,
 		Status:     string(job.Status),
 		DevicePath: req.DevicePath,

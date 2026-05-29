@@ -505,6 +505,55 @@ Response (200 OK):
 }
 ```
 
+### Submit Erase Job
+
+```
+POST /api/v1/flash/erase
+Content-Type: application/json
+```
+
+Request (full erase):
+```json
+{
+  "device_path": "/dev/ttyUSB0",
+  "erase_all": true,
+  "client_id": "espbrew-cli"
+}
+```
+
+Request (region erase):
+```json
+{
+  "device_path": "/dev/ttyUSB0",
+  "address": 65536,
+  "size": 4096,
+  "client_id": "espbrew-cli"
+}
+```
+
+Fields:
+- `device_path` (required): Serial port path
+- `erase_all` (optional): Erase entire flash (default: false)
+- `address` (optional): Start address for region erase (hex or decimal)
+- `size` (optional): Size in bytes for region erase (hex or decimal)
+- `client_id` (optional): Client identifier for tracking
+
+Either `erase_all: true` or both `address` and `size` must be provided for region erase.
+
+Response (200 OK):
+```json
+{
+  "job_id": "erase-xyz789",
+  "status": "pending",
+  "device_path": "/dev/ttyUSB0"
+}
+```
+
+Error responses:
+- `400 Bad Request` - Missing device_path or invalid parameters
+- `403 Forbidden` - Device is disabled
+- `409 Conflict` - Device not found or unavailable
+
 ### Flash Progress WebSocket
 
 ```

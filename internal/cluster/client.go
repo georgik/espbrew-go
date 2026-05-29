@@ -185,6 +185,22 @@ type FlashSubmitResponse struct {
 	DevicePath string `json:"device_path"`
 }
 
+// EraseSubmitRequest represents a request to erase flash memory
+type EraseSubmitRequest struct {
+	DevicePath string `json:"device_path"`
+	Address    uint32 `json:"address,omitempty"`
+	Size       uint32 `json:"size,omitempty"`
+	EraseAll   bool   `json:"erase_all"`
+	ClientID   string `json:"client_id,omitempty"`
+}
+
+// EraseSubmitResponse represents the response from an erase job submission
+type EraseSubmitResponse struct {
+	JobID      string `json:"job_id"`
+	Status     string `json:"status"`
+	DevicePath string `json:"device_path"`
+}
+
 // ReadFlashRequest represents a request to read flash memory
 type ReadFlashRequest struct {
 	DevicePath string `json:"device_path"`
@@ -281,6 +297,37 @@ func (c *Client) SubmitFlash(req FlashSubmitRequest) (*FlashSubmitResponse, erro
 	}
 
 	return &flashResp, nil
+}
+
+func (c *Client) SubmitErase(req EraseSubmitRequest) (*EraseSubmitResponse, error) {
+	body, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("marshal request: %w", err)
+	}
+
+	httpReq, err := http.NewRequest("POST", c.baseURL+"/api/v1/flash/erase", bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.doWithRetry(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var eraseResp EraseSubmitResponse
+	if err := json.NewDecoder(resp.Body).Decode(&eraseResp); err != nil {
+		return nil, fmt.Errorf("decode response: %w", err)
+	}
+
+	return &eraseResp, nil
 }
 
 // ReadFlash submits a flash read job to the cluster

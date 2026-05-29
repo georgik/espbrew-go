@@ -73,3 +73,46 @@ func TestFlashRequest_ApplicationPartitionOffset(t *testing.T) {
 	}
 	assert.Equal(t, 65536, req.Offset, "Application partition offset should be 0x10000 (65536)")
 }
+
+func TestEraseRequest_FullErase(t *testing.T) {
+	req := &EraseRequest{
+		Port:     "/dev/ttyUSB0",
+		EraseAll: true,
+		Progress: nil,
+	}
+	assert.True(t, req.EraseAll, "EraseAll should be true for full erase")
+	assert.Equal(t, uint32(0), req.Address, "Address should be 0 for full erase")
+	assert.Equal(t, uint32(0), req.Size, "Size should be 0 for full erase")
+}
+
+func TestEraseRequest_RegionErase(t *testing.T) {
+	req := &EraseRequest{
+		Port:     "/dev/ttyUSB0",
+		Address:  0x10000,
+		Size:     0x1000,
+		Progress: nil,
+	}
+	assert.False(t, req.EraseAll, "EraseAll should be false for region erase")
+	assert.Equal(t, uint32(0x10000), req.Address, "Address should be specified")
+	assert.Equal(t, uint32(0x1000), req.Size, "Size should be specified")
+}
+
+func TestEraseResult_Success(t *testing.T) {
+	result := &EraseResult{
+		Success: true,
+		Bytes:   4194304,
+	}
+	assert.True(t, result.Success)
+	assert.Equal(t, 4194304, result.Bytes)
+	assert.Nil(t, result.Error)
+}
+
+func TestEraseResult_Failure(t *testing.T) {
+	err := assert.AnError
+	result := &EraseResult{
+		Success: false,
+		Error:   err,
+	}
+	assert.False(t, result.Success)
+	assert.Equal(t, err, result.Error)
+}

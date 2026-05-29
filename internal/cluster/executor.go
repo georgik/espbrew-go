@@ -2,9 +2,11 @@ package cluster
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"os"
 	"sync"
+	"time"
 
 	"codeberg.org/georgik/espbrew-go/internal/flash"
 	"github.com/rs/zerolog/log"
@@ -95,6 +97,7 @@ func (e *JobExecutor) worker(id int) {
 func (e *JobExecutor) executeJob(workerID int, job *Job) {
 	log.Info().
 		Str("job_id", job.ID).
+		Str("type", string(job.Type)).
 		Str("device", job.DevicePath).
 		Int("worker_id", workerID).
 		Msg("Executing job")
@@ -103,12 +106,36 @@ func (e *JobExecutor) executeJob(workerID int, job *Job) {
 	job.Status = JobRunning
 	job.mu.Unlock()
 
+	var err error
+	if job.Type == JobTypeErase {
+		err = e.executeErase(job)
+	} else {
+		err = e.executeFlash(job)
+	}
+
+	job.mu.Lock()
+	if err != nil {
+		job.Status = JobFailed
+		job.Error = err.Error()
+		log.Error().Err(err).Str("job_id", job.ID).Msg("Job failed")
+	} else {
+		job.Status = JobComplete
+		job.Progress = 100
+		now := job.CreatedAt
+		job.CompletedAt = &now
+		log.Info().Str("job_id", job.ID).Msg("Job completed successfully")
+	}
+	job.mu.Unlock()
+
+	e.results <- &JobResult{Job: job, Error: err}
+}
+
+func (e *JobExecutor) executeFlash(job *Job) error {
 	// Load firmware file
 	firmware, err := os.ReadFile(job.Firmware)
 	if err != nil {
 		log.Error().Err(err).Str("job_id", job.ID).Msg("Failed to read firmware")
-		e.results <- &JobResult{Job: job, Error: err}
-		return
+		return err
 	}
 
 	// Execute flash with timeout
@@ -143,27 +170,58 @@ func (e *JobExecutor) executeJob(workerID int, job *Job) {
 	close(req.Progress)
 	<-done
 
-	job.mu.Lock()
 	if result.Error != nil {
 		if ctx.Err() == context.DeadlineExceeded {
-			job.Status = JobTimedOut
-			job.Error = "Flash operation timed out"
-			log.Error().Str("job_id", job.ID).Msg("Job timed out")
-		} else {
-			job.Status = JobFailed
-			job.Error = result.Error.Error()
-			log.Error().Err(result.Error).Str("job_id", job.ID).Msg("Job failed")
+			return fmt.Errorf("flash operation timed out")
 		}
-	} else {
-		job.Status = JobComplete
-		job.Progress = 100
-		now := job.CreatedAt
-		job.CompletedAt = &now
-		log.Info().Str("job_id", job.ID).Msg("Job completed successfully")
+		return result.Error
 	}
-	job.mu.Unlock()
 
-	e.results <- &JobResult{Job: job, Error: result.Error}
+	return nil
+}
+
+func (e *JobExecutor) executeErase(job *Job) error {
+	// Execute erase with timeout (erase can take longer, use 15 min default)
+	ctx, cancel := context.WithTimeout(e.ctx, 15*time.Minute)
+	defer cancel()
+
+	req := &flash.EraseRequest{
+		Port:     job.DevicePath,
+		Address:  job.EraseAddress,
+		Size:     job.EraseSize,
+		EraseAll: job.EraseAll,
+		Progress: make(chan int, 10),
+	}
+
+	// Progress goroutine
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for progress := range req.Progress {
+			job.mu.Lock()
+			job.Progress = progress
+			job.mu.Unlock()
+			log.Debug().Str("job_id", job.ID).Int("progress", progress).Msg("Erase progress")
+
+			// Broadcast progress if callback set
+			if e.progressCB != nil {
+				e.progressCB(job.ID, progress, "running")
+			}
+		}
+	}()
+
+	result := e.flasher.EraseFlash(ctx, req)
+	close(req.Progress)
+	<-done
+
+	if result.Error != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			return fmt.Errorf("erase operation timed out")
+		}
+		return result.Error
+	}
+
+	return nil
 }
 
 // FlashWithProgress flashes firmware and reports progress via callback
