@@ -31,21 +31,34 @@ ESP32 cluster flashing tool written in Go. Manages multiple ESP32 devices across
 # Build
 go build -o espbrew ./cmd/espbrew
 
+# Windows users: add .exe extension
+go build -o espbrew.exe ./cmd/espbrew
+
 # Start standalone cluster (single machine with devices)
 ./espbrew cluster --role standalone --port 8080
+# On Windows:
+./espbrew.exe cluster --role standalone --port 8080
 
 # In another terminal - flash firmware
 ./espbrew flash firmware.bin
+# On Windows:
+./espbrew.exe flash firmware.bin
 
 # Or access the dashboard
-open http://localhost:8080
+# Linux/macOS: open http://localhost:8080
+# Windows: Navigate to http://localhost:8080 in your browser
 ```
 
 ## Installation
 
 ```bash
+# Build the application
 go build -o espbrew ./cmd/espbrew
+
+# Linux/macOS: Install to system path
 sudo mv espbrew /usr/local/bin/
+
+# Windows: Add espbrew.exe to your PATH or use from current directory
 ```
 
 ## Documentation
@@ -55,6 +68,8 @@ sudo mv espbrew /usr/local/bin/
 - [Error Handling](docs/ERROR_HANDLING.md) - Timeouts, retries, recovery mechanisms
 
 ## CLI Quick Reference
+
+Note: Windows users should use `espbrew.exe` instead of `./espbrew` in the examples below.
 
 ### Devices
 
@@ -119,7 +134,7 @@ http://localhost:8080/monitor
 - Baud rate selection (9600 - 921600)
 - Device pre-selection via URL (`?device=/dev/ttyUSB0`)
 
-**Monitor Button:** Dashboard device list includes "📡 Monitor" button for quick access to each device.
+**Monitor Button:** Dashboard device list includes "Monitor" button for quick access to each device.
 
 **Terminal Mode:** Click on terminal output to focus, then type normally. Special keys supported:
 - Enter, Backspace, Tab, Escape

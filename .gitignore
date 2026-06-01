@@ -1,4 +1,5 @@
 /espbrew
+/espbrew.exe
 
 # Test coverage
 *.out

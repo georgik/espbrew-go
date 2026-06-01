@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -79,7 +80,13 @@ func runServer(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("get home dir: %w", err)
 	}
-	dbPath := homeDir + "/.espbrew/espbrew.db"
+	espbrewDir := filepath.Join(homeDir, ".espbrew")
+	dbPath := filepath.Join(espbrewDir, "espbrew.db")
+
+	// Ensure espbrew directory exists
+	if err := os.MkdirAll(espbrewDir, 0755); err != nil {
+		return fmt.Errorf("create espbrew directory: %w", err)
+	}
 
 	// Open persistence store
 	store, err := persistence.Open(persistence.DefaultConfig(dbPath))
