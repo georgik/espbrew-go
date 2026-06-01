@@ -193,6 +193,24 @@ Devices can be looked up by:
 - Alias
 - Connection path (/dev/ttyUSB0, etc.)
 
+**Device Persistence and Rediscovery:**
+
+Device information persists across cluster restarts and device reconnections. When a device is unplugged and reconnected:
+
+1. **Initial Discovery**: First connection probes the device, captures MAC address and chip information, stores in persistence database
+2. **Unplug Handling**: Device removed from in-memory state, but record remains in database with `last_path` tracking the connection path
+3. **Reconnection**: Same device on same path automatically restores identity from persistence:
+   - Device ID, MAC address, chip type restored from database
+   - No duplicate records created
+   - Disabled state preserved
+   - Aliases and tags retained
+4. **Path Changes**: If device moves to different port (e.g., /dev/ttyUSB0 → /dev/ttyUSB1), treated as new connection until probed
+
+This behavior ensures stable device identity across reconnections, useful for:
+- Fixed deployments where devices always use same USB port
+- Development boards repeatedly connected/disconnected
+- Maintaining aliases and tags across sessions
+
 ## Project Structure
 
 ```

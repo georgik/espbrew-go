@@ -358,7 +358,7 @@ func (l *LeaderNode) handleDeviceEvent(event device.DeviceEvent) {
 
 	switch event.Type {
 	case device.DeviceAdded:
-		// Check if device already exists (from persistence or previous session)
+		// Check if device already exists in memory
 		existingDev, exists := l.state.Devices[event.Path]
 
 		if exists {
@@ -369,24 +369,54 @@ func (l *LeaderNode) handleDeviceEvent(event device.DeviceEvent) {
 			l.state.Devices[event.Path] = existingDev
 			log.Info().Str("path", event.Path).Str("device_id", existingDev.DeviceID).
 				Msg("Device re-connected, preserving identity")
-		} else {
-			// New device - create fresh entry
-			dev := &protocol.DeviceInfo{
-				Path:   event.Path,
-				VID:    event.VID,
-				PID:    event.PID,
-				NodeID: l.id,
-				Status: "available",
-			}
-			l.state.Devices[event.Path] = dev
-
-			// Quick probe immediately for new devices
-			l.wg.Add(1)
-			go l.probeDeviceQuickAsync(dev)
-			log.Info().Str("path", event.Path).Msg("Device added on leader")
+			l.devices.Register(event.Path)
+			return
 		}
 
+		// Not in memory - check persistence for device with this path
+		persisted, err := l.store.GetDeviceByPath(event.Path)
+		if err == nil && persisted != nil {
+			// Device exists in persistence - restore it
+			status := "available"
+			if persisted.Disabled {
+				status = "disabled"
+			}
+			dev := &protocol.DeviceInfo{
+				Path:           event.Path,
+				DeviceID:       persisted.DeviceID,
+				ChipType:       persisted.ChipType,
+				SerialNumber:   persisted.MACAddress,
+				VID:            event.VID,
+				PID:            event.PID,
+				NodeID:         l.id,
+				Status:         status,
+				Disabled:       persisted.Disabled,
+				DisabledReason: persisted.DisabledReason,
+				DisabledBy:     persisted.DisabledBy,
+				DisabledAt:     persisted.DisabledAt,
+			}
+			l.state.Devices[event.Path] = dev
+			l.devices.Register(event.Path)
+			log.Info().Str("path", event.Path).Str("device_id", persisted.DeviceID).
+				Msg("Device restored from persistence")
+			return
+		}
+
+		// Truly new device - create fresh entry
+		dev := &protocol.DeviceInfo{
+			Path:   event.Path,
+			VID:    event.VID,
+			PID:    event.PID,
+			NodeID: l.id,
+			Status: "available",
+		}
+		l.state.Devices[event.Path] = dev
 		l.devices.Register(event.Path)
+
+		// Quick probe immediately for new devices
+		l.wg.Add(1)
+		go l.probeDeviceQuickAsync(dev)
+		log.Info().Str("path", event.Path).Msg("Device added on leader")
 
 	case device.DeviceRemoved:
 		delete(l.state.Devices, event.Path)

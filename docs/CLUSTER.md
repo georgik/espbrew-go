@@ -147,3 +147,54 @@ log_level = "info"
 ```
 
 **Node names in the dashboard:** Without `--node-id`, nodes use the system hostname. With `--node-id`, you can set descriptive names for easier identification.
+
+## Device Persistence
+
+Device records persist in the embedded database and survive cluster restarts. Each device record stores:
+
+- `device_id`: Unique identifier (ESP-<MAC> format)
+- `mac_address`: Hardware MAC address from boot log probe
+- `chip_type`: Detected chip variant (esp32, esp32s3, etc.)
+- `chip_rev`: Chip revision (e.g., "1.1")
+- `flash_size`: Detected flash size
+- `psram_size`: Detected PSRAM size
+- `last_path`: Most recent connection path (e.g., /dev/ttyUSB0)
+- `node_id`: Cluster node where device was last seen
+- `first_seen` / `last_seen`: Timestamps for tracking
+- `aliases`: Custom device names
+- `tags`: User-defined labels
+- `disabled`: Administrative disable flag
+
+### Device Rediscovery Behavior
+
+When devices are unplugged and reconnected, the cluster automatically handles rediscovery:
+
+```
+Initial connection: /dev/ttyUSB0 → Probe → Store (device_id: esp-aa:bb:cc:dd:ee:ff)
+Device unplugged: Removed from memory (record kept in database)
+Device reconnected: /dev/ttyUSB0 → Restore from database → No duplicate
+```
+
+**Key behaviors:**
+
+- **Same Path**: Device reconnecting on same port (e.g., /dev/ttyUSB0) automatically restores existing record - no duplicate created
+- **Different Path**: Device on different port (e.g., /dev/ttyUSB0 → /dev/ttyUSB1) creates new entry until probed and matched by MAC
+- **Disabled State**: Devices disabled via web UI remain disabled after reconnection
+- **Startup Restore**: Cluster loads previously seen devices on startup, marking them as offline until connected
+
+### Database Location
+
+Device records stored in:
+```
+~/.espbrew/devices.json   # JSON database (legacy)
+~/.espbrew/devices.db     # BoltDB database (current)
+```
+
+### Deleting Device Records
+
+To remove a device record permanently (allows fresh discovery on next connection):
+
+```bash
+# Via web UI: http://localhost:8080 → Devices → Delete device
+# Via API: DELETE /api/v1/devices/{device_id}
+```
