@@ -177,6 +177,7 @@ Device records persist in the embedded database and survive cluster restarts. Ea
 - `aliases`: Custom device names
 - `tags`: User-defined labels
 - `disabled`: Administrative disable flag
+- `protected`: Flash read-only protection flag
 
 ### Device Rediscovery Behavior
 

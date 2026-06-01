@@ -25,7 +25,8 @@ const (
 
 // TestMonitorPage tests the monitor HTML page serves correctly
 func TestMonitorPage(t *testing.T) {
-	store, err := persistence.Open(&persistence.Config{Path: ":memory:"})
+	dbPath := t.TempDir() + "/test.db"
+	store, err := persistence.Open(&persistence.Config{Path: dbPath})
 	require.NoError(t, err)
 	defer store.Close()
 
@@ -67,7 +68,8 @@ func TestMonitorPage(t *testing.T) {
 
 // TestMonitorPageWithDevices tests monitor page loads when devices are registered
 func TestMonitorPageWithDevices(t *testing.T) {
-	store, err := persistence.Open(&persistence.Config{Path: ":memory:"})
+	dbPath := t.TempDir() + "/test.db"
+	store, err := persistence.Open(&persistence.Config{Path: dbPath})
 	require.NoError(t, err)
 	defer store.Close()
 

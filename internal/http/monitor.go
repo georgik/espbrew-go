@@ -155,6 +155,17 @@ func (s *MonitorServer) handleMonitorMessages(conn *websocket.Conn, session *mon
 		case "close":
 			session.SendControl(&monitor.ControlMessage{Type: "close"})
 			return
+		case "data":
+			// Write data to serial port
+			if dataStr, ok := msg["data"].(string); ok {
+				if err := session.Write([]byte(dataStr)); err != nil {
+					log.Error().Err(err).Msg("Failed to write to serial port")
+					conn.WriteJSON(map[string]interface{}{
+						"type":  "error",
+						"error": "Failed to write to device",
+					})
+				}
+			}
 		}
 	}
 }

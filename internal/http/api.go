@@ -215,6 +215,14 @@ func (h *APIHandler) handleDevices(w http.ResponseWriter, r *http.Request) {
 				devMap["disabled_at"] = dev.DisabledAt.Format(time.RFC3339)
 			}
 		}
+		if dev.Protected {
+			devMap["protected"] = true
+			devMap["protected_reason"] = dev.ProtectedReason
+			devMap["protected_by"] = dev.ProtectedBy
+			if !dev.ProtectedAt.IsZero() {
+				devMap["protected_at"] = dev.ProtectedAt.Format(time.RFC3339)
+			}
+		}
 
 		devices = append(devices, devMap)
 	}
@@ -732,6 +740,16 @@ func (h *APIHandler) handleDeviceDetail(w http.ResponseWriter, r *http.Request) 
 		response["disabled_by"] = dev.DisabledBy
 		if !dev.DisabledAt.IsZero() {
 			response["disabled_at"] = dev.DisabledAt.Format(time.RFC3339)
+		}
+	}
+
+	// Add protected fields if protected
+	if dev.Protected {
+		response["protected"] = true
+		response["protected_reason"] = dev.ProtectedReason
+		response["protected_by"] = dev.ProtectedBy
+		if !dev.ProtectedAt.IsZero() {
+			response["protected_at"] = dev.ProtectedAt.Format(time.RFC3339)
 		}
 	}
 

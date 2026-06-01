@@ -28,6 +28,10 @@ type DeviceRecord struct {
 	DisabledReason string    `json:"disabled_reason,omitempty"`
 	DisabledBy     string    `json:"disabled_by,omitempty"`
 	DisabledAt     time.Time `json:"disabled_at,omitempty"`
+	Protected      bool      `json:"protected"`
+	ProtectedReason string  `json:"protected_reason,omitempty"`
+	ProtectedBy    string    `json:"protected_by,omitempty"`
+	ProtectedAt    time.Time `json:"protected_at,omitempty"`
 }
 
 func (s *Store) SaveDevice(dev *DeviceRecord) error {
@@ -313,6 +317,46 @@ func (s *Store) SetDeviceDisabled(deviceID string, disabled bool, reason, by str
 			dev.DisabledReason = ""
 			dev.DisabledBy = ""
 			dev.DisabledAt = time.Time{}
+		}
+
+		encoded, err := codec.Encode(dev)
+		if err != nil {
+			return err
+		}
+
+		return b.Put(key, encoded)
+	})
+}
+
+// SetDeviceProtected sets the protected state of a device
+func (s *Store) SetDeviceProtected(deviceID string, protected bool, reason, by string) error {
+	return s.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte(bucketDevices))
+		if b == nil {
+			return fmt.Errorf("devices bucket not found")
+		}
+
+		key := deviceKey(deviceID)
+		data := b.Get(key)
+		if data == nil {
+			return fmt.Errorf("device not found: %s", deviceID)
+		}
+
+		codec := &codec{}
+		dev, err := codec.DecodeDevice(data)
+		if err != nil {
+			return err
+		}
+
+		dev.Protected = protected
+		if protected {
+			dev.ProtectedReason = reason
+			dev.ProtectedBy = by
+			dev.ProtectedAt = time.Now()
+		} else {
+			dev.ProtectedReason = ""
+			dev.ProtectedBy = ""
+			dev.ProtectedAt = time.Time{}
 		}
 
 		encoded, err := codec.Encode(dev)

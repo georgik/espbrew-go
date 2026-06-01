@@ -117,6 +117,11 @@ func (h *FlashHandler) handleFlashSubmit(w http.ResponseWriter, r *http.Request)
 		respondError(w, http.StatusForbidden, "device is disabled and cannot be flashed")
 		return
 	}
+	// Check if device is protected (read-only mode - allows monitoring but not flashing)
+	if IsDeviceProtected(h.leader.State(), req.DevicePath) {
+		respondError(w, http.StatusForbidden, "device is protected and cannot be flashed (monitoring only)")
+		return
+	}
 
 	// Determine firmware path
 	var firmwarePath string
@@ -200,6 +205,11 @@ func (h *FlashHandler) handleEraseSubmit(w http.ResponseWriter, r *http.Request)
 	// Check if device is disabled
 	if IsDeviceDisabled(h.leader.State(), req.DevicePath) {
 		respondError(w, http.StatusForbidden, "device is disabled and cannot be erased")
+		return
+	}
+	// Check if device is protected (read-only mode)
+	if IsDeviceProtected(h.leader.State(), req.DevicePath) {
+		respondError(w, http.StatusForbidden, "device is protected and cannot be erased")
 		return
 	}
 
@@ -305,6 +315,11 @@ func (h *PeerFlashHandler) handleFlashSubmit(w http.ResponseWriter, r *http.Requ
 	// Check if device is disabled
 	if IsDeviceDisabled(state, req.DevicePath) {
 		respondError(w, http.StatusForbidden, "device is disabled and cannot be flashed")
+		return
+	}
+	// Check if device is protected (read-only mode)
+	if IsDeviceProtected(h.peer.State(), req.DevicePath) {
+		respondError(w, http.StatusForbidden, "device is protected and cannot be flashed")
 		return
 	}
 

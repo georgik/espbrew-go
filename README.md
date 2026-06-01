@@ -14,6 +14,7 @@ ESP32 cluster flashing tool written in Go. Manages multiple ESP32 devices across
 - **Device Persistence**: Device information survives cluster restart
 - **Device Management**: View, edit, and delete device records via web UI
 - **Device Disabling**: Administratively disable devices to prevent accidental flashing
+- **Device Protection**: Flash read-only mode for production devices while allowing serial monitoring
 - **Camera Support**: Discover and capture images from connected cameras
 - **Job Queue**: Queue and manage flash jobs across all available devices
 - **Device Locking**: Prevents concurrent access to serial ports
@@ -109,6 +110,7 @@ http://localhost:8080/monitor
 
 **Features:**
 - Real-time serial output via WebSocket
+- **Terminal emulator mode**: Type directly to send keystrokes (Enter, Backspace, Ctrl+C, arrows, etc.)
 - ANSI color escape sequence rendering (ESP-IDF colored logs)
 - Auto-scroll and pause controls
 - Pattern matching for automated testing
@@ -119,7 +121,14 @@ http://localhost:8080/monitor
 
 **Monitor Button:** Dashboard device list includes "📡 Monitor" button for quick access to each device.
 
+**Terminal Mode:** Click on terminal output to focus, then type normally. Special keys supported:
+- Enter, Backspace, Tab, Escape
+- Arrow keys, Home, End, Page Up/Down, Delete, Insert
+- Ctrl+A through Ctrl+Z, Ctrl+Space
+
 **WebSocket API:** `ws://host/api/v1/monitor/{port}?baud=115200&reset=1&exit_on=pattern`
+
+Send data: `{type: "data", data: "character"}`
 
 ### Erase Flash
 
@@ -214,6 +223,20 @@ Devices can be looked up by:
 - MAC address
 - Alias
 - Connection path (/dev/ttyUSB0, etc.)
+
+**Device Protection (Read-Only Flash Mode):**
+
+Production devices can be protected from flash operations while remaining accessible for serial monitoring. This prevents accidental firmware overwrites on critical devices.
+
+- **Protection Scope**: Flash and erase operations are blocked
+- **Allowed Operations**: Serial monitoring, read operations, device information viewing
+- **Persistence**: Protected state survives cluster restarts and device reconnections
+- **Management**: Protect/unprotect devices via web dashboard with optional reason tracking
+- **Visual Indicators**: Protected devices display "READ-ONLY" badge in device list
+- **Use Cases**:
+  - Production devices that must retain their firmware
+  - Shared workstations where accidental flashing must be prevented
+  - Reference devices used for monitoring and testing only
 
 **Device Persistence and Rediscovery:**
 

@@ -195,6 +195,15 @@ func (s *StreamSession) Close() error {
 	return nil
 }
 
+// Write writes data to the serial port
+func (s *StreamSession) Write(data []byte) error {
+	if s.port == nil {
+		return io.ErrClosedPipe
+	}
+	_, err := s.port.Write(data)
+	return err
+}
+
 func (s *StreamSession) containsMatch(data []byte, pattern string) bool {
 	dataStr := string(data)
 	for i := 0; i <= len(dataStr)-len(pattern); i++ {

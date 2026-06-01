@@ -394,6 +394,10 @@ func (l *LeaderNode) handleDeviceEvent(event device.DeviceEvent) {
 				DisabledReason: persisted.DisabledReason,
 				DisabledBy:     persisted.DisabledBy,
 				DisabledAt:     persisted.DisabledAt,
+				Protected:      persisted.Protected,
+				ProtectedReason: persisted.ProtectedReason,
+				ProtectedBy:    persisted.ProtectedBy,
+				ProtectedAt:    persisted.ProtectedAt,
 			}
 			l.state.Devices[event.Path] = dev
 			l.devices.Register(event.Path)
@@ -837,6 +841,10 @@ func (l *LeaderNode) loadPersistedDevices() {
 			DisabledReason: record.DisabledReason,
 			DisabledBy:     record.DisabledBy,
 			DisabledAt:     record.DisabledAt,
+			Protected:      record.Protected,
+			ProtectedReason: record.ProtectedReason,
+			ProtectedBy:    record.ProtectedBy,
+			ProtectedAt:    record.ProtectedAt,
 		}
 		if record.Disabled {
 			dev.Status = "disabled"
@@ -882,6 +890,22 @@ func (l *LeaderNode) UpdateDeviceDisabled(deviceID string, disabled bool, reason
 			}
 			l.state.Devices[path] = dev
 			log.Info().Str("device_id", deviceID).Bool("disabled", disabled).Str("reason", reason).Msg("Device disabled state updated")
+			return
+		}
+	}
+}
+
+// UpdateDeviceProtected updates the protected state of a device
+func (l *LeaderNode) UpdateDeviceProtected(deviceID string, protected bool, reason string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	for path, dev := range l.state.Devices {
+		if dev.DeviceID == deviceID || dev.Path == deviceID {
+			dev.Protected = protected
+			dev.ProtectedReason = reason
+			l.state.Devices[path] = dev
+			log.Info().Str("device_id", deviceID).Bool("protected", protected).Str("reason", reason).Msg("Device protected state updated")
 			return
 		}
 	}

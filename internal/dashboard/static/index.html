@@ -543,6 +543,26 @@
             margin-bottom: 16px;
             font-size: 13px;
         }
+
+        .protected-banner {
+            background: var(--warning);
+            color: #1f2937;
+            padding: 12px 14px;
+            border-radius: 8px;
+            margin-bottom: 16px;
+            font-size: 13px;
+        }
+
+        .protected-badge {
+            background: var(--warning);
+            color: #1f2937;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: 10px;
+            margin-left: 8px;
+        }
+
+        .status-dot.protected { background: var(--warning); }
     </style>
 </head>
 <body>
@@ -764,13 +784,15 @@
                 // Show warning indicator if device is not probed
                 const needsProbe = !d.device_id && !d.chip_type;
                 const isDisabled = d.disabled || d.status === 'disabled';
+                const isProtected = d.protected || false;
                 return `
                 <li class="device-item ${isDisabled ? 'disabled' : ''}" onclick="showDeviceDetail('${d.path}', '${d.device_id || ''}', '${d.chip_type || ''}')" title="${isDisabled ? 'Click to enable device' : 'Click for details'}">
                     <div class="device-info">
-                        <span class="status-dot ${isDisabled ? 'disabled' : d.status}"></span>
+                        <span class="status-dot ${isDisabled ? 'disabled' : isProtected ? 'protected' : d.status}"></span>
                         <span class="device-name">${d.path}</span>
                         ${needsProbe ? '<span style="color: var(--warning); margin-left: 8px;" title="Device not probed">⚠</span>' : ''}
                         ${isDisabled ? '<span class="disabled-badge">DISABLED</span>' : ''}
+                        ${isProtected ? '<span class="protected-badge">🔒 READ-ONLY</span>' : ''}
                     </div>
                     <div style="display: flex; align-items: center; gap: 12px;">
                         <span style="font-size: 12px; color: var(--text-secondary)">
@@ -1227,6 +1249,14 @@
                 </div>
             ` : '';
 
+            const isProtected = dev.protected || false;
+
+            const protectedHtml = isProtected ? `
+                <div class="protected-banner">
+                    🔒 Device is protected (flash read-only)${dev.protected_reason ? ": " + dev.protected_reason : ""}${dev.protected_by ? " (by " + dev.protected_by + ")" : ""}
+                </div>
+            ` : "";
+
             const formatBytes = (bytes) => {
                 if (!bytes) return '-';
                 const units = ['B', 'KB', 'MB', 'GB'];
@@ -1243,13 +1273,20 @@
                 ? `<button class="btn" style="padding: 6px 12px; font-size: 13px;" onclick="enableDevice()">Enable Device</button>`
                 : `<button class="btn btn-warning" style="padding: 6px 12px; font-size: 13px;" onclick="disableDevice()">Disable Device</button>`;
 
+            // Protect/Unprotect button
+            const toggleProtectBtn = isProtected
+                ? `<button class="btn" style="padding: 6px 12px; font-size: 13px; background: #10b981;" onclick="unprotectDevice()">Unprotect Device</button>`
+                : `<button class="btn" style="padding: 6px 12px; font-size: 13px; background: #f59e0b;" onclick="protectDevice()">Protect Device</button>`;
+
             content.innerHTML = `
                 ${disabledHtml}
+                ${protectedHtml}
                 ${warningHtml}
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
                     <span style="font-size: 14px; font-weight: 500; color: var(--text-secondary);">Device Information</span>
                     <div style="display: flex; gap: 8px;">
                         ${toggleDisableBtn}
+                        ${toggleProtectBtn}
                         <button class="btn btn-warning" style="padding: 6px 12px; font-size: 13px;" onclick="eraseDevice()">Erase Flash</button>
                         <button class="btn btn-danger" style="padding: 6px 12px; font-size: 13px;" onclick="deleteDevice()">Delete</button>
                         <button class="btn btn-secondary" style="padding: 6px 12px; font-size: 13px;" onclick="showDeviceEditForm()">Edit</button>
@@ -1392,6 +1429,75 @@
                 content.innerHTML = `
                     <div style="text-align: center; padding: 20px;">
                         <p style="color: var(--error); margin-bottom: 16px;">Failed to enable: ${error.message}</p>
+                        <button class="btn" onclick="showDeviceDetail('', '${currentDeviceId}')">Try Again</button>
+                    </div>
+                `;
+            }
+        }
+
+        async function protectDevice() {
+            const reason = prompt('Enter reason for protecting this device (optional):');
+            if (reason === null) return;
+
+            const content = document.getElementById('device-detail-content');
+            content.innerHTML = '<div style="text-align: center; padding: 30px;"><span class="spinner"></span> Protecting device...</div>';
+
+            try {
+                const response = await fetch(`/api/v1/devices/${currentDeviceId}/protect`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ reason: reason || '', client_id: 'web-dashboard' })
+                });
+
+                if (response.ok) {
+                    refreshData();
+                    showDeviceDetail('', currentDeviceId);
+                } else {
+                    const error = await response.json();
+                    content.innerHTML = `
+                        <div style="text-align: center; padding: 20px;">
+                            <p style="color: var(--error); margin-bottom: 16px;">Failed to protect: ${error.error || 'Unknown error'}</p>
+                            <button class="btn" onclick="showDeviceDetail('', '${currentDeviceId}')">Try Again</button>
+                        </div>
+                    `;
+                }
+            } catch (error) {
+                content.innerHTML = `
+                    <div style="text-align: center; padding: 20px;">
+                        <p style="color: var(--error); margin-bottom: 16px;">Failed to protect: ${error.message}</p>
+                        <button class="btn" onclick="showDeviceDetail('', '${currentDeviceId}')">Try Again</button>
+                    </div>
+                `;
+            }
+        }
+
+        async function unprotectDevice() {
+            const content = document.getElementById('device-detail-content');
+            content.innerHTML = '<div style="text-align: center; padding: 30px;"><span class="spinner"></span> Unprotecting device...</div>';
+
+            try {
+                const response = await fetch(`/api/v1/devices/${currentDeviceId}/unprotect`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ client_id: 'web-dashboard' })
+                });
+
+                if (response.ok) {
+                    refreshData();
+                    showDeviceDetail('', currentDeviceId);
+                } else {
+                    const error = await response.json();
+                    content.innerHTML = `
+                        <div style="text-align: center; padding: 20px;">
+                            <p style="color: var(--error); margin-bottom: 16px;">Failed to unprotect: ${error.error || 'Unknown error'}</p>
+                            <button class="btn" onclick="showDeviceDetail('', '${currentDeviceId}')">Try Again</button>
+                        </div>
+                    `;
+                }
+            } catch (error) {
+                content.innerHTML = `
+                    <div style="text-align: center; padding: 20px;">
+                        <p style="color: var(--error); margin-bottom: 16px;">Failed to unprotect: ${error.message}</p>
                         <button class="btn" onclick="showDeviceDetail('', '${currentDeviceId}')">Try Again</button>
                     </div>
                 `;

@@ -44,6 +44,10 @@ type DeviceInfo struct {
 	DisabledReason string    `json:"disabled_reason,omitempty"`
 	DisabledBy     string    `json:"disabled_by,omitempty"`
 	DisabledAt     time.Time `json:"disabled_at,omitempty"`
+	Protected      bool      `json:"protected"` // Flash-protected mode - can monitor but not flash
+	ProtectedReason string  `json:"protected_reason,omitempty"`
+	ProtectedBy    string    `json:"protected_by,omitempty"`
+	ProtectedAt    time.Time `json:"protected_at,omitempty"`
 }
 
 // CameraInfo represents a camera device attached to a node

@@ -322,6 +322,19 @@
         .ansi-bg-bright-magenta { background-color: #d670d6; }
         .ansi-bg-bright-cyan { background-color: #29b8db; }
         .ansi-bg-bright-white { background-color: #ffffff; }
+
+        #terminal {
+            cursor: text;
+        }
+
+        #terminal:focus {
+            outline: 2px solid var(--accent);
+            outline-offset: -2px;
+        }
+
+        #terminal:focus-not(.empty) {
+            cursor: text;
+        }
     </style>
 </head>
 <body>
@@ -379,6 +392,7 @@
             </div>
             <div class="stats">
                 <span id="bytesReceived">0 bytes received</span>
+                <span id="bytesSent">0 bytes sent</span>
                 <span id="connectionTime">--:--:--</span>
             </div>
         </div>
@@ -395,7 +409,7 @@
                     </label>
                 </div>
             </div>
-            <pre id="terminal" class="empty"></pre>
+            <pre id="terminal" class="empty" tabindex="0"></pre>
         </div>
     </div>
 
@@ -405,6 +419,7 @@
             socket: null,
             currentDevice: null,
             bytesReceived: 0,
+            bytesSent: 0,
             startTime: null,
             timerInterval: null,
             logBuffer: []
@@ -421,6 +436,7 @@
             statusDot: document.getElementById('statusDot'),
             statusText: document.getElementById('statusText'),
             bytesReceived: document.getElementById('bytesReceived'),
+            bytesSent: document.getElementById('bytesSent'),
             connectionTime: document.getElementById('connectionTime'),
             terminal: document.getElementById('terminal'),
             deviceInfo: document.getElementById('deviceInfo'),
@@ -493,11 +509,18 @@
                     state.connected = true;
                     state.startTime = new Date();
                     state.bytesReceived = 0;
+                    state.bytesSent = 0;
                     state.logBuffer = [];
                     elements.terminal.classList.remove('empty');
                     elements.terminal.textContent = '';
+                    elements.bytesSent.textContent = '0 bytes sent';
                     updateStatus('connected');
                     startTimer();
+                    // Focus terminal and add keyboard handler
+                    elements.terminal.focus();
+                    elements.terminal.addEventListener('keydown', handleKeydown);
+                    // Add paste listener to document for better compatibility
+                    document.addEventListener('paste', handleDocumentPaste);
                     showNotification(`Connected to ${devicePath}`, 'success');
                 };
 
@@ -540,6 +563,9 @@
 
         function handleDisconnect() {
             state.connected = false;
+            elements.terminal.removeEventListener('keydown', handleKeydown);
+            elements.terminal.removeEventListener('paste', handlePaste);
+            document.removeEventListener('paste', handleDocumentPaste);
             state.socket = null;
             stopTimer();
             updateStatus('disconnected');
@@ -556,6 +582,176 @@
                     showNotification('Failed to send reset command', 'error');
                 }
             }
+        }
+
+        // Handle keyboard input - send keystrokes immediately
+        function handleKeydown(e) {
+            if (!state.connected || !state.socket) {
+                return;
+            }
+
+            let data = null;
+
+            // Handle special keys
+            switch (e.key) {
+                case 'Enter':
+                    data = '\r';  // Send CR for Enter
+                    e.preventDefault();
+                    break;
+                case 'Backspace':
+                    data = '\b';  // Backspace
+                    e.preventDefault();
+                    break;
+                case 'Tab':
+                    data = '\t';  // Tab
+                    e.preventDefault();
+                    break;
+                case 'Escape':
+                    data = '\x1b';  // ESC
+                    e.preventDefault();
+                    break;
+                case 'ArrowUp':
+                    data = '\x1b[A';  // ANSI arrow up
+                    e.preventDefault();
+                    break;
+                case 'ArrowDown':
+                    data = '\x1b[B';  // ANSI arrow down
+                    e.preventDefault();
+                    break;
+                case 'ArrowRight':
+                    data = '\x1b[C';  // ANSI arrow right
+                    e.preventDefault();
+                    break;
+                case 'ArrowLeft':
+                    data = '\x1b[D';  // ANSI arrow left
+                    e.preventDefault();
+                    break;
+                case 'Delete':
+                    data = '\x1b[3~';  // ANSI delete
+                    e.preventDefault();
+                    break;
+                case 'Home':
+                    data = '\x1b[H';  // ANSI home
+                    e.preventDefault();
+                    break;
+                case 'End':
+                    data = '\x1b[F';  // ANSI end
+                    e.preventDefault();
+                    break;
+                case 'PageUp':
+                    data = '\x1b[5~';  // ANSI page up
+                    e.preventDefault();
+                    break;
+                case 'PageDown':
+                    data = '\x1b[6~';  // ANSI page down
+                    e.preventDefault();
+                    break;
+                case 'Insert':
+                    data = '\x1b[2~';  // ANSI insert
+                    e.preventDefault();
+                    break;
+                default:
+                    // Handle Ctrl+key combinations
+                    if (e.ctrlKey && e.key >= 'a' && e.key <= 'z') {
+                        // Ctrl+A to Ctrl+Z -> 0x01 to 0x1A
+                        const code = e.key.charCodeAt(0) - 96;
+                        data = String.fromCharCode(code);
+                        e.preventDefault();
+                    } else if (e.ctrlKey && e.key === ' ') {
+                        // Ctrl+Space -> 0x00
+                        data = '\x00';
+                        e.preventDefault();
+                    } else if (e.ctrlKey && e.key === '[') {
+                        // Ctrl+[ -> ESC
+                        data = '\x1b';
+                        e.preventDefault();
+                    } else if (e.ctrlKey && e.key === '\\') {
+                        // Ctrl+\ -> 0x1C
+                        data = '\x1c';
+                        e.preventDefault();
+                    } else if (e.ctrlKey && e.key === ']') {
+                        // Ctrl+] -> 0x1D
+                        data = '\x1d';
+                        e.preventDefault();
+                    } else if (e.ctrlKey && e.key === '^') {
+                        // Ctrl+^ -> 0x1E
+                        data = '\x1e';
+                        e.preventDefault();
+                    } else if (e.ctrlKey && e.key === '_') {
+                        // Ctrl+_ -> 0x1F
+                        data = '\x1f';
+                        e.preventDefault();
+                    } else if (e.key.length === 1) {
+                        // Regular printable character
+                        data = e.key;
+                    }
+            }
+
+            if (data) {
+                try {
+                    state.socket.send(JSON.stringify({
+                        type: 'data',
+                        data: data
+                    }));
+                    state.bytesSent += data.length;
+                    elements.bytesSent.textContent = `${state.bytesSent} bytes sent`;
+                } catch (error) {
+                    console.error('Send error:', error);
+                }
+            }
+        }
+
+        // Handle clipboard paste (document level for better compatibility)
+        function handleDocumentPaste(e) {
+            // Only process if terminal is focused
+            if (document.activeElement !== elements.terminal) {
+                return;
+            }
+
+            if (!state.connected || !state.socket) {
+                return;
+            }
+
+            e.preventDefault();
+
+            const pasteData = (e.clipboardData || window.clipboardData).getData('text');
+            if (!pasteData) {
+                return;
+            }
+
+            // Send each character with small delay to avoid overwhelming device
+            const chars = pasteData.split('');
+            let index = 0;
+
+            function sendNext() {
+                if (index >= chars.length) {
+                    return;
+                }
+
+                try {
+                    state.socket.send(JSON.stringify({
+                        type: 'data',
+                        data: chars[index]
+                    }));
+                    state.bytesSent += 1;
+                    elements.bytesSent.textContent = `${state.bytesSent} bytes sent`;
+                    index++;
+
+                    // Send next character after small delay
+                    if (index < chars.length) {
+                        setTimeout(sendNext, 5);
+                    }
+                } catch (error) {
+                    console.error('Paste send error:', error);
+                }
+            }
+
+            sendNext();
+        }
+
+        // Handle clipboard paste (direct on terminal element)
+        function handlePaste(e) {
+            handleDocumentPaste(e);
         }
 
         function handleMessage(msg) {
@@ -584,7 +780,27 @@
         }
 
         function parseAnsi(text) {
-            // ANSI escape sequence patterns
+            // Filter out various escape sequences that should not be displayed
+            let filtered = text;
+
+            // 1. OSC (Operating System Command) sequences: ESC] ... ST
+            //    ST can be BEL (0x07) or ESC\ (0x1B 0x5C)
+            //    Use non-greedy match to capture content including any embedded ANSI codes
+            filtered = filtered.replace(/\x1b\].*?\x07/g, ''); // BEL terminated
+            filtered = filtered.replace(/\x1b\].*?\x1b\x5c/g, ''); // ESC\ terminated
+
+            // 2. CSI mode/setting sequences: ESC[ ... [hl]
+            //    Examples: [?2004l (bracketed paste mode off), [?2004h (on)
+            filtered = filtered.replace(/\x1b\[\?[0-9;]*[hl]/g, '');
+
+            // 3. CSI cursor movement sequences: ESC[ ... [ABCDEFGJKLM] or ESC[H
+            filtered = filtered.replace(/\x1b\[[0-9;]*[@ABCDEFGJKLM]/g, '');
+            filtered = filtered.replace(/\x1b\[[0-9;]*[Hf]/g, '');
+
+            // 4. CSI device control sequences
+            filtered = filtered.replace(/\x1b\[[0-9;]*[inps]/g, '');
+
+            // ANSI CSI (Control Sequence Introducer) patterns for colors/styles
             const ansiRegex = /\x1b\[(?<attrs>\d+(?:;\d+)*)m/g;
 
             let result = '';
@@ -592,9 +808,9 @@
             let currentClasses = [];
 
             let match;
-            while ((match = ansiRegex.exec(text)) !== null) {
+            while ((match = ansiRegex.exec(filtered)) !== null) {
                 // Add text before the escape sequence
-                const before = text.substring(lastIndex, match.index);
+                const before = filtered.substring(lastIndex, match.index);
                 if (before) {
                     if (currentClasses.length > 0) {
                         result += `<span class="${currentClasses.join(' ')}">${escapeHtml(before)}</span>`;
@@ -611,7 +827,7 @@
             }
 
             // Add remaining text
-            const remaining = text.substring(lastIndex);
+            const remaining = filtered.substring(lastIndex);
             if (remaining) {
                 if (currentClasses.length > 0) {
                     result += `<span class="${currentClasses.join(' ')}">${escapeHtml(remaining)}</span>`;
@@ -715,11 +931,40 @@
         function appendOutput(text) {
             state.logBuffer.push(text);
 
-            // Parse ANSI sequences and create HTML
-            const html = parseAnsi(text);
+            // Process control characters before ANSI parsing
+            const processed = processControlChars(text);
 
-            // Append directly to terminal - pre element preserves whitespace and newlines
-            elements.terminal.insertAdjacentHTML('beforeend', html);
+            // Parse ANSI sequences and create HTML
+            const html = parseAnsi(processed.text);
+
+            // Append directly to terminal
+            if (processed.action === 'backspace') {
+                // Remove last character from terminal
+                const lastChild = elements.terminal.lastChild;
+                if (lastChild && lastChild.nodeType === Node.TEXT_NODE) {
+                    if (lastChild.textContent.length > 1) {
+                        lastChild.textContent = lastChild.textContent.slice(0, -1);
+                    } else {
+                        elements.terminal.removeChild(lastChild);
+                    }
+                } else if (lastChild) {
+                    // Element node - try to remove from its text content
+                    const textNode = findLastTextNode(lastChild);
+                    if (textNode) {
+                        if (textNode.textContent.length > 1) {
+                            textNode.textContent = textNode.textContent.slice(0, -1);
+                        } else if (textNode.parentNode) {
+                            textNode.parentNode.removeChild(textNode);
+                        }
+                    }
+                }
+            } else if (processed.action === 'carriageReturn') {
+                // Move to start of current line - ignore as \n handles positioning
+                elements.terminal.insertAdjacentHTML('beforeend', html);
+            } else {
+                // Normal text
+                elements.terminal.insertAdjacentHTML('beforeend', html);
+            }
 
             if (elements.autoScroll.checked) {
                 elements.terminal.scrollTop = elements.terminal.scrollHeight;
@@ -729,8 +974,46 @@
             if (state.logBuffer.length > 10000) {
                 state.logBuffer = state.logBuffer.slice(-5000);
                 // Rebuild terminal from buffer - pre element handles newlines
-                elements.terminal.innerHTML = state.logBuffer.map(t => parseAnsi(t)).join('');
+                elements.terminal.innerHTML = state.logBuffer.map(t => {
+                    const proc = processControlChars(t);
+                    return parseAnsi(proc.text);
+                }).join('');
             }
+        }
+
+        function findLastTextNode(node) {
+            if (node.nodeType === Node.TEXT_NODE) {
+                return node;
+            }
+            for (let i = node.childNodes.length - 1; i >= 0; i--) {
+                const found = findLastTextNode(node.childNodes[i]);
+                if (found) return found;
+            }
+            return null;
+        }
+
+        function processControlChars(text) {
+            // Check for backspace at end
+            if (text.endsWith('\b') || text.endsWith('\x08')) {
+                return {
+                    text: text.slice(0, -1),
+                    action: 'backspace'
+                };
+            }
+
+            // Check for carriage return
+            if (text.includes('\r') && !text.includes('\r\n')) {
+                // Standalone \r - move to beginning of line
+                return {
+                    text: text.replace(/\r/g, ''),
+                    action: 'carriageReturn'
+                };
+            }
+
+            return {
+                text: text,
+                action: 'normal'
+            };
         }
 
         function clearTerminal() {

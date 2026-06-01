@@ -100,6 +100,10 @@ Device response fields:
 - `disabled_reason` - Reason for disabling (if disabled)
 - `disabled_by` - Identifier of user/client who disabled the device
 - `disabled_at` - Timestamp when device was disabled
+- `protected` - Boolean indicating if device is protected (flash read-only mode)
+- `protected_reason` - Reason for protection (if protected)
+- `protected_by` - Identifier of user/client who protected the device
+- `protected_at` - Timestamp when device was protected
 
 ### Device Detail
 
@@ -257,6 +261,80 @@ Response (200 OK):
 ```json
 {
   "status": "enabled",
+  "device_id": "esp-aa:bb:cc:dd:ee:ff"
+}
+```
+
+Response (404 Not Found):
+```json
+{
+  "error": "device not found"
+}
+```
+
+### Protect Device
+
+```
+PUT /api/v1/devices/{id}/protect
+POST /api/v1/devices/{id}/protect
+Content-Type: application/json
+```
+
+Protects a device from flash and erase operations while allowing serial monitoring and read operations. The protected state persists across cluster restarts.
+
+Request body (optional):
+```json
+{
+  "reason": "Production device - firmware must not be changed",
+  "client_id": "admin-user"
+}
+```
+
+Response (200 OK):
+```json
+{
+  "status": "protected",
+  "device_id": "esp-aa:bb:cc:dd:ee:ff",
+  "path": "/dev/ttyUSB0"
+}
+```
+
+Response (404 Not Found):
+```json
+{
+  "error": "device not found"
+}
+```
+
+Notes:
+- Protected devices cannot be flashed or erased
+- Serial monitoring and read operations remain available
+- Flash operations return 403 Forbidden with appropriate error message
+- The device can be identified by device ID, path, or serial number
+- Protected state is persisted and survives cluster restarts
+- Protection is useful for production devices that must retain their firmware
+
+### Unprotect Device
+
+```
+PUT /api/v1/devices/{id}/unprotect
+POST /api/v1/devices/{id}/unprotect
+Content-Type: application/json
+```
+
+Removes protection from a device, restoring flash and erase capabilities.
+
+Request body (optional):
+```json
+{
+  "client_id": "admin-user"
+}
+```
+
+Response (200 OK):
+```json
+{
+  "status": "unprotected",
   "device_id": "esp-aa:bb:cc:dd:ee:ff"
 }
 ```
@@ -767,6 +845,14 @@ Error:
 ```
 
 Messages to server:
+
+Send data to device:
+```json
+{
+  "type": "data",
+  "data": "help\n"
+}
+```
 
 Reset device:
 ```json
