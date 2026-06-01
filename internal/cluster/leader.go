@@ -382,22 +382,22 @@ func (l *LeaderNode) handleDeviceEvent(event device.DeviceEvent) {
 				status = "disabled"
 			}
 			dev := &protocol.DeviceInfo{
-				Path:           event.Path,
-				DeviceID:       persisted.DeviceID,
-				ChipType:       persisted.ChipType,
-				SerialNumber:   persisted.MACAddress,
-				VID:            event.VID,
-				PID:            event.PID,
-				NodeID:         l.id,
-				Status:         status,
-				Disabled:       persisted.Disabled,
-				DisabledReason: persisted.DisabledReason,
-				DisabledBy:     persisted.DisabledBy,
-				DisabledAt:     persisted.DisabledAt,
-				Protected:      persisted.Protected,
+				Path:            event.Path,
+				DeviceID:        persisted.DeviceID,
+				ChipType:        persisted.ChipType,
+				SerialNumber:    persisted.MACAddress,
+				VID:             event.VID,
+				PID:             event.PID,
+				NodeID:          l.id,
+				Status:          status,
+				Disabled:        persisted.Disabled,
+				DisabledReason:  persisted.DisabledReason,
+				DisabledBy:      persisted.DisabledBy,
+				DisabledAt:      persisted.DisabledAt,
+				Protected:       persisted.Protected,
 				ProtectedReason: persisted.ProtectedReason,
-				ProtectedBy:    persisted.ProtectedBy,
-				ProtectedAt:    persisted.ProtectedAt,
+				ProtectedBy:     persisted.ProtectedBy,
+				ProtectedAt:     persisted.ProtectedAt,
 			}
 			l.state.Devices[event.Path] = dev
 			l.devices.Register(event.Path)
@@ -831,20 +831,20 @@ func (l *LeaderNode) loadPersistedDevices() {
 
 		l.mu.Lock()
 		dev := &protocol.DeviceInfo{
-			Path:           record.LastPath,
-			DeviceID:       record.DeviceID,
-			ChipType:       record.ChipType,
-			SerialNumber:   record.MACAddress,
-			NodeID:         l.id,
-			Status:         "available", // Assume available on restart
-			Disabled:       record.Disabled,
-			DisabledReason: record.DisabledReason,
-			DisabledBy:     record.DisabledBy,
-			DisabledAt:     record.DisabledAt,
-			Protected:      record.Protected,
+			Path:            record.LastPath,
+			DeviceID:        record.DeviceID,
+			ChipType:        record.ChipType,
+			SerialNumber:    record.MACAddress,
+			NodeID:          l.id,
+			Status:          "available", // Assume available on restart
+			Disabled:        record.Disabled,
+			DisabledReason:  record.DisabledReason,
+			DisabledBy:      record.DisabledBy,
+			DisabledAt:      record.DisabledAt,
+			Protected:       record.Protected,
 			ProtectedReason: record.ProtectedReason,
-			ProtectedBy:    record.ProtectedBy,
-			ProtectedAt:    record.ProtectedAt,
+			ProtectedBy:     record.ProtectedBy,
+			ProtectedAt:     record.ProtectedAt,
 		}
 		if record.Disabled {
 			dev.Status = "disabled"

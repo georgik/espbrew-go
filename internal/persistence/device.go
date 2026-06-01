@@ -9,29 +9,29 @@ import (
 )
 
 type DeviceRecord struct {
-	DeviceID       string    `json:"device_id"`
-	MACAddress     string    `json:"mac_address"`
-	ChipType       string    `json:"chip_type"`
-	ChipRev        string    `json:"chip_rev"`
-	FlashSize      uint32    `json:"flash_size"`
-	PSRAMSize      uint32    `json:"psram_size"`
-	PSRAMType      string    `json:"psram_type"`
-	BoardModel     string    `json:"board_model"`
-	Description    string    `json:"description"`
-	Aliases        []string  `json:"aliases"`
-	Tags           []string  `json:"tags"`
-	FirstSeen      time.Time `json:"first_seen"`
-	LastSeen       time.Time `json:"last_seen"`
-	LastPath       string    `json:"last_path"`
-	NodeID         string    `json:"node_id"`
-	Disabled       bool      `json:"disabled"`
-	DisabledReason string    `json:"disabled_reason,omitempty"`
-	DisabledBy     string    `json:"disabled_by,omitempty"`
-	DisabledAt     time.Time `json:"disabled_at,omitempty"`
-	Protected      bool      `json:"protected"`
-	ProtectedReason string  `json:"protected_reason,omitempty"`
-	ProtectedBy    string    `json:"protected_by,omitempty"`
-	ProtectedAt    time.Time `json:"protected_at,omitempty"`
+	DeviceID        string    `json:"device_id"`
+	MACAddress      string    `json:"mac_address"`
+	ChipType        string    `json:"chip_type"`
+	ChipRev         string    `json:"chip_rev"`
+	FlashSize       uint32    `json:"flash_size"`
+	PSRAMSize       uint32    `json:"psram_size"`
+	PSRAMType       string    `json:"psram_type"`
+	BoardModel      string    `json:"board_model"`
+	Description     string    `json:"description"`
+	Aliases         []string  `json:"aliases"`
+	Tags            []string  `json:"tags"`
+	FirstSeen       time.Time `json:"first_seen"`
+	LastSeen        time.Time `json:"last_seen"`
+	LastPath        string    `json:"last_path"`
+	NodeID          string    `json:"node_id"`
+	Disabled        bool      `json:"disabled"`
+	DisabledReason  string    `json:"disabled_reason,omitempty"`
+	DisabledBy      string    `json:"disabled_by,omitempty"`
+	DisabledAt      time.Time `json:"disabled_at,omitempty"`
+	Protected       bool      `json:"protected"`
+	ProtectedReason string    `json:"protected_reason,omitempty"`
+	ProtectedBy     string    `json:"protected_by,omitempty"`
+	ProtectedAt     time.Time `json:"protected_at,omitempty"`
 }
 
 func (s *Store) SaveDevice(dev *DeviceRecord) error {
