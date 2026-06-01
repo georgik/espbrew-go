@@ -4,20 +4,27 @@ import bolt "go.etcd.io/bbolt"
 
 const (
 	// Bucket names
-	bucketDevices = "devices"
-	bucketJobs    = "jobs"
-	bucketHistory = "history"
-	bucketMeta    = "meta"
+	bucketDevices       = "devices"
+	bucketJobs          = "jobs"
+	bucketHistory       = "history"
+	bucketMeta          = "meta"
+	bucketBoundingBoxes = "bounding_boxes"
+	bucketCalibrations  = "calibrations"
 
 	// Key prefixes
-	prefixDevice       = "device:"
-	prefixIndexMAC     = "index:mac:"
-	prefixIndexAlias   = "index:alias:"
-	prefixJob          = "job:"
-	prefixIndexPending = "index:pending:"
-	prefixIndexJobDev  = "index:device:"
-	prefixHistDevice   = "hist:device:"
-	prefixHistDate     = "hist:"
+	prefixDevice        = "device:"
+	prefixIndexMAC      = "index:mac:"
+	prefixIndexAlias    = "index:alias:"
+	prefixJob           = "job:"
+	prefixIndexPending  = "index:pending:"
+	prefixIndexJobDev   = "index:device:"
+	prefixHistDevice    = "hist:device:"
+	prefixHistDate      = "hist:"
+	prefixBoundingBox   = "bbox:"
+	prefixCalibration   = "calib:"
+	prefixCamIndex      = "index:cam:"
+	prefixDevIndex      = "index:dev:"
+	prefixCalibCamIndex = "index:calib:cam:"
 
 	// Meta keys
 	metaSchemaVersion = "schema_version"
@@ -33,6 +40,8 @@ func initBuckets(tx *bolt.Tx) error {
 		[]byte(bucketJobs),
 		[]byte(bucketHistory),
 		[]byte(bucketMeta),
+		[]byte(bucketBoundingBoxes),
+		[]byte(bucketCalibrations),
 	}
 
 	for _, name := range buckets {
@@ -96,4 +105,34 @@ func btoi(b []byte) int {
 		}
 	}
 	return v
+}
+
+// Bounding box key helpers
+func boundingBoxKey(id string) []byte {
+	return []byte(prefixBoundingBox + id)
+}
+
+func cameraIndexKey(cameraID, bboxID string) []byte {
+	return []byte(prefixCamIndex + cameraID + ":" + bboxID)
+}
+
+func cameraIndexPrefix(cameraID string) []byte {
+	return []byte(prefixCamIndex + cameraID + ":")
+}
+
+func deviceIndexKey(deviceID, bboxID string) []byte {
+	return []byte(prefixDevIndex + deviceID + ":" + bboxID)
+}
+
+func deviceIndexPrefix(deviceID string) []byte {
+	return []byte(prefixDevIndex + deviceID + ":")
+}
+
+// Calibration key helpers
+func calibrationKey(id string) []byte {
+	return []byte(prefixCalibration + id)
+}
+
+func calibrationCameraIndexKey(cameraID string) []byte {
+	return []byte(prefixCalibCamIndex + cameraID)
 }

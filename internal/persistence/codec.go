@@ -53,3 +53,19 @@ func (c *codec) DecodeFlashRecord(data []byte) (*FlashRecord, error) {
 	}
 	return &rec, nil
 }
+
+func (c *codec) DecodeBoundingBoxMapping(data []byte) (*DeviceBoundingBoxMapping, error) {
+	var mapping DeviceBoundingBoxMapping
+	if err := c.Decode(data, &mapping); err != nil {
+		return nil, err
+	}
+	return &mapping, nil
+}
+
+func (c *codec) DecodeCameraCalibration(data []byte) (*CameraCalibration, error) {
+	var calib CameraCalibration
+	if err := c.Decode(data, &calib); err != nil {
+		return nil, err
+	}
+	return &calib, nil
+}

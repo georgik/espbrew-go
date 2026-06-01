@@ -563,6 +563,224 @@
         }
 
         .status-dot.protected { background: var(--warning); }
+
+        /* Mapping Editor Styles */
+        .mapping-workspace {
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+            padding: 16px;
+            background: var(--bg-secondary);
+            border-radius: 12px;
+        }
+
+        .mapping-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding-bottom: 16px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .canvas-container {
+            position: relative;
+            display: inline-block;
+            background: var(--bg-tertiary);
+            border-radius: 8px;
+            overflow: hidden;
+        }
+
+        .canvas-container img {
+            display: block;
+            max-width: 100%;
+            max-height: 70vh;
+        }
+
+        #drawing-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            cursor: crosshair;
+        }
+
+        .mapping-sidebar {
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+            min-width: 280px;
+        }
+
+        .device-chips {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            padding: 12px;
+            background: var(--bg-tertiary);
+            border-radius: 8px;
+            min-height: 60px;
+        }
+
+        .device-chip {
+            padding: 6px 12px;
+            background: var(--accent);
+            color: white;
+            border-radius: 16px;
+            font-size: 12px;
+            cursor: grab;
+            user-select: none;
+            transition: all 0.2s;
+        }
+
+        .device-chip:hover {
+            background: var(--accent-hover);
+            transform: scale(1.05);
+        }
+
+        .device-chip.selected {
+            background: var(--success);
+            box-shadow: 0 0 0 2px var(--bg-secondary), 0 0 0 4px var(--success);
+        }
+
+        .mappings-list {
+            background: var(--bg-tertiary);
+            border-radius: 8px;
+            padding: 12px;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+
+        .mapping-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 8px;
+            background: var(--bg-secondary);
+            border-radius: 6px;
+            margin-bottom: 8px;
+            font-size: 12px;
+        }
+
+        .mapping-item:last-child {
+            margin-bottom: 0;
+        }
+
+        .mapping-info {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+
+        .mapping-device {
+            font-weight: 500;
+            color: var(--text-primary);
+        }
+
+        .mapping-coords {
+            font-size: 10px;
+            color: var(--text-secondary);
+            font-family: monospace;
+        }
+
+        .mapping-actions {
+            display: flex;
+            gap: 4px;
+        }
+
+        .mapping-actions button {
+            padding: 4px 8px;
+            font-size: 10px;
+        }
+
+        .bounding-box-overlay {
+            position: absolute;
+            border: 2px solid;
+            pointer-events: none;
+            box-sizing: border-box;
+        }
+
+        .bounding-box-overlay.unmapped {
+            border-color: var(--accent);
+            background: rgba(59, 130, 246, 0.1);
+        }
+
+        .bounding-box-overlay.mapped {
+            border-color: var(--success);
+            background: rgba(34, 197, 94, 0.1);
+        }
+
+        .bounding-box-overlay.selected {
+            border-color: var(--warning);
+            box-shadow: 0 0 0 2px var(--warning);
+        }
+
+        .bounding-box-label {
+            position: absolute;
+            top: -20px;
+            left: 0;
+            padding: 2px 6px;
+            background: var(--bg-tertiary);
+            border-radius: 4px;
+            font-size: 10px;
+            color: var(--text-primary);
+            white-space: nowrap;
+        }
+
+        .mapping-controls {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
+        .coordinates-display {
+            display: flex;
+            gap: 16px;
+            padding: 8px 12px;
+            background: var(--bg-tertiary);
+            border-radius: 6px;
+            font-size: 12px;
+            font-family: monospace;
+            color: var(--text-secondary);
+        }
+
+        .coordinates-display span {
+            color: var(--accent);
+        }
+
+        .bounding-box-section {
+            margin-top: 16px;
+            padding-top: 16px;
+            border-top: 1px solid var(--border);
+        }
+
+        .bounding-box-preview {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 12px;
+            background: var(--bg-tertiary);
+            border-radius: 8px;
+            margin-top: 8px;
+        }
+
+        .bounding-box-preview canvas {
+            max-width: 120px;
+            max-height: 80px;
+            border-radius: 4px;
+            background: var(--bg-primary);
+        }
+
+        .bounding-box-info {
+            flex: 1;
+            font-size: 12px;
+        }
+
+        .bounding-box-info .coords {
+            font-family: monospace;
+            color: var(--text-secondary);
+            margin-top: 4px;
+        }
     </style>
 </head>
 <body>
@@ -573,6 +791,7 @@
                 <div class="nav-tabs">
                     <button class="nav-tab active" onclick="switchTab('dashboard')">Dashboard</button>
                     <button class="nav-tab" onclick="switchTab('cameras')">Cameras</button>
+                    <button class="nav-tab" onclick="switchTab('mapping')">Device Mapping</button>
                     <button class="nav-tab" onclick="location.href='/monitor'">Serial Monitor</button>
                 </div>
             </div>
@@ -658,6 +877,15 @@
                 </div>
             </div>
         </div>
+
+        <div id="tab-mapping" class="tab-content">
+            <div class="card">
+                <div class="card-title">Device Mapping</div>
+                <div id="mapping-content">
+                    <div class="empty-state">Select a camera to view device mappings</div>
+                </div>
+            </div>
+        </div>
     </div>
 
     <div id="image-modal" class="modal" onclick="closeModal(event)">
@@ -679,6 +907,19 @@
         </div>
     </div>
 
+    <div id="mapping-editor-modal" class="detail-modal">
+        <div class="detail-content" style="max-width: 1200px;">
+            <div class="detail-header">
+                <div class="detail-title">Device Mapping Editor</div>
+                <button class="detail-close" onclick="closeMappingEditor()">&times;</button>
+            </div>
+            <div id="mapping-editor-content">
+                <div style="text-align: center; padding: 20px;">Loading...</div>
+            </div>
+        </div>
+    </div>
+
+    <script src="js/bbox-editor.js"></script>
     <script>
         let ws;
         let reconnectInterval;
@@ -752,6 +993,8 @@
             if (tabName === 'cameras') {
                 loadCameras();
                 loadGallery();
+            } else if (tabName === 'mapping') {
+                loadMappingTab();
             }
         }
 
@@ -959,7 +1202,10 @@
                     <div class="gallery-item-info">
                         <div>${cap.camera_name || cap.camera_id}</div>
                         <div>${new Date(cap.timestamp * 1000).toLocaleString()}</div>
-                        <button class="btn btn-danger" onclick="deleteCapture(event, '${cap.path}')" style="margin-top: 8px; padding: 4px 12px; font-size: 12px;">Delete</button>
+                        <div style="display: flex; gap: 8px; margin-top: 8px;">
+                            <button class="btn btn-secondary" onclick="openMappingEditor(event, '${cap.path}', '${cap.camera_id}')" style="padding: 4px 12px; font-size: 12px;">Map Devices</button>
+                            <button class="btn btn-danger" onclick="deleteCapture(event, '${cap.path}')" style="padding: 4px 12px; font-size: 12px;">Delete</button>
+                        </div>
                     </div>
                 </div>
             `).join('');
@@ -1363,7 +1609,146 @@
                         </div>
                     </div>
                 </div>
+                <div class="bounding-box-section">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                        <span style="font-size: 14px; font-weight: 500; color: var(--text-secondary);">Bounding Box Mappings</span>
+                        <button class="btn btn-secondary" style="padding: 6px 12px; font-size: 13px;" onclick="loadDeviceBoundingBoxesForDetail()">Refresh</button>
+                    </div>
+                    <div id="device-bounding-boxes">
+                        <div style="color: var(--text-secondary); font-size: 13px; text-align: center; padding: 12px;">Loading bounding box mappings...</div>
+                    </div>
+                </div>
             `;
+
+            // Load bounding boxes after rendering
+            loadDeviceBoundingBoxesForDetail();
+        }
+
+        // Load device bounding boxes for detail view
+        async function loadDeviceBoundingBoxesForDetail() {
+            if (!currentDeviceId) return;
+
+            const container = document.getElementById('device-bounding-boxes');
+            if (!container) return;
+
+            try {
+                // Get all cameras and check each for boxes containing this device
+                const camerasResponse = await fetch('/api/v1/cameras');
+                const camerasData = await camerasResponse.json();
+                const cameras = camerasData.cameras || [];
+
+                const allMappings = [];
+
+                for (const camera of cameras) {
+                    try {
+                        const boxesResponse = await fetch(`/api/v1/cameras/${camera.id}/boxes`);
+                        const boxesData = await boxesResponse.json();
+                        const deviceBoxes = (boxesData.mappings || []).filter(m => m.device_id === currentDeviceId);
+                        allMappings.push(...deviceBoxes.map(b => ({ ...b, camera_name: camera.name || camera.id })));
+                    } catch (e) {
+                        console.error(`Failed to load boxes for camera ${camera.id}:`, e);
+                    }
+                }
+
+                if (allMappings.length === 0) {
+                    container.innerHTML = `
+                        <div style="color: var(--text-secondary); font-size: 13px; text-align: center; padding: 12px;">
+                            No bounding box mappings found. Go to the <a href="#" onclick="switchTabByName('mapping'); closeDeviceModal(); return false;" style="color: var(--accent);">Device Mapping</a> tab to create one.
+                        </div>
+                    `;
+                    return;
+                }
+
+                container.innerHTML = allMappings.map(mapping => `
+                    <div class="bounding-box-preview">
+                        <div class="bounding-box-info">
+                            <div style="font-weight: 500;">${mapping.camera_name}</div>
+                            <div class="coords">
+                                x: ${mapping.bounds.x.toFixed(2)}, y: ${mapping.bounds.y.toFixed(2)},
+                                w: ${mapping.bounds.width.toFixed(2)}, h: ${mapping.bounds.height.toFixed(2)}
+                            </div>
+                        </div>
+                        <div style="display: flex; gap: 8px;">
+                            <button class="btn btn-secondary" style="padding: 4px 8px; font-size: 11px;" onclick="editMappingForDevice('${mapping.id}', '${mapping.camera_id}')">Edit</button>
+                            <button class="btn btn-danger" style="padding: 4px 8px; font-size: 11px;" onclick="deleteMappingForDevice('${mapping.id}')">Delete</button>
+                        </div>
+                    </div>
+                `).join('');
+            } catch (error) {
+                console.error('Failed to load device bounding boxes:', error);
+                container.innerHTML = `
+                    <div style="color: var(--error); font-size: 13px; text-align: center; padding: 12px;">
+                        Failed to load bounding boxes
+                    </div>
+                `;
+            }
+        }
+
+        // Switch tab by name helper
+        function switchTabByName(tabName) {
+            const tabs = document.querySelectorAll('.nav-tab');
+            let found = false;
+            tabs.forEach(tab => {
+                if (!found && tab.textContent.toLowerCase().includes(tabName.toLowerCase())) {
+                    // Simulate the event object
+                    const event = { target: tab };
+                    // Manually call switchTab with simulated event
+                    document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
+                    document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+                    tab.classList.add('active');
+                    const tabContent = document.getElementById('tab-' + tabName.toLowerCase());
+                    if (tabContent) tabContent.classList.add('active');
+
+                    if (tabName === 'mapping') {
+                        loadMappingTab();
+                    } else if (tabName === 'cameras') {
+                        loadCameras();
+                        loadGallery();
+                    }
+                    found = true;
+                }
+            });
+        }
+
+        // Edit mapping for current device
+        async function editMappingForDevice(mappingId, cameraId) {
+            closeDeviceModal();
+
+            // Load a recent capture from this camera to use as reference
+            try {
+                const capturesResponse = await fetch('/api/v1/captures');
+                const capturesData = await capturesResponse.json();
+                const captures = capturesData.captures || [];
+                const cameraCapture = captures.find(c => c.camera_id === cameraId);
+
+                if (cameraCapture) {
+                    openMappingEditor(null, cameraCapture.path, cameraId);
+                } else {
+                    alert('No captures found for this camera. Take a photo first.');
+                }
+            } catch (error) {
+                console.error('Failed to load captures:', error);
+                alert('Failed to load captures for editing');
+            }
+        }
+
+        // Delete mapping for current device
+        async function deleteMappingForDevice(mappingId) {
+            if (!confirm('Delete this bounding box mapping?')) return;
+
+            try {
+                const response = await fetch(`/api/v1/bounding_boxes/${mappingId}`, {
+                    method: 'DELETE'
+                });
+
+                if (response.ok) {
+                    loadDeviceBoundingBoxesForDetail();
+                } else {
+                    alert('Failed to delete mapping');
+                }
+            } catch (error) {
+                alert('Failed to delete mapping: ' + error.message);
+            }
         }
 
         async function disableDevice() {
@@ -1879,6 +2264,592 @@
                         <button class="btn" onclick="showDeviceDetail('', '${currentDeviceId}')">Try Again</button>
                     </div>
                 `;
+            }
+        }
+
+        // Mapping Editor State
+        let mappingState = {
+            currentCameraId: null,
+            currentImage: null,
+            boxes: [],
+            selectedBox: null,
+            selectedDevice: null,
+            isDrawing: false,
+            startX: 0,
+            startY: 0
+        };
+
+        // Open Mapping Editor
+        async function openMappingEditor(evt, imagePath, cameraId) {
+            if (evt) evt.stopPropagation();
+
+            mappingState.currentCameraId = cameraId;
+            mappingState.currentImage = imagePath;
+            mappingState.boxes = [];
+            mappingState.selectedBox = null;
+            mappingState.selectedDevice = null;
+
+            document.getElementById('mapping-editor-modal').classList.add('active');
+
+            const content = document.getElementById('mapping-editor-content');
+            content.innerHTML = '<div style="text-align: center; padding: 30px;"><span class="spinner"></span> Loading mapping data...</div>';
+
+            try {
+                // Load existing bounding boxes
+                const boxesResponse = await fetch(`/api/v1/cameras/${cameraId}/boxes`);
+                const boxesData = await boxesResponse.json();
+                mappingState.boxes = boxesData.mappings || [];
+
+                // Load available devices
+                const devicesResponse = await fetch('/api/v1/devices');
+                const devicesData = await devicesResponse.json();
+
+                // API returns array directly or wrapped in {devices: [...]}
+                const devices = Array.isArray(devicesData) ? devicesData : (devicesData.devices || []);
+                renderMappingEditor(imagePath, devices);
+            } catch (error) {
+                console.error('Failed to load mapping data:', error);
+                content.innerHTML = `
+                    <div style="text-align: center; padding: 20px;">
+                        <p style="color: var(--error); margin-bottom: 16px;">Failed to load mapping data: ${error.message}</p>
+                        <button class="btn" onclick="closeMappingEditor()">Close</button>
+                    </div>
+                `;
+            }
+        }
+
+        // Render Mapping Editor
+        function renderMappingEditor(imagePath, devices) {
+            const content = document.getElementById('mapping-editor-content');
+
+            const deviceChipsHtml = devices.map(dev =>
+                `<div class="device-chip" onclick="selectMappingDevice('${dev.device_id}', '${dev.device_id || dev.path}')"
+                      data-device-id="${dev.device_id}">${dev.device_id || dev.path}</div>`
+            ).join('');
+
+            const mappingsListHtml = mappingState.boxes.map((box, index) => {
+                const deviceName = box.device ? (box.device.device_id || box.device.aliases?.[0] || 'Unknown') : 'Unmapped';
+                return `
+                <div class="mapping-item">
+                    <div class="mapping-info">
+                        <div class="mapping-device">${deviceName}</div>
+                        <div class="mapping-coords">x:${box.bounds.x.toFixed(2)} y:${box.bounds.y.toFixed(2)} w:${box.bounds.width.toFixed(2)} h:${box.bounds.height.toFixed(2)}</div>
+                    </div>
+                    <div class="mapping-actions">
+                        <button class="btn btn-secondary" onclick="editBoundingBox(${index})">Edit</button>
+                        <button class="btn btn-danger" onclick="deleteBoundingBox('${box.id}')">Delete</button>
+                    </div>
+                </div>
+                `;
+            }).join('');
+
+            content.innerHTML = `
+                <div style="display: flex; gap: 20px; flex-wrap: wrap;">
+                    <div style="flex: 1; min-width: 400px;">
+                        <div class="canvas-container" id="mapping-canvas-container">
+                            <img id="mapping-image" src="${imagePath}" alt="Mapping reference" onload="initMappingCanvas()">
+                            <canvas id="drawing-layer"></canvas>
+                        </div>
+                        <div class="coordinates-display" style="margin-top: 12px;">
+                            <div>Cursor: <span id="cursor-coords">0, 0</span></div>
+                            <div>Box: <span id="box-coords">-</span></div>
+                        </div>
+                        <div class="mapping-controls" style="margin-top: 12px;">
+                            <button class="btn" onclick="clearMappingSelection()">Clear Selection</button>
+                            <button class="btn btn-secondary" onclick="deleteSelectedBox()">Delete Selected</button>
+                        </div>
+                    </div>
+                    <div class="mapping-sidebar">
+                        <div>
+                            <div style="font-size: 13px; font-weight: 500; color: var(--text-secondary); margin-bottom: 8px;">Device Palette</div>
+                            <div class="device-chips" id="device-chips">
+                                ${deviceChipsHtml}
+                            </div>
+                            <div style="font-size: 11px; color: var(--text-secondary); margin-top: 6px;">Click a device, then click on the image to create a box</div>
+                        </div>
+                        <div>
+                            <div style="font-size: 13px; font-weight: 500; color: var(--text-secondary); margin-bottom: 8px;">Current Mappings</div>
+                            <div class="mappings-list" id="mappings-list">
+                                ${mappingsListHtml.length > 0 ? mappingsListHtml : '<div style="color: var(--text-secondary); font-size: 12px; text-align: center;">No mappings yet</div>'}
+                            </div>
+                        </div>
+                        <div style="display: flex; gap: 8px;">
+                            <button class="btn" style="flex: 1;" onclick="saveBoundingBoxes()">Save Mappings</button>
+                            <button class="btn btn-secondary" style="flex: 1;" onclick="closeMappingEditor()">Cancel</button>
+                        </div>
+                    </div>
+                </div>
+            `;
+
+            // Re-initialize canvas after DOM update
+            setTimeout(() => initMappingCanvas(), 100);
+        }
+
+        // Initialize Mapping Canvas
+        function initMappingCanvas() {
+            const img = document.getElementById('mapping-image');
+            const canvas = document.getElementById('drawing-layer');
+            const container = document.getElementById('mapping-canvas-container');
+
+            if (!img || !canvas || !container) return;
+
+            canvas.width = img.offsetWidth;
+            canvas.height = img.offsetHeight;
+
+            const ctx = canvas.getContext('2d');
+            renderBoundingBoxes(ctx, canvas.width, canvas.height);
+
+            // Mouse events
+            canvas.onmousedown = startDrawing;
+            canvas.onmousemove = draw;
+            canvas.onmouseup = stopDrawing;
+            canvas.onmouseleave = stopDrawing;
+
+            // Touch events
+            canvas.ontouchstart = (e) => { e.preventDefault(); startDrawing(e.touches[0]); };
+            canvas.ontouchmove = (e) => { e.preventDefault(); draw(e.touches[0]); };
+            canvas.ontouchend = stopDrawing;
+        }
+
+        // Drawing functions
+        function startDrawing(e) {
+            if (!mappingState.selectedDevice) {
+                alert('Please select a device first');
+                return;
+            }
+
+            const canvas = document.getElementById('drawing-layer');
+            const rect = canvas.getBoundingClientRect();
+            mappingState.isDrawing = true;
+            mappingState.startX = (e.clientX - rect.left) / canvas.width;
+            mappingState.startY = (e.clientY - rect.top) / canvas.height;
+        }
+
+        function draw(e) {
+            const canvas = document.getElementById('drawing-layer');
+            const ctx = canvas.getContext('2d');
+            const rect = canvas.getBoundingClientRect();
+
+            const x = (e.clientX - rect.left) / canvas.width;
+            const y = (e.clientY - rect.top) / canvas.height;
+
+            // Update cursor coords display
+            document.getElementById('cursor-coords').textContent = `${x.toFixed(3)}, ${y.toFixed(3)}`;
+
+            if (!mappingState.isDrawing) return;
+
+            // Clear and redraw
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            renderBoundingBoxes(ctx, canvas.width, canvas.height);
+
+            // Draw current box
+            const width = x - mappingState.startX;
+            const height = y - mappingState.startY;
+
+            ctx.strokeStyle = '#3b82f6';
+            ctx.lineWidth = 2;
+            ctx.setLineDash([5, 5]);
+            ctx.strokeRect(
+                mappingState.startX * canvas.width,
+                mappingState.startY * canvas.height,
+                width * canvas.width,
+                height * canvas.height
+            );
+            ctx.setLineDash([]);
+
+            document.getElementById('box-coords').textContent =
+                `x:${mappingState.startX.toFixed(2)} y:${mappingState.startY.toFixed(2)} w:${width.toFixed(2)} h:${height.toFixed(2)}`;
+        }
+
+        function stopDrawing(e) {
+            if (!mappingState.isDrawing) return;
+            mappingState.isDrawing = false;
+
+            const canvas = document.getElementById('drawing-layer');
+            const rect = canvas.getBoundingClientRect();
+
+            let clientX, clientY;
+            if (e.changedTouches) {
+                clientX = e.changedTouches[0].clientX;
+                clientY = e.changedTouches[0].clientY;
+            } else {
+                clientX = e.clientX;
+                clientY = e.clientY;
+            }
+
+            const endX = (clientX - rect.left) / canvas.width;
+            const endY = (clientY - rect.top) / canvas.height;
+
+            let x = Math.min(mappingState.startX, endX);
+            let y = Math.min(mappingState.startY, endY);
+            let width = Math.abs(endX - mappingState.startX);
+            let height = Math.abs(endY - mappingState.startY);
+
+            // Minimum size check
+            if (width < 0.02 || height < 0.02) return;
+
+            // Add new box
+            const newBox = {
+                id: 'box-' + Date.now(),
+                device_id: mappingState.selectedDevice,
+                camera_id: mappingState.currentCameraId,
+                bounds: { x, y, width, height }
+            };
+
+            mappingState.boxes.push(newBox);
+            mappingState.selectedBox = mappingState.boxes.length - 1;
+
+            // Re-render
+            const ctx = canvas.getContext('2d');
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            renderBoundingBoxes(ctx, canvas.width, canvas.height);
+
+            // Update mappings list
+            updateMappingsList();
+        }
+
+        // Render all bounding boxes
+        function renderBoundingBoxes(ctx, canvasWidth, canvasHeight) {
+            mappingState.boxes.forEach((box, index) => {
+                const isSelected = index === mappingState.selectedBox;
+
+                ctx.strokeStyle = isSelected ? '#f59e0b' : '#22c55e';
+                ctx.lineWidth = isSelected ? 3 : 2;
+                ctx.strokeRect(
+                    box.bounds.x * canvasWidth,
+                    box.bounds.y * canvasHeight,
+                    box.bounds.width * canvasWidth,
+                    box.bounds.height * canvasHeight
+                );
+
+                // Fill with semi-transparent color
+                ctx.fillStyle = isSelected ? 'rgba(245, 158, 11, 0.1)' : 'rgba(34, 197, 94, 0.1)';
+                ctx.fillRect(
+                    box.bounds.x * canvasWidth,
+                    box.bounds.y * canvasHeight,
+                    box.bounds.width * canvasWidth,
+                    box.bounds.height * canvasHeight
+                );
+
+                // Draw label
+                ctx.fillStyle = '#1e293b';
+                ctx.fillRect(
+                    box.bounds.x * canvasWidth,
+                    box.bounds.y * canvasHeight - 18,
+                    80,
+                    16
+                );
+                ctx.fillStyle = '#f8fafc';
+                ctx.font = '11px monospace';
+                ctx.fillText(box.device_id || 'Unmapped', box.bounds.x * canvasWidth + 4, box.bounds.y * canvasHeight - 5);
+            });
+        }
+
+        // Select device for mapping
+        function selectMappingDevice(deviceId, displayName) {
+            mappingState.selectedDevice = deviceId;
+
+            // Update visual selection
+            document.querySelectorAll('.device-chip').forEach(chip => {
+                chip.classList.remove('selected');
+                if (chip.dataset.deviceId === deviceId) {
+                    chip.classList.add('selected');
+                }
+            });
+        }
+
+        // Update mappings list display
+        function updateMappingsList() {
+            const listEl = document.getElementById('mappings-list');
+            if (!listEl) return;
+
+            listEl.innerHTML = mappingState.boxes.map((box, index) => {
+                const deviceName = box.device_id || 'Unknown';
+                return `
+                <div class="mapping-item ${index === mappingState.selectedBox ? 'selected' : ''}"
+                     onclick="selectBoundingBox(${index})">
+                    <div class="mapping-info">
+                        <div class="mapping-device">${deviceName}</div>
+                        <div class="mapping-coords">x:${box.bounds.x.toFixed(2)} y:${box.bounds.y.toFixed(2)} w:${box.bounds.width.toFixed(2)} h:${box.bounds.height.toFixed(2)}</div>
+                    </div>
+                    <div class="mapping-actions">
+                        <button class="btn btn-danger" onclick="event.stopPropagation(); deleteBoundingBoxByIndex(${index})">&times;</button>
+                    </div>
+                </div>
+                `;
+            }).join('');
+        }
+
+        // Select bounding box
+        function selectBoundingBox(index) {
+            mappingState.selectedBox = index;
+            const canvas = document.getElementById('drawing-layer');
+            const ctx = canvas.getContext('2d');
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            renderBoundingBoxes(ctx, canvas.width, canvas.height);
+            updateMappingsList();
+        }
+
+        // Clear selection
+        function clearMappingSelection() {
+            mappingState.selectedBox = null;
+            mappingState.selectedDevice = null;
+            document.querySelectorAll('.device-chip').forEach(chip => chip.classList.remove('selected'));
+
+            const canvas = document.getElementById('drawing-layer');
+            const ctx = canvas.getContext('2d');
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            renderBoundingBoxes(ctx, canvas.width, canvas.height);
+            updateMappingsList();
+        }
+
+        // Delete selected box
+        function deleteSelectedBox() {
+            if (mappingState.selectedBox === null) {
+                alert('No box selected');
+                return;
+            }
+            deleteBoundingBoxByIndex(mappingState.selectedBox);
+        }
+
+        // Delete box by index
+        function deleteBoundingBoxByIndex(index) {
+            mappingState.boxes.splice(index, 1);
+            mappingState.selectedBox = null;
+
+            const canvas = document.getElementById('drawing-layer');
+            const ctx = canvas.getContext('2d');
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            renderBoundingBoxes(ctx, canvas.width, canvas.height);
+            updateMappingsList();
+        }
+
+        // Delete box by ID
+        async function deleteBoundingBox(boxId) {
+            if (!confirm('Delete this bounding box mapping?')) return;
+
+            try {
+                const response = await fetch(`/api/v1/bounding_boxes/${boxId}`, {
+                    method: 'DELETE'
+                });
+
+                if (response.ok) {
+                    // Remove from local state
+                    mappingState.boxes = mappingState.boxes.filter(b => b.id !== boxId);
+                    const canvas = document.getElementById('drawing-layer');
+                    const ctx = canvas.getContext('2d');
+                    ctx.clearRect(0, 0, canvas.width, canvas.height);
+                    renderBoundingBoxes(ctx, canvas.width, canvas.height);
+                    updateMappingsList();
+                } else {
+                    alert('Failed to delete box');
+                }
+            } catch (error) {
+                alert('Failed to delete box: ' + error.message);
+            }
+        }
+
+        // Save bounding boxes
+        async function saveBoundingBoxes() {
+            const content = document.getElementById('mapping-editor-content');
+
+            // Show loading state
+            const originalContent = content.innerHTML;
+            content.innerHTML = '<div style="text-align: center; padding: 30px;"><span class="spinner"></span> Saving mappings...</div>';
+
+            try {
+                // Save each new box (without existing id from server)
+                const savePromises = mappingState.boxes
+                    .filter(box => box.id.startsWith('box-'))
+                    .map(box =>
+                        fetch('/api/v1/bounding_boxes', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                device_id: box.device_id,
+                                camera_id: box.camera_id,
+                                bounds: box.bounds
+                            })
+                        })
+                    );
+
+                await Promise.all(savePromises);
+
+                content.innerHTML = `
+                    <div style="text-align: center; padding: 30px;">
+                        <p style="color: var(--success); margin-bottom: 16px;">Mappings saved successfully!</p>
+                        <button class="btn" onclick="closeMappingEditor()">Close</button>
+                    </div>
+                `;
+            } catch (error) {
+                console.error('Failed to save mappings:', error);
+                content.innerHTML = `
+                    <div style="text-align: center; padding: 30px;">
+                        <p style="color: var(--error); margin-bottom: 16px;">Failed to save: ${error.message}</p>
+                        <button class="btn" onclick="content.innerHTML = originalContent">Try Again</button>
+                    </div>
+                `;
+            }
+        }
+
+        // Close mapping editor
+        function closeMappingEditor() {
+            document.getElementById('mapping-editor-modal').classList.remove('active');
+            mappingState = {
+                currentCameraId: null,
+                currentImage: null,
+                boxes: [],
+                selectedBox: null,
+                selectedDevice: null,
+                isDrawing: false,
+                startX: 0,
+                startY: 0
+            };
+        }
+
+        // Load bounding boxes for camera
+        async function loadBoundingBoxes(cameraId) {
+            try {
+                const response = await fetch(`/api/v1/cameras/${cameraId}/boxes`);
+                const data = await response.json();
+                return data.mappings || [];
+            } catch (error) {
+                console.error('Failed to load bounding boxes:', error);
+                return [];
+            }
+        }
+
+        // Assign device to existing box
+        function assignDeviceToBox(boxId, deviceId) {
+            const box = mappingState.boxes.find(b => b.id === boxId);
+            if (box) {
+                box.device_id = deviceId;
+                updateMappingsList();
+            }
+        }
+
+        // Edit existing bounding box
+        function editBoundingBox(index) {
+            mappingState.selectedBox = index;
+            const box = mappingState.boxes[index];
+
+            if (box.device_id) {
+                selectMappingDevice(box.device_id, box.device_id);
+            }
+
+            const canvas = document.getElementById('drawing-layer');
+            const ctx = canvas.getContext('2d');
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            renderBoundingBoxes(ctx, canvas.width, canvas.height);
+            updateMappingsList();
+        }
+
+        // Load mapping tab content
+        async function loadMappingTab() {
+            const content = document.getElementById('mapping-content');
+            content.innerHTML = '<div style="text-align: center; padding: 20px;"><span class="spinner"></span> Loading cameras...</div>';
+
+            try {
+                const response = await fetch('/api/v1/cameras');
+                const data = await response.json();
+                const cameras = data.cameras || [];
+
+                if (cameras.length === 0) {
+                    content.innerHTML = '<div class="empty-state">No cameras available. Add a camera first.</div>';
+                    return;
+                }
+
+                content.innerHTML = `
+                    <div style="margin-bottom: 16px;">
+                        <label style="font-size: 13px; color: var(--text-secondary); margin-bottom: 8px; display: block;">Select Camera</label>
+                        <select id="mapping-camera-select" onchange="loadCameraMappings()" style="width: 100%; max-width: 300px;">
+                            <option value="">Select a camera...</option>
+                            ${cameras.map(cam => `<option value="${cam.id}">${cam.name || cam.id}</option>`).join('')}
+                        </select>
+                    </div>
+                    <div id="camera-mappings-content"></div>
+                `;
+            } catch (error) {
+                console.error('Failed to load cameras:', error);
+                content.innerHTML = '<div class="empty-state">Failed to load cameras</div>';
+            }
+        }
+
+        // Load mappings for selected camera
+        async function loadCameraMappings() {
+            const select = document.getElementById('mapping-camera-select');
+            const cameraId = select.value;
+
+            if (!cameraId) return;
+
+            const content = document.getElementById('camera-mappings-content');
+            content.innerHTML = '<div style="text-align: center; padding: 20px;"><span class="spinner"></span> Loading mappings...</div>';
+
+            try {
+                const response = await fetch(`/api/v1/cameras/${cameraId}/boxes`);
+                const data = await response.json();
+                const mappings = data.mappings || [];
+                const calibration = data.calibration;
+
+                content.innerHTML = `
+                    <div style="margin-top: 16px;">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                            <div style="font-size: 13px; font-weight: 500; color: var(--text-secondary);">
+                                ${calibration ? `Calibration v${calibration.version}: ${calibration.description || 'Default'}` : 'No calibration'}
+                            </div>
+                            <span style="font-size: 12px; color: var(--text-secondary);">${mappings.length} mappings</span>
+                        </div>
+                        ${mappings.length > 0 ? `
+                            <div class="mappings-list" style="max-height: 400px;">
+                                ${mappings.map(mapping => `
+                                    <div class="mapping-item">
+                                        <div class="mapping-info">
+                                            <div class="mapping-device">${mapping.device_id || 'Unknown Device'}</div>
+                                            <div class="mapping-coords">x:${mapping.bounds.x.toFixed(2)} y:${mapping.bounds.y.toFixed(2)} w:${mapping.bounds.width.toFixed(2)} h:${mapping.bounds.height.toFixed(2)}</div>
+                                        </div>
+                                        <div class="mapping-actions">
+                                            <button class="btn btn-danger" onclick="deleteMapping('${mapping.id}', '${cameraId}')">Delete</button>
+                                        </div>
+                                    </div>
+                                `).join('')}
+                            </div>
+                        ` : '<div class="empty-state">No device mappings for this camera. Capture an image and use "Map Devices" to create mappings.</div>'}
+                    </div>
+                `;
+            } catch (error) {
+                console.error('Failed to load mappings:', error);
+                content.innerHTML = '<div class="empty-state">Failed to load mappings</div>';
+            }
+        }
+
+        // Delete mapping
+        async function deleteMapping(mappingId, cameraId) {
+            if (!confirm('Delete this mapping?')) return;
+
+            try {
+                const response = await fetch(`/api/v1/bounding_boxes/${mappingId}`, {
+                    method: 'DELETE'
+                });
+
+                if (response.ok) {
+                    loadCameraMappings();
+                } else {
+                    alert('Failed to delete mapping');
+                }
+            } catch (error) {
+                alert('Failed to delete mapping: ' + error.message);
+            }
+        }
+
+        // Load device bounding boxes for detail view
+        async function loadDeviceBoundingBoxes(deviceId) {
+            try {
+                // This endpoint might need to be implemented - for now we'll return empty
+                // In a full implementation, this would query all cameras and find boxes for this device
+                return [];
+            } catch (error) {
+                console.error('Failed to load device bounding boxes:', error);
+                return [];
             }
         }
 

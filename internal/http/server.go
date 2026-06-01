@@ -59,6 +59,10 @@ func (s *Server) setupRoutes(store *persistence.Store) {
 	cameraHandler := NewCameraHandler()
 	cameraHandler.RegisterRoutes(s.router)
 
+	// Bounding box mapping routes
+	mappingHandler := NewMappingHandler(store)
+	mappingHandler.RegisterRoutes(s.router)
+
 	// Device disable/enable routes
 	deviceDisableHandler := NewDeviceDisableHandler(s.node, store)
 	deviceDisableHandler.RegisterRoutes(s.router)
