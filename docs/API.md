@@ -733,13 +733,15 @@ Start:
 }
 ```
 
-Data (base64 encoded):
+Data (plain text string):
 ```json
 {
   "type": "data",
-  "data": "SGVsbG8gZnJvbSBFU1AzMiE="
+  "data": "Hello from ESP32!"
 }
 ```
+
+**Web UI:** Access at `/monitor` for browser-based serial monitoring with ANSI color rendering, device selection, and log controls.
 
 Reset complete:
 ```json

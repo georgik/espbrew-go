@@ -1,0 +1,879 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Serial Monitor - ESPBrew</title>
+    <style>
+        :root {
+            --bg-primary: #0f172a;
+            --bg-secondary: #1e293b;
+            --bg-tertiary: #334155;
+            --text-primary: #f8fafc;
+            --text-secondary: #94a3b8;
+            --accent: #3b82f6;
+            --accent-hover: #2563eb;
+            --success: #22c55e;
+            --warning: #f59e0b;
+            --error: #ef4444;
+            --border: #334155;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container { max-width: 1400px; margin: 0 auto; }
+
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            padding-bottom: 20px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        h1 { font-size: 24px; font-weight: 600; }
+
+        .back-btn {
+            background: var(--bg-tertiary);
+            color: var(--text-primary);
+            border: none;
+            padding: 10px 20px;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+            text-decoration: none;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .back-btn:hover { background: var(--accent); }
+
+        .controls {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px;
+            margin-bottom: 20px;
+            padding: 16px;
+            background: var(--bg-secondary);
+            border-radius: 12px;
+            border: 1px solid var(--border);
+        }
+
+        .control-group {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        select, input[type="text"] {
+            background: var(--bg-tertiary);
+            color: var(--text-primary);
+            border: 1px solid var(--border);
+            padding: 10px 14px;
+            border-radius: 8px;
+            font-size: 14px;
+            font-family: inherit;
+            cursor: pointer;
+        }
+
+        select:focus, input:focus {
+            outline: none;
+            border-color: var(--accent);
+        }
+
+        select:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        label {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 13px;
+            color: var(--text-secondary);
+            cursor: pointer;
+        }
+
+        input[type="checkbox"] {
+            width: 16px;
+            height: 16px;
+            cursor: pointer;
+        }
+
+        button {
+            background: var(--accent);
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        button:hover:not(:disabled) { background: var(--accent-hover); }
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        button.secondary {
+            background: var(--bg-tertiary);
+            color: var(--text-primary);
+        }
+
+        button.secondary:hover:not(:disabled) { background: var(--border); }
+
+        .pattern-controls {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+        }
+
+        #exitPattern {
+            width: 200px;
+        }
+
+        .status-bar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px 16px;
+            background: var(--bg-secondary);
+            border-radius: 12px;
+            border: 1px solid var(--border);
+            margin-bottom: 16px;
+        }
+
+        .status-indicator {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .status-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: var(--error);
+        }
+
+        .status-dot.connected { background: var(--success); }
+        .status-dot.connecting {
+            background: var(--warning);
+            animation: pulse 1s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .status-text {
+            font-size: 14px;
+            color: var(--text-secondary);
+        }
+
+        .stats {
+            display: flex;
+            gap: 20px;
+            font-size: 12px;
+            color: var(--text-secondary);
+        }
+
+        .terminal-container {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            overflow: hidden;
+        }
+
+        .terminal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px 16px;
+            background: var(--bg-tertiary);
+            border-bottom: 1px solid var(--border);
+            font-size: 12px;
+            color: var(--text-secondary);
+        }
+
+        .terminal-actions {
+            display: flex;
+            gap: 8px;
+        }
+
+        .terminal-actions button {
+            padding: 6px 12px;
+            font-size: 11px;
+        }
+
+        #terminal {
+            background: #000;
+            color: #0f0;
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+            line-height: 1.4;
+            padding: 16px;
+            min-height: 400px;
+            max-height: 600px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+
+        #terminal.empty::before {
+            content: "Connect to a device to view serial output...";
+            color: var(--text-secondary);
+            font-style: italic;
+        }
+
+        .notification {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            padding: 12px 20px;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+            z-index: 1000;
+            animation: slideIn 0.3s ease;
+        }
+
+        @keyframes slideIn {
+            from { transform: translateX(100%); opacity: 0; }
+            to { transform: translateX(0); opacity: 1; }
+        }
+
+        .notification.success { border-color: var(--success); }
+        .notification.error { border-color: var(--error); }
+        .notification.warning { border-color: var(--warning); }
+
+        /* ANSI color styles */
+        .ansi-bold { font-weight: bold; }
+        .ansi-dim { opacity: 0.7; }
+        .ansi-italic { font-style: italic; }
+        .ansi-underline { text-decoration: underline; }
+        .ansi-blink { animation: blink 1s step-end infinite; }
+
+        @keyframes blink {
+            50% { opacity: 0; }
+        }
+
+        .ansi-inverse {
+            filter: invert(1);
+        }
+
+        .ansi-hidden { display: none; }
+        .ansi-strikethrough { text-decoration: line-through; }
+
+        /* Foreground colors */
+        .ansi-fg-black { color: #000; }
+        .ansi-fg-red { color: #cd3131; }
+        .ansi-fg-green { color: #0dbc79; }
+        .ansi-fg-yellow { color: #e5e510; }
+        .ansi-fg-blue { color: #2472c8; }
+        .ansi-fg-magenta { color: #bc3fbc; }
+        .ansi-fg-cyan { color: #11a8cd; }
+        .ansi-fg-white { color: #e5e5e5; }
+
+        /* Bright foreground colors */
+        .ansi-fg-bright-black { color: #666; }
+        .ansi-fg-bright-red { color: #f14c4c; }
+        .ansi-fg-bright-green { color: #23d18b; }
+        .ansi-fg-bright-yellow { color: #f5f543; }
+        .ansi-fg-bright-blue { color: #3b8eea; }
+        .ansi-fg-bright-magenta { color: #d670d6; }
+        .ansi-fg-bright-cyan { color: #29b8db; }
+        .ansi-fg-bright-white { color: #ffffff; }
+
+        /* Background colors */
+        .ansi-bg-black { background-color: #000; }
+        .ansi-bg-red { background-color: #cd3131; }
+        .ansi-bg-green { background-color: #0dbc79; }
+        .ansi-bg-yellow { background-color: #e5e510; }
+        .ansi-bg-blue { background-color: #2472c8; }
+        .ansi-bg-magenta { background-color: #bc3fbc; }
+        .ansi-bg-cyan { background-color: #11a8cd; }
+        .ansi-bg-white { background-color: #e5e5e5; }
+
+        /* Bright background colors */
+        .ansi-bg-bright-black { background-color: #666; }
+        .ansi-bg-bright-red { background-color: #f14c4c; }
+        .ansi-bg-bright-green { background-color: #23d18b; }
+        .ansi-bg-bright-yellow { background-color: #f5f543; }
+        .ansi-bg-bright-blue { background-color: #3b8eea; }
+        .ansi-bg-bright-magenta { background-color: #d670d6; }
+        .ansi-bg-bright-cyan { background-color: #29b8db; }
+        .ansi-bg-bright-white { background-color: #ffffff; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Serial Monitor</h1>
+            <a href="/" class="back-btn">← Back to Dashboard</a>
+        </header>
+
+        <div class="controls">
+            <div class="control-group">
+                <select id="deviceSelect" disabled>
+                    <option value="">Loading devices...</option>
+                </select>
+            </div>
+
+            <div class="control-group">
+                <select id="baudSelect">
+                    <option value="9600">9600</option>
+                    <option value="19200">19200</option>
+                    <option value="38400">38400</option>
+                    <option value="57600">57600</option>
+                    <option value="115200" selected>115200</option>
+                    <option value="230400">230400</option>
+                    <option value="460800">460800</option>
+                    <option value="921600">921600</option>
+                </select>
+            </div>
+
+            <div class="control-group">
+                <label>
+                    <input type="checkbox" id="resetOnConnect">
+                    Reset on connect
+                </label>
+            </div>
+
+            <div class="control-group">
+                <button id="connectBtn" disabled>Connect</button>
+                <button id="disconnectBtn" class="secondary" disabled>Disconnect</button>
+            </div>
+
+            <div class="pattern-controls">
+                <input type="text" id="exitPattern" placeholder="Exit on pattern...">
+            </div>
+
+            <div class="control-group">
+                <button id="resetBtn" class="secondary" disabled>Reset Device</button>
+            </div>
+        </div>
+
+        <div class="status-bar">
+            <div class="status-indicator">
+                <span id="statusDot" class="status-dot"></span>
+                <span id="statusText" class="status-text">Disconnected</span>
+            </div>
+            <div class="stats">
+                <span id="bytesReceived">0 bytes received</span>
+                <span id="connectionTime">--:--:--</span>
+            </div>
+        </div>
+
+        <div class="terminal-container">
+            <div class="terminal-header">
+                <span id="deviceInfo">No device selected</span>
+                <div class="terminal-actions">
+                    <button class="secondary" id="clearBtn">Clear</button>
+                    <button class="secondary" id="downloadBtn">Download Log</button>
+                    <label>
+                        <input type="checkbox" id="autoScroll" checked>
+                        Auto-scroll
+                    </label>
+                </div>
+            </div>
+            <pre id="terminal" class="empty"></pre>
+        </div>
+    </div>
+
+    <script>
+        const state = {
+            connected: false,
+            socket: null,
+            currentDevice: null,
+            bytesReceived: 0,
+            startTime: null,
+            timerInterval: null,
+            logBuffer: []
+        };
+
+        const elements = {
+            deviceSelect: document.getElementById('deviceSelect'),
+            baudSelect: document.getElementById('baudSelect'),
+            resetOnConnect: document.getElementById('resetOnConnect'),
+            exitPattern: document.getElementById('exitPattern'),
+            connectBtn: document.getElementById('connectBtn'),
+            disconnectBtn: document.getElementById('disconnectBtn'),
+            resetBtn: document.getElementById('resetBtn'),
+            statusDot: document.getElementById('statusDot'),
+            statusText: document.getElementById('statusText'),
+            bytesReceived: document.getElementById('bytesReceived'),
+            connectionTime: document.getElementById('connectionTime'),
+            terminal: document.getElementById('terminal'),
+            deviceInfo: document.getElementById('deviceInfo'),
+            clearBtn: document.getElementById('clearBtn'),
+            downloadBtn: document.getElementById('downloadBtn'),
+            autoScroll: document.getElementById('autoScroll')
+        };
+
+        async function loadDevices() {
+            try {
+                const response = await fetch('/api/v1/devices');
+                const devices = await response.json();
+
+                elements.deviceSelect.innerHTML = '<option value="">-- Select Device --</option>';
+
+                devices.forEach(device => {
+                    if (!device.connected || device.disabled || device.status === 'busy') return;
+
+                    const option = document.createElement('option');
+                    option.value = device.path;
+                    option.textContent = `${device.path}${device.chip_type ? ` (${device.chip_type})` : ''}`;
+                    elements.deviceSelect.appendChild(option);
+                });
+
+                elements.deviceSelect.disabled = false;
+
+                if (elements.deviceSelect.options.length === 1) {
+                    elements.deviceSelect.innerHTML = '<option value="">No available devices</option>';
+                    showNotification('No available devices. Connect a device and try again.', 'warning');
+                }
+            } catch (error) {
+                console.error('Failed to load devices:', error);
+                elements.deviceSelect.innerHTML = '<option value="">Failed to load devices</option>';
+                showNotification('Failed to load devices. Is the cluster running?', 'error');
+            }
+        }
+
+        function getDeviceName(path) {
+            return path.replace('/dev/', '');
+        }
+
+        async function connect() {
+            const devicePath = elements.deviceSelect.value;
+            if (!devicePath) {
+                showNotification('Please select a device', 'warning');
+                return;
+            }
+
+            const deviceName = getDeviceName(devicePath);
+            const baud = parseInt(elements.baudSelect.value);
+            const reset = elements.resetOnConnect.checked;
+            const exitPattern = elements.exitPattern.value.trim();
+
+            // Build WebSocket URL with query parameters
+            let wsUrl = `ws://${location.host}/api/v1/monitor/${deviceName}`;
+            const params = new URLSearchParams();
+            params.append('baud', baud);
+            if (reset) params.append('reset', '1');
+            if (exitPattern) params.append('exit_on', exitPattern);
+            wsUrl += '?' + params.toString();
+
+            try {
+                updateStatus('connecting');
+                elements.connectBtn.disabled = true;
+
+                state.socket = new WebSocket(wsUrl);
+                state.currentDevice = devicePath;
+
+                state.socket.onopen = () => {
+                    state.connected = true;
+                    state.startTime = new Date();
+                    state.bytesReceived = 0;
+                    state.logBuffer = [];
+                    elements.terminal.classList.remove('empty');
+                    elements.terminal.textContent = '';
+                    updateStatus('connected');
+                    startTimer();
+                    showNotification(`Connected to ${devicePath}`, 'success');
+                };
+
+                state.socket.onmessage = (event) => {
+                    const msg = JSON.parse(event.data);
+                    handleMessage(msg);
+                };
+
+                state.socket.onclose = (event) => {
+                    handleDisconnect();
+                    if (event.code !== 1000) {
+                        showNotification(`Connection closed: ${event.reason || 'Unknown reason'}`, 'warning');
+                    }
+                };
+
+                state.socket.onerror = (error) => {
+                    console.error('WebSocket error:', error);
+                    showNotification('Connection error. See console for details.', 'error');
+                };
+
+            } catch (error) {
+                console.error('Connection error:', error);
+                updateStatus('disconnected');
+                showNotification('Failed to connect: ' + error.message, 'error');
+            }
+        }
+
+        function disconnect() {
+            if (state.socket) {
+                // Send close message
+                try {
+                    state.socket.send(JSON.stringify({ type: 'close' }));
+                } catch (e) {
+                    // Ignore errors during disconnect
+                }
+                state.socket.close();
+            }
+            handleDisconnect();
+        }
+
+        function handleDisconnect() {
+            state.connected = false;
+            state.socket = null;
+            stopTimer();
+            updateStatus('disconnected');
+            elements.deviceInfo.textContent = state.currentDevice ? `Disconnected from ${state.currentDevice}` : 'No device selected';
+            state.currentDevice = null;
+        }
+
+        function resetDevice() {
+            if (state.socket && state.connected) {
+                try {
+                    state.socket.send(JSON.stringify({ type: 'reset' }));
+                    showNotification('Reset command sent', 'info');
+                } catch (error) {
+                    showNotification('Failed to send reset command', 'error');
+                }
+            }
+        }
+
+        function handleMessage(msg) {
+            switch (msg.type) {
+                case 'monitor_start':
+                    elements.deviceInfo.textContent = `Connected to ${state.currentDevice} @ ${elements.baudSelect.value} baud`;
+                    break;
+
+                case 'data':
+                    appendOutput(msg.data);
+                    state.bytesReceived += msg.data.length;
+                    elements.bytesReceived.textContent = `${state.bytesReceived} bytes received`;
+                    break;
+
+                case 'error':
+                    showNotification(`Error: ${msg.message}`, 'error');
+                    break;
+
+                case 'reset_complete':
+                    showNotification('Device reset complete', 'info');
+                    break;
+
+                default:
+                    console.log('Unknown message type:', msg.type);
+            }
+        }
+
+        function parseAnsi(text) {
+            // ANSI escape sequence patterns
+            const ansiRegex = /\x1b\[(?<attrs>\d+(?:;\d+)*)m/g;
+
+            let result = '';
+            let lastIndex = 0;
+            let currentClasses = [];
+
+            let match;
+            while ((match = ansiRegex.exec(text)) !== null) {
+                // Add text before the escape sequence
+                const before = text.substring(lastIndex, match.index);
+                if (before) {
+                    if (currentClasses.length > 0) {
+                        result += `<span class="${currentClasses.join(' ')}">${escapeHtml(before)}</span>`;
+                    } else {
+                        result += escapeHtml(before);
+                    }
+                }
+
+                // Parse the attributes
+                const attrs = match.groups.attrs.split(';').map(n => parseInt(n, 10));
+                currentClasses = parseAnsiAttrs(attrs, currentClasses);
+
+                lastIndex = ansiRegex.lastIndex;
+            }
+
+            // Add remaining text
+            const remaining = text.substring(lastIndex);
+            if (remaining) {
+                if (currentClasses.length > 0) {
+                    result += `<span class="${currentClasses.join(' ')}">${escapeHtml(remaining)}</span>`;
+                } else {
+                    result += escapeHtml(remaining);
+                }
+            }
+
+            return result;
+        }
+
+        function parseAnsiAttrs(attrs, currentClasses) {
+            const newClasses = [...currentClasses];
+
+            for (const attr of attrs) {
+                if (attr === 0) {
+                    // Reset all
+                    return [];
+                } else if (attr === 1) {
+                    newClasses.push('ansi-bold');
+                } else if (attr === 2) {
+                    newClasses.push('ansi-dim');
+                } else if (attr === 3) {
+                    newClasses.push('ansi-italic');
+                } else if (attr === 4) {
+                    newClasses.push('ansi-underline');
+                } else if (attr === 5 || attr === 6) {
+                    newClasses.push('ansi-blink');
+                } else if (attr === 7) {
+                    newClasses.push('ansi-inverse');
+                } else if (attr === 8) {
+                    newClasses.push('ansi-hidden');
+                } else if (attr === 9) {
+                    newClasses.push('ansi-strikethrough');
+                } else if (attr === 22) {
+                    // Not bold or dim
+                    const idx = newClasses.indexOf('ansi-bold');
+                    if (idx !== -1) newClasses.splice(idx, 1);
+                    const idx2 = newClasses.indexOf('ansi-dim');
+                    if (idx2 !== -1) newClasses.splice(idx2, 1);
+                } else if (attr === 23) {
+                    // Not italic
+                    const idx = newClasses.indexOf('ansi-italic');
+                    if (idx !== -1) newClasses.splice(idx, 1);
+                } else if (attr === 24) {
+                    // Not underline
+                    const idx = newClasses.indexOf('ansi-underline');
+                    if (idx !== -1) newClasses.splice(idx, 1);
+                } else if (attr === 27) {
+                    // Not inverse
+                    const idx = newClasses.indexOf('ansi-inverse');
+                    if (idx !== -1) newClasses.splice(idx, 1);
+                } else if (attr >= 30 && attr <= 37) {
+                    // Foreground colors
+                    const colors = ['black', 'red', 'green', 'yellow', 'blue', 'magenta', 'cyan', 'white'];
+                    removeFgClasses(newClasses);
+                    newClasses.push(`ansi-fg-${colors[attr - 30]}`);
+                } else if (attr >= 40 && attr <= 47) {
+                    // Background colors
+                    const colors = ['black', 'red', 'green', 'yellow', 'blue', 'magenta', 'cyan', 'white'];
+                    removeBgClasses(newClasses);
+                    newClasses.push(`ansi-bg-${colors[attr - 40]}`);
+                } else if (attr >= 90 && attr <= 97) {
+                    // Bright foreground colors
+                    const colors = ['black', 'red', 'green', 'yellow', 'blue', 'magenta', 'cyan', 'white'];
+                    removeFgClasses(newClasses);
+                    newClasses.push(`ansi-fg-bright-${colors[attr - 90]}`);
+                } else if (attr >= 100 && attr <= 107) {
+                    // Bright background colors
+                    const colors = ['black', 'red', 'green', 'yellow', 'blue', 'magenta', 'cyan', 'white'];
+                    removeBgClasses(newClasses);
+                    newClasses.push(`ansi-bg-bright-${colors[attr - 100]}`);
+                }
+            }
+
+            return newClasses;
+        }
+
+        function removeFgClasses(classes) {
+            for (let i = classes.length - 1; i >= 0; i--) {
+                if (classes[i].startsWith('ansi-fg-')) {
+                    classes.splice(i, 1);
+                }
+            }
+        }
+
+        function removeBgClasses(classes) {
+            for (let i = classes.length - 1; i >= 0; i--) {
+                if (classes[i].startsWith('ansi-bg-')) {
+                    classes.splice(i, 1);
+                }
+            }
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        function appendOutput(text) {
+            state.logBuffer.push(text);
+
+            // Parse ANSI sequences and create HTML
+            const html = parseAnsi(text);
+
+            // Append directly to terminal - pre element preserves whitespace and newlines
+            elements.terminal.insertAdjacentHTML('beforeend', html);
+
+            if (elements.autoScroll.checked) {
+                elements.terminal.scrollTop = elements.terminal.scrollHeight;
+            }
+
+            // Limit buffer size to prevent memory issues
+            if (state.logBuffer.length > 10000) {
+                state.logBuffer = state.logBuffer.slice(-5000);
+                // Rebuild terminal from buffer - pre element handles newlines
+                elements.terminal.innerHTML = state.logBuffer.map(t => parseAnsi(t)).join('');
+            }
+        }
+
+        function clearTerminal() {
+            state.logBuffer = [];
+            elements.terminal.innerHTML = '';
+            if (!state.connected) {
+                elements.terminal.classList.add('empty');
+            }
+        }
+
+        function downloadLog() {
+            if (state.logBuffer.length === 0) {
+                showNotification('No data to download', 'warning');
+                return;
+            }
+
+            // Download plain text (strip ANSI sequences for cleaner output)
+            const plainText = state.logBuffer.join('').replace(/\x1b\[[\d;]*m/g, '');
+            const blob = new Blob([plainText], { type: 'text/plain' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `serial-log-${new Date().toISOString().replace(/[:.]/g, '-')}.txt`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+            showNotification('Log downloaded', 'success');
+        }
+
+        function updateStatus(status) {
+            elements.statusDot.className = 'status-dot ' + status;
+
+            switch (status) {
+                case 'connected':
+                    elements.statusText.textContent = 'Connected';
+                    elements.connectBtn.disabled = true;
+                    elements.disconnectBtn.disabled = false;
+                    elements.resetBtn.disabled = false;
+                    elements.deviceSelect.disabled = true;
+                    elements.baudSelect.disabled = true;
+                    break;
+                case 'connecting':
+                    elements.statusText.textContent = 'Connecting...';
+                    elements.connectBtn.disabled = true;
+                    elements.disconnectBtn.disabled = true;
+                    elements.deviceSelect.disabled = true;
+                    break;
+                default:
+                    elements.statusText.textContent = 'Disconnected';
+                    elements.connectBtn.disabled = false;
+                    elements.disconnectBtn.disabled = true;
+                    elements.resetBtn.disabled = true;
+                    elements.deviceSelect.disabled = false;
+                    elements.baudSelect.disabled = false;
+            }
+        }
+
+        function startTimer() {
+            state.timerInterval = setInterval(() => {
+                if (state.startTime) {
+                    const elapsed = new Date() - state.startTime;
+                    const seconds = Math.floor(elapsed / 1000);
+                    const minutes = Math.floor(seconds / 60);
+                    const hours = Math.floor(minutes / 60);
+
+                    const hh = String(hours).padStart(2, '0');
+                    const mm = String(minutes % 60).padStart(2, '0');
+                    const ss = String(seconds % 60).padStart(2, '0');
+
+                    elements.connectionTime.textContent = `${hh}:${mm}:${ss}`;
+                }
+            }, 1000);
+        }
+
+        function stopTimer() {
+            if (state.timerInterval) {
+                clearInterval(state.timerInterval);
+                state.timerInterval = null;
+            }
+            elements.connectionTime.textContent = '--:--:--';
+        }
+
+        function showNotification(message, type = 'info') {
+            const notification = document.createElement('div');
+            notification.className = `notification ${type}`;
+            notification.textContent = message;
+            document.body.appendChild(notification);
+
+            setTimeout(() => {
+                notification.remove();
+            }, 5000);
+        }
+
+        // Event listeners
+        elements.deviceSelect.addEventListener('change', () => {
+            elements.connectBtn.disabled = !elements.deviceSelect.value;
+        });
+
+        elements.connectBtn.addEventListener('click', connect);
+        elements.disconnectBtn.addEventListener('click', disconnect);
+        elements.resetBtn.addEventListener('click', resetDevice);
+        elements.clearBtn.addEventListener('click', clearTerminal);
+        elements.downloadBtn.addEventListener('click', downloadLog);
+
+        // Handle page unload
+        window.addEventListener('beforeunload', () => {
+            if (state.connected) {
+                disconnect();
+            }
+        });
+
+        // Refresh devices every 10 seconds
+        setInterval(() => {
+            if (!state.connected) {
+                loadDevices();
+            }
+        }, 10000);
+
+        // Check URL for pre-selected device
+        function getPreselectedDevice() {
+            const params = new URLSearchParams(location.search);
+            return params.get('device');
+        }
+
+        // Initialize
+        loadDevices().then(() => {
+            const preselected = getPreselectedDevice();
+            if (preselected) {
+                // Try to select the preselected device
+                for (let option of elements.deviceSelect.options) {
+                    if (option.value === preselected) {
+                        elements.deviceSelect.value = preselected;
+                        elements.connectBtn.disabled = false;
+                        break;
+                    }
+                }
+                // If device not found in list, show warning
+                if (elements.deviceSelect.value !== preselected) {
+                    showNotification(`Device ${preselected} not available`, 'warning');
+                }
+            }
+        });
+    </script>
+</body>
+</html>

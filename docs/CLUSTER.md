@@ -89,6 +89,19 @@ Monitor device serial output remotely:
 ./espbrew --cluster http://leader:8080 monitor --exit-on "System ready"
 ```
 
+### Web Serial Monitor
+
+Browser-based monitoring at `http://leader:8080/monitor`:
+
+- Real-time output via WebSocket
+- ANSI color rendering (ESP-IDF logs display with colors)
+- Device dropdown with auto-refresh
+- Baud rate selection, reset control, pattern matching
+- Log download (plain text)
+- Pre-select device: `/monitor?device=/dev/ttyUSB0`
+
+Monitor buttons in dashboard device list for quick access.
+
 ## Device Reservation
 
 Devices are automatically reserved during operations:

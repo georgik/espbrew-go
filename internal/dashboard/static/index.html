@@ -230,6 +230,26 @@
         .btn-warning { background: var(--warning); color: #1f2937; }
         .btn-warning:hover { background: #d97706; }
 
+        .btn-icon {
+            background: transparent;
+            border: 1px solid var(--border);
+            color: var(--text-secondary);
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            cursor: pointer;
+            transition: all 0.2s;
+            text-decoration: none;
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+        }
+        .btn-icon:hover {
+            background: var(--bg-tertiary);
+            color: var(--accent);
+            border-color: var(--accent);
+        }
+
         .form-group { margin-bottom: 16px; }
 
         .form-group label {
@@ -533,6 +553,7 @@
                 <div class="nav-tabs">
                     <button class="nav-tab active" onclick="switchTab('dashboard')">Dashboard</button>
                     <button class="nav-tab" onclick="switchTab('cameras')">Cameras</button>
+                    <button class="nav-tab" onclick="location.href='/monitor'">Serial Monitor</button>
                 </div>
             </div>
             <div style="display: flex; gap: 12px; align-items: center;">
@@ -751,9 +772,16 @@
                         ${needsProbe ? '<span style="color: var(--warning); margin-left: 8px;" title="Device not probed">⚠</span>' : ''}
                         ${isDisabled ? '<span class="disabled-badge">DISABLED</span>' : ''}
                     </div>
-                    <span style="font-size: 12px; color: var(--text-secondary)">
-                        ${d.chip_type || 'Unknown chip'}
-                    </span>
+                    <div style="display: flex; align-items: center; gap: 12px;">
+                        <span style="font-size: 12px; color: var(--text-secondary)">
+                            ${d.chip_type || 'Unknown chip'}
+                        </span>
+                        ${!isDisabled ? `
+                        <a href="/monitor?device=${encodeURIComponent(d.path)}" class="btn-icon" onclick="event.stopPropagation()" title="Open Serial Monitor">
+                            📡 Monitor
+                        </a>
+                        ` : ''}
+                    </div>
                 </li>
             `}).join('');
 

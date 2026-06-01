@@ -21,8 +21,20 @@ func IndexHTML() []byte {
 	return content
 }
 
+// MonitorHTML returns the monitor.html content
+func MonitorHTML() []byte {
+	content, _ := staticFiles.ReadFile("static/monitor.html")
+	return content
+}
+
 // HasDashboard returns true if dashboard files are embedded
 func HasDashboard() bool {
 	_, err := staticFiles.ReadFile("static/index.html")
+	return err == nil
+}
+
+// HasMonitor returns true if monitor page is embedded
+func HasMonitor() bool {
+	_, err := staticFiles.ReadFile("static/monitor.html")
 	return err == nil
 }

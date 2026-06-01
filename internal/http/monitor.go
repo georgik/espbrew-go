@@ -109,7 +109,7 @@ func (s *MonitorServer) handleMonitorWebSocket(w http.ResponseWriter, r *http.Re
 			log.Debug().Int("bytes", len(data)).Str("content", string(data)).Msg("Sending data to client")
 			msg := map[string]interface{}{
 				"type": "data",
-				"data": data,
+				"data": string(data),
 			}
 			if err := conn.WriteJSON(msg); err != nil {
 				log.Debug().Err(err).Msg("WebSocket write error")

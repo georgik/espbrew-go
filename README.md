@@ -99,6 +99,28 @@ idf.py build
 ./espbrew monitor --exit-on "ready" # Exit on pattern
 ```
 
+### Web Serial Monitor
+
+The web-based serial monitor provides real-time serial output with color support and pattern matching:
+
+```
+http://localhost:8080/monitor
+```
+
+**Features:**
+- Real-time serial output via WebSocket
+- ANSI color escape sequence rendering (ESP-IDF colored logs)
+- Auto-scroll and pause controls
+- Pattern matching for automated testing
+- Reset device control
+- Log download (plain text, ANSI sequences stripped)
+- Baud rate selection (9600 - 921600)
+- Device pre-selection via URL (`?device=/dev/ttyUSB0`)
+
+**Monitor Button:** Dashboard device list includes "📡 Monitor" button for quick access to each device.
+
+**WebSocket API:** `ws://host/api/v1/monitor/{port}?baud=115200&reset=1&exit_on=pattern`
+
 ### Erase Flash
 
 ```bash

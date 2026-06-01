@@ -90,6 +90,9 @@ func (s *Server) setupRoutes(store *persistence.Store) {
 	// Health check
 	s.router.HandleFunc("/health", s.handleHealth).Methods("GET")
 
+	// Serial monitor page
+	s.router.HandleFunc("/monitor", s.handleMonitor).Methods("GET")
+
 	// Static files (dashboard)
 	s.router.PathPrefix("/").Handler(s.handleStatic())
 }
@@ -140,6 +143,16 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		"status": "healthy",
 		"time":   time.Now().Format(time.RFC3339),
 	})
+}
+
+func (s *Server) handleMonitor(w http.ResponseWriter, r *http.Request) {
+	if dashboard.HasMonitor() {
+		w.Header().Set("Content-Type", "text/html")
+		w.Write(dashboard.MonitorHTML())
+	} else {
+		w.Header().Set("Content-Type", "text/html")
+		w.Write([]byte(fallbackMonitor))
+	}
 }
 
 func (s *Server) handleStatic() http.Handler {
@@ -341,4 +354,11 @@ const fallbackDashboard = `<!DOCTYPE html>
 <html><head><title>ESPBrew Cluster</title>
 <style>body{font-family:sans-serif;margin:40px;background:#1a1a2e;color:#eee}</style>
 </head><body><h1>ESPBrew Cluster</h1><p>Dashboard files not embedded. Run: go generate ./internal/dashboard</p></body></html>
+`
+
+// Fallback monitor page if embedded files not available
+const fallbackMonitor = `<!DOCTYPE html>
+<html><head><title>Serial Monitor - ESPBrew</title>
+<style>body{font-family:sans-serif;margin:40px;background:#1a1a2e;color:#eee}</style>
+</head><body><h1>Serial Monitor</h1><p>Monitor page not embedded. Run: go generate ./internal/dashboard</p></body></html>
 `
