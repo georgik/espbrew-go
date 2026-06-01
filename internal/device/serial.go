@@ -72,6 +72,7 @@ func (s *Scanner) isLikelyESP(path string) bool {
 	espPatterns := []string{
 		"usb", "UART", "SLAB", "CP21", "FTDI", "CH340",
 		"ttyUSB", "ttyACM", "cu.usb", "cu.usbserial",
+		"COM", // Windows COM ports
 	}
 
 	lower := strings.ToLower(path)

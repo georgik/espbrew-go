@@ -169,6 +169,7 @@ func (w *Watcher) isLikelyESP(path string) bool {
 	espPatterns := []string{
 		"usbmodem", "usbserial", "ttyUSB", "ttyACM", "tty.wchusb",
 		"SLAB", "CP21", "FTDI", "CH340",
+		"COM", // Windows COM ports
 	}
 
 	pathLower := strings.ToLower(path)

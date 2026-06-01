@@ -24,6 +24,7 @@ ESP32 cluster flashing tool written in Go. Manages multiple ESP32 devices across
 - **Web Dashboard**: Real-time status monitoring via HTTP
 - **mDNS**: Automatic node discovery on local network
 - **Boot Log Capture**: Reset device to observe startup messages
+- **Cross-Platform**: Support for Windows, Linux, and macOS with automatic COM port detection on Windows
 
 ## Quick Start
 
@@ -60,6 +61,63 @@ sudo mv espbrew /usr/local/bin/
 
 # Windows: Add espbrew.exe to your PATH or use from current directory
 ```
+
+## Windows Support
+
+ESPBrew provides full support for Windows with automatic COM port detection and monitoring.
+
+### COM Port Detection
+
+On Windows, ESPBrew automatically detects COM ports (COM1, COM2, etc.) used by ESP32 devices. The application identifies USB serial devices by common patterns including:
+- USB modem and serial device identifiers
+- Common USB-to-serial chip manufacturers (SLAB, CP21, FTDI, CH340)
+- COM port prefixes
+
+### Device Discovery
+
+```bash
+# List all serial devices on Windows
+espbrew.exe devices
+
+# List only ESP devices
+espbrew.exe devices --esp
+```
+
+### Flashing on Windows
+
+```bash
+# Flash to auto-detected COM port
+espbrew.exe flash firmware.bin
+
+# Flash to specific COM port
+espbrew.exe flash firmware.bin -p COM5
+
+# Flash with chip specification
+espbrew.exe flash firmware.bin -p COM5 --chip esp32-s3
+```
+
+### Serial Monitoring on Windows
+
+```bash
+# Monitor auto-detected COM port
+espbrew.exe monitor
+
+# Monitor specific COM port
+espbrew.exe monitor -p COM5
+
+# Monitor with reset to capture boot logs
+espbrew.exe monitor -p COM5 --reset
+```
+
+### Web Interface on Windows
+
+The web dashboard provides full monitoring capabilities for Windows COM ports:
+
+```
+http://localhost:8080
+```
+
+The serial monitor interface automatically handles Windows COM port paths without the `/dev/` prefix used on Unix systems.
 
 ## Documentation
 

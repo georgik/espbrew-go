@@ -3,6 +3,7 @@ package http
 import (
 	"encoding/json"
 	"net/http"
+	"runtime"
 	"sync"
 	"time"
 
@@ -39,7 +40,13 @@ func (s *MonitorServer) handleMonitorWebSocket(w http.ResponseWriter, r *http.Re
 	portName := vars["port"]
 
 	// Reconstruct full port path from name
-	port := "/dev/" + portName
+	// On Windows, COM ports don't have a /dev/ prefix
+	var port string
+	if runtime.GOOS == "windows" {
+		port = portName
+	} else {
+		port = "/dev/" + portName
+	}
 
 	conn, err := monitorUpgrader.Upgrade(w, r, nil)
 	if err != nil {

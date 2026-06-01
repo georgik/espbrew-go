@@ -53,6 +53,35 @@ Peer nodes:
 | `--log-level` | Log level: debug, info, warn, error | info |
 | `-c, --config` | Config file path | - |
 
+## Platform Support
+
+### Linux/macOS
+
+On Linux and macOS, devices are discovered at paths like `/dev/ttyUSB0`, `/dev/ttyACM0`, or `/dev/cu.usbserial-xxx`. These paths are used consistently throughout the cluster.
+
+### Windows
+
+On Windows, ESPBrew automatically detects and manages COM ports (COM1, COM2, etc.). The application handles platform-specific path differences transparently:
+
+- Device detection uses COM port naming
+- Cluster communication uses COM port identifiers
+- Web interface displays COM ports without Unix-style prefixes
+- Serial monitoring automatically uses correct Windows serial port paths
+
+Windows-specific examples:
+```bash
+# Start cluster on Windows
+espbrew.exe cluster --role leader --port 8080
+
+# Flash to specific COM port
+espbrew.exe flash firmware.bin -p COM5
+
+# Monitor COM port
+espbrew.exe monitor -p COM5
+```
+
+The web dashboard at `http://localhost:8080` displays COM ports correctly and provides full monitoring functionality for Windows systems.
+
 ## Remote Flashing
 
 Connect to a cluster from any machine:

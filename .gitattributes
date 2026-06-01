@@ -1,0 +1,17 @@
+# Set default line ending behavior
+* text=auto
+
+# Explicitly declare text files
+*.go text
+*.md text
+*.toml text
+*.yaml text
+*.json text
+*.yml text
+
+# Declare files that will always have CRLF line endings on checkout
+*.bat text eol=crlf
+*.ps1 text eol=crlf
+
+# Declare files that will always have LF line endings on checkout
+* text eol=lf
