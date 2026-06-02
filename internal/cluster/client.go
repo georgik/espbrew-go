@@ -47,6 +47,10 @@ func (c *Client) SetRetryPolicy(maxRetries int, retryDelay time.Duration) {
 	c.retryDelay = retryDelay
 }
 
+func (c *Client) BaseURL() string {
+	return c.baseURL
+}
+
 func (c *Client) SetTimeout(timeout time.Duration) {
 	c.httpClient.Timeout = timeout
 	c.wsDialer.HandshakeTimeout = timeout

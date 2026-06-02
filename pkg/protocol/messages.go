@@ -1,22 +1,28 @@
 package protocol
 
-import "time"
+import (
+	"time"
+
+	"codeberg.org/georgik/espbrew-go/internal/flashhash"
+)
 
 type MessageType string
 
 const (
-	NodeJoin       MessageType = "NodeJoin"
-	NodeLeave      MessageType = "NodeLeave"
-	Heartbeat      MessageType = "Heartbeat"
-	DeviceAnnounce MessageType = "DeviceAnnounce"
-	DeviceUpdate   MessageType = "DeviceUpdate"
-	CameraAnnounce MessageType = "CameraAnnounce"
-	CameraCapture  MessageType = "CameraCapture"
-	JobAssign      MessageType = "JobAssign"
-	JobProgress    MessageType = "JobProgress"
-	JobComplete    MessageType = "JobComplete"
-	JobFailed      MessageType = "JobFailed"
-	StateSync      MessageType = "StateSync"
+	NodeJoin             MessageType = "NodeJoin"
+	NodeLeave            MessageType = "NodeLeave"
+	Heartbeat            MessageType = "Heartbeat"
+	DeviceAnnounce       MessageType = "DeviceAnnounce"
+	DeviceUpdate         MessageType = "DeviceUpdate"
+	CameraAnnounce       MessageType = "CameraAnnounce"
+	CameraCapture        MessageType = "CameraCapture"
+	JobAssign            MessageType = "JobAssign"
+	JobProgress          MessageType = "JobProgress"
+	JobComplete          MessageType = "JobComplete"
+	JobFailed            MessageType = "JobFailed"
+	StateSync            MessageType = "StateSync"
+	MsgFlashHashQuery    MessageType = "FlashHashQuery"
+	MsgFlashHashResponse MessageType = "FlashHashResponse"
 )
 
 type Message struct {
@@ -32,22 +38,23 @@ type NodeInfo struct {
 }
 
 type DeviceInfo struct {
-	Path            string    `json:"path"`
-	VID             uint16    `json:"vid"`
-	PID             uint16    `json:"pid"`
-	SerialNumber    string    `json:"serial"`
-	DeviceID        string    `json:"device_id,omitempty"` // Device ID from MAC (esp-xx:xx:xx:xx:xx:xx)
-	ChipType        string    `json:"chip_type,omitempty"` // ESP32, ESP32-S3, ESP32-C3, etc.
-	NodeID          string    `json:"node_id"`
-	Status          string    `json:"status"` // available, busy, offline
-	Disabled        bool      `json:"disabled"`
-	DisabledReason  string    `json:"disabled_reason,omitempty"`
-	DisabledBy      string    `json:"disabled_by,omitempty"`
-	DisabledAt      time.Time `json:"disabled_at,omitempty"`
-	Protected       bool      `json:"protected"` // Flash-protected mode - can monitor but not flash
-	ProtectedReason string    `json:"protected_reason,omitempty"`
-	ProtectedBy     string    `json:"protected_by,omitempty"`
-	ProtectedAt     time.Time `json:"protected_at,omitempty"`
+	Path            string             `json:"path"`
+	VID             uint16             `json:"vid"`
+	PID             uint16             `json:"pid"`
+	SerialNumber    string             `json:"serial"`
+	DeviceID        string             `json:"device_id,omitempty"` // Device ID from MAC (esp-xx:xx:xx:xx:xx:xx)
+	ChipType        string             `json:"chip_type,omitempty"` // ESP32, ESP32-S3, ESP32-C3, etc.
+	NodeID          string             `json:"node_id"`
+	Status          string             `json:"status"` // available, busy, offline
+	Disabled        bool               `json:"disabled"`
+	DisabledReason  string             `json:"disabled_reason,omitempty"`
+	DisabledBy      string             `json:"disabled_by,omitempty"`
+	DisabledAt      time.Time          `json:"disabled_at,omitempty"`
+	Protected       bool               `json:"protected"` // Flash-protected mode - can monitor but not flash
+	ProtectedReason string             `json:"protected_reason,omitempty"`
+	ProtectedBy     string             `json:"protected_by,omitempty"`
+	ProtectedAt     time.Time          `json:"protected_at,omitempty"`
+	FlashHashes     *DeviceFlashHashes `json:"flash_hashes,omitempty"` // Latest flash hash data for this device
 }
 
 // CameraInfo represents a camera device attached to a node
@@ -57,6 +64,13 @@ type CameraInfo struct {
 	Backend string `json:"backend"` // v4l2, avfoundation, directshow
 	NodeID  string `json:"node_id"`
 	Status  string `json:"status"` // available, busy, offline
+}
+
+// DeviceFlashHashes represents flash hash data for a device
+type DeviceFlashHashes struct {
+	DeviceID  string                      `json:"device_id"`
+	Regions   []flashhash.FlashRegionInfo `json:"regions"`
+	UpdatedAt string                      `json:"updated_at"` // ISO 8601
 }
 
 type JobInfo struct {
@@ -108,4 +122,22 @@ type EraseJobInfo struct {
 	EraseAll   bool   `json:"erase_all"`
 	Status     string `json:"status"`
 	Progress   int    `json:"progress"`
+}
+
+// FlashHashQuery is sent by client to query flash status
+type FlashHashQuery struct {
+	DeviceID   string                      `json:"device_id"`
+	JobID      string                      `json:"job_id,omitempty"`
+	Regions    []flashhash.FlashRegionInfo `json:"regions"`
+	ClientMode string                      `json:"client_mode"`
+}
+
+// FlashHashResponse is sent by server with optimization recommendations
+type FlashHashResponse struct {
+	Status            string                       `json:"status"`
+	RegionsNeeded     []flashhash.FlashRegionInfo  `json:"regions_needed,omitempty"`
+	RegionsCached     []flashhash.CachedRegionInfo `json:"regions_cached,omitempty"`
+	JobID             string                       `json:"job_id,omitempty"`
+	Message           string                       `json:"message,omitempty"`
+	RecommendedAction string                       `json:"recommended_action"`
 }

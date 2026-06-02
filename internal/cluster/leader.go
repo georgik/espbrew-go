@@ -8,6 +8,7 @@ import (
 
 	"codeberg.org/georgik/espbrew-go/internal/camera"
 	"codeberg.org/georgik/espbrew-go/internal/device"
+	"codeberg.org/georgik/espbrew-go/internal/flashhash"
 	"codeberg.org/georgik/espbrew-go/internal/inventory"
 	"codeberg.org/georgik/espbrew-go/internal/inventory/rom"
 	"codeberg.org/georgik/espbrew-go/internal/persistence"
@@ -174,6 +175,11 @@ func (l *LeaderNode) UpdateHeartbeat(nodeID string, payload *protocol.HeartbeatP
 
 			// Register device in local registry (idempotent)
 			l.devices.Register(dev.Path)
+
+			// Process and store flash hash data if present
+			if dev.FlashHashes != nil && dev.DeviceID != "" {
+				l.processDeviceFlashHashes(dev.DeviceID, dev.FlashHashes)
+			}
 		}
 
 		// Remove devices from this node that are no longer in heartbeat
@@ -909,4 +915,57 @@ func (l *LeaderNode) UpdateDeviceProtected(deviceID string, protected bool, reas
 			return
 		}
 	}
+}
+
+// processDeviceFlashHashes stores flash hash data for a device from peer heartbeat
+func (l *LeaderNode) processDeviceFlashHashes(deviceID string, hashes *protocol.DeviceFlashHashes) {
+	// Create a job hash record for storage
+	// Use device ID as job ID for the "latest" device hashes
+	jobHashes := &flashhash.JobFlashHashes{
+		JobID:     "device-" + deviceID,
+		DeviceID:  deviceID,
+		Regions:   hashes.Regions,
+		CreatedAt: hashes.UpdatedAt,
+	}
+
+	if err := l.store.SaveFlashHashes(jobHashes); err != nil {
+		log.Warn().Err(err).Str("device_id", deviceID).Msg("Failed to save device flash hashes")
+		return
+	}
+
+	log.Debug().
+		Str("device_id", deviceID).
+		Int("regions", len(hashes.Regions)).
+		Msg("Device flash hashes stored from heartbeat")
+}
+
+// GetDeviceFlashHashes retrieves the latest flash hashes for a device
+func (l *LeaderNode) GetDeviceFlashHashes(deviceID string) (*flashhash.JobFlashHashes, error) {
+	// Try to get the device-specific hashes first
+	jobID := "device-" + deviceID
+	hashes, err := l.store.GetFlashHashes(jobID)
+	if err == nil {
+		return hashes, nil
+	}
+
+	// Fall back to listing hashes for device (may have job-specific hashes)
+	hashList, err := l.store.ListFlashHashesForDevice(deviceID)
+	if err != nil || len(hashList) == 0 {
+		return nil, err
+	}
+
+	// Return most recent
+	return hashList[0], nil
+}
+
+// StoreJobFlashHashes stores flash hashes for a specific job
+func (l *LeaderNode) StoreJobFlashHashes(jobID, deviceID string, regions []flashhash.FlashRegionInfo) error {
+	hashes := &flashhash.JobFlashHashes{
+		JobID:     jobID,
+		DeviceID:  deviceID,
+		Regions:   regions,
+		CreatedAt: time.Now().Format(time.RFC3339),
+	}
+
+	return l.store.SaveFlashHashes(hashes)
 }

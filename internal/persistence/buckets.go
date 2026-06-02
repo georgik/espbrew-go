@@ -10,6 +10,7 @@ const (
 	bucketMeta          = "meta"
 	bucketBoundingBoxes = "bounding_boxes"
 	bucketCalibrations  = "calibrations"
+	bucketFlashHashes   = "flash_hashes"
 
 	// Key prefixes
 	prefixDevice        = "device:"
@@ -42,6 +43,7 @@ func initBuckets(tx *bolt.Tx) error {
 		[]byte(bucketMeta),
 		[]byte(bucketBoundingBoxes),
 		[]byte(bucketCalibrations),
+		[]byte(bucketFlashHashes),
 	}
 
 	for _, name := range buckets {

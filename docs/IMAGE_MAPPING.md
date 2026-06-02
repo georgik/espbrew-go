@@ -43,7 +43,8 @@ type ImageAdjustment struct {
 type DeviceBoundingBoxMapping struct {
     ID                 string           `json:"id"`
     DeviceID           string           `json:"device_id"`           // Device reference
-    CameraID           string           `json:"camera_id"`           // Camera reference
+    CameraID           string           `json:"camera_id"`           // Camera reference (can change)
+    CameraName         string           `json:"camera_name"`         // Stable camera identifier
     Bounds             BoundingBox      `json:"bounds"`              // Normalized box
     CalibrationVersion int              `json:"calibration_version"` // Camera position version
     Adjustment         ImageAdjustment  `json:"adjustment"`          // Per-region image enhancement
@@ -376,12 +377,27 @@ espbrew workflow flash-and-verify firmware.bin \
 - **Persistence layer** - Added `GetBoundingBoxForDeviceAndCamera(deviceID, cameraID)` for efficient lookup
 - **Test coverage** - Added `TestGetBoundingBoxForDeviceAndCamera` and `TestUniqueDeviceCameraMapping`
 
-### Phase 10: CLI Integration Extensions PLANNED
-- **Device capture listing command** - `espbrew capture list --device-id <id>`
-- **Device capture retrieval** - `espbrew capture get <capture-id> --device-id <id>`
-- **Workflow integration** - `espbrew workflow flash-and-verify` command
+### Phase 10: CLI Integration Extensions COMPLETE
+- **Device capture listing command** - `espbrew capture list --device-id <id>` - Lists all device-specific captures
+- **Device capture retrieval** - `espbrew capture get <capture-id> --device-id <id>` - Retrieves device subimage
+- **Generic capture listing** - `espbrew capture list` - Lists all camera captures
+- **Files:**
+  - `cmd/espbrew/capture_list.go` - Capture listing commands
+  - `cmd/espbrew/capture_get.go` - Device capture retrieval command
 
-### Phase 11: Future Enhancements PLANNED
+### Phase 11: Camera Name-Based Lookup COMPLETE
+- **Stable camera identifier** - Added `camera_name` field to `DeviceBoundingBoxMapping` for persistent identification across restarts
+- **Fallback lookup logic** - `ListBoundingBoxesForCamera` now attempts name-based lookup if camera ID lookup fails
+- **Automatic ID migration** - When mappings are found by name, their `camera_id` is updated to the current value
+- **Problem solved** - Camera DeviceIDs from pion/mediadevices can change between restarts; camera names remain stable
+- **API changes:**
+  - `POST /api/v1/bounding_boxes` accepts optional `camera_name` field
+  - Response includes `camera_name` in mapping objects
+- **Frontend changes:**
+  - Bounding box editor sends `camera_name` when creating mappings
+  - Mapping editor preserves `camera_name` from loaded mappings
+
+### Phase 12: Future Enhancements PLANNED
 - **Auto-detection hooks** - Placeholder for ML/CV integration
 - **Enhanced error handling** - Better user feedback for edge cases
 - **Advanced verification** - OCR and template matching for device output validation
@@ -405,8 +421,11 @@ espbrew workflow flash-and-verify firmware.bin \
 - `internal/persistence/mapping.go` - Mapping and calibration CRUD
 - `internal/http/mapping.go` - API handlers
 - `internal/dashboard/static/js/bbox-editor.js` - Canvas editor component
+- `internal/camera/extract.go` - Device subimage extraction logic
 - `cmd/espbrew/mapping.go` - Mapping CLI commands
 - `cmd/espbrew/capture_verify.go` - Capture verify command
+- `cmd/espbrew/capture_list.go` - Capture listing commands
+- `cmd/espbrew/capture_get.go` - Device capture retrieval command
 
 **Modified Files:**
 - `internal/persistence/buckets.go` - Added bounding_boxes and calibrations buckets

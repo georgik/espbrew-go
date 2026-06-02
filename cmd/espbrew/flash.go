@@ -8,7 +8,7 @@ import (
 
 	"codeberg.org/georgik/espbrew-go/internal/cluster"
 	"codeberg.org/georgik/espbrew-go/internal/device"
-	"codeberg.org/georgik/espbrew-go/internal/flash"
+	flashlib "codeberg.org/georgik/espbrew-go/internal/flash"
 	"codeberg.org/georgik/espbrew-go/internal/inventory"
 	"codeberg.org/georgik/espbrew-go/internal/project"
 	"github.com/rs/zerolog/log"
@@ -40,6 +40,8 @@ var flashOpts struct {
 	monitorNoRaw    bool
 	monitorDuration int
 	monitorReset    bool
+	// Hash-based flash optimization
+	skipHashCheck bool // Skip hash check (disable optimization)
 	// Multi-image mode
 	bootloader string
 	partitions string
@@ -69,6 +71,8 @@ func init() {
 	flashCmd.Flags().BoolVar(&flashOpts.monitorNoRaw, "monitor-no-raw", false, "Skip raw terminal in monitor (for testing)")
 	flashCmd.Flags().IntVar(&flashOpts.monitorDuration, "monitor-duration", 0, "Monitor duration in seconds (0=no limit)")
 	flashCmd.Flags().BoolVar(&flashOpts.monitorReset, "monitor-reset", false, "Reset device before monitoring")
+	// Hash-based flash optimization
+	flashCmd.Flags().BoolVar(&flashOpts.skipHashCheck, "skip-hash-check", false, "Skip hash-based flash detection optimization (enabled by default)")
 	// Multi-image mode flags
 	flashCmd.Flags().StringVar(&flashOpts.bootloader, "bootloader", "", "Bootloader .bin file (multi-image mode)")
 	flashCmd.Flags().StringVar(&flashOpts.partitions, "partitions", "", "Partition table .bin file (multi-image mode)")
@@ -191,6 +195,13 @@ func runFlashRemote(args []string) error {
 	}
 
 	log.Info().Str("cluster", flashOpts.clusterURL).Str("device", devicePath).Msg("Uploading firmware to cluster")
+
+	// Hash-based flash detection (skip if disabled)
+	if !flashOpts.skipHashCheck {
+		if err := checkFlashStatusOptimization(client, devicePath, firmwarePath); err != nil {
+			log.Warn().Err(err).Msg("Hash-based optimization failed, proceeding with full flash")
+		}
+	}
 
 	// Upload firmware
 	uploadResp, err := client.UploadFirmware(firmwarePath)
@@ -329,7 +340,7 @@ func runFlashLocal(args []string) error {
 		return fmt.Errorf("provide firmware.bin or use --bootloader/--partitions/--app flags or --build-dir")
 	}
 
-	opts := &flash.FlasherOptions{
+	opts := &flashlib.FlasherOptions{
 		BaudRate:      115200,
 		FlashBaudRate: flashOpts.baud,
 		Compress:      !flashOpts.noCompress,
@@ -348,7 +359,7 @@ type imageToFlash struct {
 	offset int
 }
 
-func runMultiImage(opts *flash.FlasherOptions) error {
+func runMultiImage(opts *flashlib.FlasherOptions) error {
 	var images []imageToFlash
 
 	// Collect images to flash
@@ -357,7 +368,7 @@ func runMultiImage(opts *flash.FlasherOptions) error {
 		// For ESP32/ESP32-S2, user must specify --chip explicitly
 		offset := 0x0
 		if flashOpts.chip != "auto" && flashOpts.chip != "" {
-			if off, ok := flash.BootloaderOffset(flashOpts.chip); ok {
+			if off, ok := flashlib.BootloaderOffset(flashOpts.chip); ok {
 				offset = int(off)
 			}
 		}
@@ -365,11 +376,11 @@ func runMultiImage(opts *flash.FlasherOptions) error {
 	}
 
 	if flashOpts.partitions != "" {
-		images = append(images, imageToFlash{name: "partitions", path: flashOpts.partitions, offset: flash.PresetOffsetPartitions})
+		images = append(images, imageToFlash{name: "partitions", path: flashOpts.partitions, offset: flashlib.PresetOffsetPartitions})
 	}
 
 	if flashOpts.app != "" {
-		images = append(images, imageToFlash{name: "app", path: flashOpts.app, offset: flash.PresetOffsetApp})
+		images = append(images, imageToFlash{name: "app", path: flashOpts.app, offset: flashlib.PresetOffsetApp})
 	}
 
 	log.Info().Int("images", len(images)).Msg("Multi-image flash mode")
@@ -385,7 +396,7 @@ func runMultiImage(opts *flash.FlasherOptions) error {
 
 	log.Info().Int("total_bytes", totalSize).Msg("Multi-image flash")
 
-	flasher := flash.NewFlasher(opts)
+	flasher := flashlib.NewFlasher(opts)
 
 	for _, img := range images {
 		data, err := os.ReadFile(img.path)
@@ -402,7 +413,7 @@ func runMultiImage(opts *flash.FlasherOptions) error {
 			}
 		}()
 
-		req := &flash.FlashRequest{
+		req := &flashlib.FlashRequest{
 			Port:     flashOpts.port,
 			Firmware: data,
 			Offset:   img.offset,
@@ -432,14 +443,14 @@ func runMultiImage(opts *flash.FlasherOptions) error {
 	return nil
 }
 
-func runSingleImage(opts *flash.FlasherOptions, firmwarePath string) error {
+func runSingleImage(opts *flashlib.FlasherOptions, firmwarePath string) error {
 	data, err := os.ReadFile(firmwarePath)
 	if err != nil {
 		return fmt.Errorf("read firmware: %w", err)
 	}
 
 	// Detect file type
-	fileType := flash.DetectFileType(data)
+	fileType := flashlib.DetectFileType(data)
 	log.Info().Str("type", fileType.String()).Msg("Detected file type")
 
 	// Resolve offset from preset
@@ -450,15 +461,15 @@ func runSingleImage(opts *flash.FlasherOptions, firmwarePath string) error {
 			// Default to 0x0 (ESP32-S3 and most newer chips)
 			offset = 0x0
 			if flashOpts.chip != "auto" && flashOpts.chip != "" {
-				if off, ok := flash.BootloaderOffset(flashOpts.chip); ok {
+				if off, ok := flashlib.BootloaderOffset(flashOpts.chip); ok {
 					offset = int(off)
 				}
 			}
 			log.Info().Str("chip", flashOpts.chip).Int("offset", offset).Msg("Using bootloader preset")
 		case "partitions":
-			offset = flash.PresetOffsetPartitions
+			offset = flashlib.PresetOffsetPartitions
 		case "app":
-			offset = flash.PresetOffsetApp
+			offset = flashlib.PresetOffsetApp
 		default:
 			return fmt.Errorf("unknown preset: %s (use: bootloader, partitions, app)", flashOpts.preset)
 		}
@@ -467,7 +478,7 @@ func runSingleImage(opts *flash.FlasherOptions, firmwarePath string) error {
 
 	log.Info().Str("port", flashOpts.port).Str("chip", flashOpts.chip).Int("offset", offset).Msg("Creating flasher")
 
-	flasher := flash.NewFlasher(opts)
+	flasher := flashlib.NewFlasher(opts)
 
 	progress := make(chan int, 10)
 	go func() {
@@ -476,7 +487,7 @@ func runSingleImage(opts *flash.FlasherOptions, firmwarePath string) error {
 		}
 	}()
 
-	req := &flash.FlashRequest{
+	req := &flashlib.FlashRequest{
 		Port:     flashOpts.port,
 		Firmware: data,
 		Offset:   offset,
@@ -510,7 +521,7 @@ func runSingleImage(opts *flash.FlasherOptions, firmwarePath string) error {
 func runBuildDir() error {
 	log.Info().Str("build_dir", flashOpts.buildDir).Msg("ESP-IDF build directory mode")
 
-	flashArgsPath, err := flash.FindFlashArgs(flashOpts.buildDir)
+	flashArgsPath, err := flashlib.FindFlashArgs(flashOpts.buildDir)
 	if err != nil {
 		return fmt.Errorf("flash_args not found in %s: %w", flashOpts.buildDir, err)
 	}
@@ -522,7 +533,7 @@ func runBuildDir() error {
 		return fmt.Errorf("read flash_args: %w", err)
 	}
 
-	parsed, err := flash.ParseFlashArgs(data)
+	parsed, err := flashlib.ParseFlashArgs(data)
 	if err != nil {
 		return fmt.Errorf("parse flash_args: %w", err)
 	}
@@ -548,16 +559,16 @@ func runBuildDir() error {
 		flashOpts.flashSize = parsed.FlashSize
 	}
 
-	opts := &flash.FlasherOptions{
+	opts := &flashlib.FlasherOptions{
 		BaudRate:      115200,
 		FlashBaudRate: flashOpts.baud,
 		Compress:      !flashOpts.noCompress,
 	}
 
-	flasher := flash.NewFlasher(opts)
+	flasher := flashlib.NewFlasher(opts)
 
 	for i, file := range parsed.Files {
-		resolvedPath := flash.ResolveBuildPath(flashOpts.buildDir, file.Path)
+		resolvedPath := flashlib.ResolveBuildPath(flashOpts.buildDir, file.Path)
 		if _, err := os.Stat(resolvedPath); err != nil {
 			log.Warn().Str("path", resolvedPath).Msg("File not found, skipping")
 			continue
@@ -584,7 +595,7 @@ func runBuildDir() error {
 			}
 		}()
 
-		req := &flash.FlashRequest{
+		req := &flashlib.FlashRequest{
 			Port:     flashOpts.port,
 			Firmware: data,
 			Offset:   int(file.Offset),
@@ -663,7 +674,7 @@ func runFlashRemoteMultiImage() error {
 	// For ESP32/ESP32-S2, user must specify --chip explicitly
 	bootloaderOffset := 0x0
 	if flashOpts.chip != "auto" && flashOpts.chip != "" {
-		if off, ok := flash.BootloaderOffset(flashOpts.chip); ok {
+		if off, ok := flashlib.BootloaderOffset(flashOpts.chip); ok {
 			bootloaderOffset = int(off)
 		}
 	}
@@ -672,10 +683,10 @@ func runFlashRemoteMultiImage() error {
 		images = append(images, remoteImage{name: "bootloader", path: flashOpts.bootloader, offset: bootloaderOffset})
 	}
 	if flashOpts.partitions != "" {
-		images = append(images, remoteImage{name: "partitions", path: flashOpts.partitions, offset: flash.PresetOffsetPartitions})
+		images = append(images, remoteImage{name: "partitions", path: flashOpts.partitions, offset: flashlib.PresetOffsetPartitions})
 	}
 	if flashOpts.app != "" {
-		images = append(images, remoteImage{name: "app", path: flashOpts.app, offset: flash.PresetOffsetApp})
+		images = append(images, remoteImage{name: "app", path: flashOpts.app, offset: flashlib.PresetOffsetApp})
 	}
 
 	log.Info().Int("images", len(images)).Str("device", devicePath).Msg("Multi-image flash via cluster")

@@ -12,7 +12,8 @@ import (
 type DeviceBoundingBoxMapping struct {
 	ID                 string          `json:"id"`
 	DeviceID           string          `json:"device_id"`           // Device reference
-	CameraID           string          `json:"camera_id"`           // Camera reference
+	CameraID           string          `json:"camera_id"`           // Camera reference (can change, see CameraName)
+	CameraName         string          `json:"camera_name"`         // Stable camera identifier
 	Bounds             BoundingBox     `json:"bounds"`              // Normalized box
 	CalibrationVersion int             `json:"calibration_version"` // Camera position version
 	Adjustment         ImageAdjustment `json:"adjustment"`          // Per-region image enhancement
@@ -188,9 +189,11 @@ func (s *Store) GetBoundingBoxForDeviceAndCamera(deviceID, cameraID string) (*De
 }
 
 // ListBoundingBoxesForCamera retrieves all bounding boxes for a specific camera
+// First tries camera_id lookup, then falls back to camera_name lookup for stability
 func (s *Store) ListBoundingBoxesForCamera(cameraID string) ([]*DeviceBoundingBoxMapping, error) {
 	var mappings []*DeviceBoundingBoxMapping
 
+	// First try direct camera ID lookup (fast path using index)
 	err := s.db.View(func(tx *bolt.Tx) error {
 		b := tx.Bucket([]byte(bucketBoundingBoxes))
 		if b == nil {
@@ -217,7 +220,67 @@ func (s *Store) ListBoundingBoxesForCamera(cameraID string) ([]*DeviceBoundingBo
 		return nil
 	})
 
-	return mappings, err
+	if err != nil {
+		return nil, err
+	}
+
+	// If we found mappings by camera ID, return them
+	if len(mappings) > 0 {
+		return mappings, nil
+	}
+
+	// Fallback: Search by camera_name for stability across restarts
+	// This handles cases where camera DeviceID changes but name stays the same
+	var nameBasedMappings []*DeviceBoundingBoxMapping
+	err = s.db.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte(bucketBoundingBoxes))
+		if b == nil {
+			return nil
+		}
+
+		codec := &codec{}
+		c := b.Cursor()
+
+		// Scan all bounding boxes
+		for k, v := c.First(); k != nil; k, v = c.Next() {
+			// Skip index keys (they start with "idx-")
+			if bytes.HasPrefix(k, []byte("idx-")) {
+				continue
+			}
+
+			data := v
+			mapping, err := codec.DecodeBoundingBoxMapping(data)
+			if err != nil {
+				continue
+			}
+
+			// Match by camera name
+			if mapping.CameraName == cameraID {
+				nameBasedMappings = append(nameBasedMappings, mapping)
+			}
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	// If we found mappings by name, update their camera_id to the new one
+	if len(nameBasedMappings) > 0 {
+		// Update the mappings with the new camera ID for future lookups
+		for _, m := range nameBasedMappings {
+			m.CameraID = cameraID
+			if err := s.SaveBoundingBox(m); err != nil {
+				// Log but don't fail - we'll return the name-based results
+				continue
+			}
+		}
+		return nameBasedMappings, nil
+	}
+
+	return mappings, nil
 }
 
 // ListBoundingBoxesForDevice retrieves all bounding boxes for a specific device

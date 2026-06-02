@@ -1230,7 +1230,7 @@
                         <div>${cap.camera_name || cap.camera_id}</div>
                         <div>${new Date(cap.timestamp * 1000).toLocaleString()}</div>
                         <div style="display: flex; gap: 8px; margin-top: 8px;">
-                            <button class="btn btn-secondary" onclick="openMappingEditor(event, '${cap.path}', '${cap.camera_id}')" style="padding: 4px 12px; font-size: 12px;">Map Devices</button>
+                            <button class="btn btn-secondary" onclick="openMappingEditor(event, '${cap.path}', '${cap.camera_id}', '${cap.camera_name || ''}')" style="padding: 4px 12px; font-size: 12px;">Map Devices</button>
                             <button class="btn btn-danger" onclick="deleteCapture(event, '${cap.path}')" style="padding: 4px 12px; font-size: 12px;">Delete</button>
                         </div>
                     </div>
@@ -1743,7 +1743,7 @@
                             </div>
                         </div>
                         <div style="display: flex; gap: 8px;">
-                            <button class="btn btn-secondary" style="padding: 4px 8px; font-size: 11px;" onclick="editMappingForDevice('${mapping.id}', '${mapping.camera_id}')">Edit</button>
+                            <button class="btn btn-secondary" style="padding: 4px 8px; font-size: 11px;" onclick="editMappingForDevice('${mapping.id}', '${mapping.camera_id}', '${mapping.camera_name || ''}')">Edit</button>
                             <button class="btn btn-danger" style="padding: 4px 8px; font-size: 11px;" onclick="deleteMappingForDevice('${mapping.id}')">Delete</button>
                         </div>
                     </div>
@@ -1785,7 +1785,7 @@
         }
 
         // Edit mapping for current device
-        async function editMappingForDevice(mappingId, cameraId) {
+        async function editMappingForDevice(mappingId, cameraId, cameraName) {
             closeDeviceModal();
 
             // Load a recent capture from this camera to use as reference
@@ -1796,7 +1796,7 @@
                 const cameraCapture = captures.find(c => c.camera_id === cameraId);
 
                 if (cameraCapture) {
-                    openMappingEditor(null, cameraCapture.path, cameraId);
+                    openMappingEditor(null, cameraCapture.path, cameraId, cameraName || cameraCapture.camera_name || '');
                 } else {
                     alert('No captures found for this camera. Take a photo first.');
                 }
@@ -2344,6 +2344,7 @@
         // Mapping Editor State
         let mappingState = {
             currentCameraId: null,
+            currentCameraName: null,
             currentImage: null,
             boxes: [],
             selectedBox: null,
@@ -2354,10 +2355,11 @@
         };
 
         // Open Mapping Editor
-        async function openMappingEditor(evt, imagePath, cameraId) {
+        async function openMappingEditor(evt, imagePath, cameraId, cameraName) {
             if (evt) evt.stopPropagation();
 
             mappingState.currentCameraId = cameraId;
+            mappingState.currentCameraName = cameraName || '';
             mappingState.currentImage = imagePath;
             mappingState.boxes = [];
             mappingState.selectedBox = null;
@@ -2567,6 +2569,7 @@
                 id: 'box-' + Date.now(),
                 device_id: mappingState.selectedDevice,
                 camera_id: mappingState.currentCameraId,
+                camera_name: mappingState.currentCameraName,
                 bounds: { x, y, width, height }
             };
 
@@ -2742,6 +2745,7 @@
                             body: JSON.stringify({
                                 device_id: box.device_id,
                                 camera_id: box.camera_id,
+                                camera_name: box.camera_name,
                                 bounds: box.bounds
                             })
                         })
@@ -2771,6 +2775,7 @@
             document.getElementById('mapping-editor-modal').classList.remove('active');
             mappingState = {
                 currentCameraId: null,
+                currentCameraName: null,
                 currentImage: null,
                 boxes: [],
                 selectedBox: null,

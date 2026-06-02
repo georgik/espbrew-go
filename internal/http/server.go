@@ -63,6 +63,10 @@ func (s *Server) setupRoutes(store *persistence.Store) {
 	mappingHandler := NewMappingHandler(store)
 	mappingHandler.RegisterRoutes(s.router)
 
+	// Flash status routes
+	flashStatusHandler := NewFlashStatusHandler(store)
+	flashStatusHandler.RegisterRoutes(s.router)
+
 	// Device disable/enable routes
 	deviceDisableHandler := NewDeviceDisableHandler(s.node, store)
 	deviceDisableHandler.RegisterRoutes(s.router)

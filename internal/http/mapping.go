@@ -44,9 +44,10 @@ func (h *MappingHandler) RegisterRoutes(r *mux.Router) {
 
 // CreateBoundingBoxRequest represents a request to create a bounding box mapping
 type CreateBoundingBoxRequest struct {
-	DeviceID string                  `json:"device_id"`
-	CameraID string                  `json:"camera_id"`
-	Bounds   persistence.BoundingBox `json:"bounds"`
+	DeviceID   string                  `json:"device_id"`
+	CameraID   string                  `json:"camera_id"`
+	CameraName string                  `json:"camera_name,omitempty"` // Stable identifier
+	Bounds     persistence.BoundingBox `json:"bounds"`
 }
 
 // UpdateBoundingBoxRequest represents a request to update a bounding box mapping
@@ -78,6 +79,7 @@ type DeviceBoundingBoxWithDevice struct {
 	ID                 string                      `json:"id"`
 	DeviceID           string                      `json:"device_id"`
 	CameraID           string                      `json:"camera_id"`
+	CameraName         string                      `json:"camera_name,omitempty"`
 	Bounds             persistence.BoundingBox     `json:"bounds"`
 	CalibrationVersion int                         `json:"calibration_version"`
 	Adjustment         persistence.ImageAdjustment `json:"adjustment"`
@@ -143,6 +145,7 @@ func (h *MappingHandler) handleCameraBoxes(w http.ResponseWriter, r *http.Reques
 			ID:                 mapping.ID,
 			DeviceID:           mapping.DeviceID,
 			CameraID:           mapping.CameraID,
+			CameraName:         mapping.CameraName,
 			Bounds:             mapping.Bounds,
 			CalibrationVersion: mapping.CalibrationVersion,
 			Adjustment:         mapping.Adjustment,
@@ -280,6 +283,7 @@ func (h *MappingHandler) handleCreateBox(w http.ResponseWriter, r *http.Request)
 		ID:                 uuid.New().String(),
 		DeviceID:           req.DeviceID,
 		CameraID:           req.CameraID,
+		CameraName:         req.CameraName, // Store stable identifier
 		Bounds:             req.Bounds,
 		CalibrationVersion: calibVersion,
 		CreatedAt:          now,
