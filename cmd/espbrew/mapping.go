@@ -64,12 +64,15 @@ var mappingImportCmd = &cobra.Command{
 }
 
 type mappingFlags struct {
-	deviceID  string
-	cameraID  string
-	bounds    string
-	bboxID    string
-	output    string
-	overwrite bool
+	deviceID   string
+	cameraID   string
+	bounds     string
+	bboxID     string
+	output     string
+	overwrite  bool
+	brightness int
+	contrast   int
+	saturation int
 }
 
 var mappingOpts mappingFlags
@@ -91,6 +94,9 @@ func init() {
 	mappingSetCmd.Flags().StringVar(&mappingOpts.bounds, "bounds", "", "Bounding box as x,y,width,height (required)")
 	mappingSetCmd.Flags().StringVar(&mappingOpts.bboxID, "id", "", "Bounding box ID (for updates)")
 	mappingSetCmd.Flags().BoolVar(&mappingOpts.overwrite, "overwrite", false, "Overwrite existing mapping for this device/camera pair")
+	mappingSetCmd.Flags().IntVar(&mappingOpts.brightness, "adjust-brightness", 0, "Brightness adjustment (-100 to 100)")
+	mappingSetCmd.Flags().IntVar(&mappingOpts.contrast, "adjust-contrast", 0, "Contrast adjustment (-100 to 100)")
+	mappingSetCmd.Flags().IntVar(&mappingOpts.saturation, "adjust-saturation", 0, "Saturation adjustment (-100 to 100)")
 
 	// Remove flags
 	mappingRemoveCmd.Flags().StringVar(&mappingOpts.bboxID, "id", "", "Bounding box ID (required)")
@@ -175,6 +181,11 @@ func runMappingSet(cmd *cobra.Command, args []string) error {
 		DeviceID: mappingOpts.deviceID,
 		CameraID: mappingOpts.cameraID,
 		Bounds:   *bounds,
+		Adjustment: persistence.ImageAdjustment{
+			Brightness: mappingOpts.brightness,
+			Contrast:   mappingOpts.contrast,
+			Saturation: mappingOpts.saturation,
+		},
 	}
 
 	if err := store.SaveBoundingBox(mapping); err != nil {

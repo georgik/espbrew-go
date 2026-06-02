@@ -371,6 +371,33 @@
             color: var(--text-secondary);
         }
 
+        .device-thumbnails {
+            padding: 0 12px 12px 12px;
+        }
+
+        .loading-devices {
+            font-size: 10px;
+            color: var(--text-secondary);
+            text-align: center;
+            padding: 4px 0;
+        }
+
+        .device-thumb {
+            transition: border-color 0.2s;
+        }
+
+        .device-thumb:hover {
+            border-color: var(--accent);
+        }
+
+        .device-thumb img {
+            transition: opacity 0.2s;
+        }
+
+        .device-thumb:hover img {
+            opacity: 0.8;
+        }
+
         .modal {
             display: none;
             position: fixed;
@@ -1182,13 +1209,13 @@
             try {
                 const response = await fetch('/api/v1/captures');
                 const data = await response.json();
-                renderGallery(data.captures || []);
+                await renderGallery(data.captures || []);
             } catch (error) {
                 console.error('Failed to load gallery:', error);
             }
         }
 
-        function renderGallery(captures) {
+        async function renderGallery(captures) {
             const grid = document.getElementById('gallery-grid');
 
             if (captures.length === 0) {
@@ -1197,7 +1224,7 @@
             }
 
             grid.innerHTML = captures.map(cap => `
-                <div class="gallery-item">
+                <div class="gallery-item" data-capture-path="${cap.path}">
                     <img src="${cap.path}" alt="${cap.filename}" loading="lazy" onclick="openModal('${cap.path}')">
                     <div class="gallery-item-info">
                         <div>${cap.camera_name || cap.camera_id}</div>
@@ -1207,8 +1234,55 @@
                             <button class="btn btn-danger" onclick="deleteCapture(event, '${cap.path}')" style="padding: 4px 12px; font-size: 12px;">Delete</button>
                         </div>
                     </div>
+                    <div class="device-thumbnails" id="devices-${escapeForId(cap.path)}" style="margin-top: 12px;">
+                        <div class="loading-devices">Loading device views...</div>
+                    </div>
                 </div>
             `).join('');
+
+            // Load device captures for each item
+            for (const cap of captures) {
+                loadDeviceCaptures(cap);
+            }
+        }
+
+        async function loadDeviceCaptures(capture) {
+            const containerId = `devices-${escapeForId(capture.path)}`;
+            const container = document.getElementById(containerId);
+            if (!container) return;
+
+            try {
+                // Extract capture ID from path (remove /captures/ prefix)
+                const captureId = capture.path.replace(/^\/captures\//, '');
+                const response = await fetch(`/api/v1/captures/${encodeURIComponent(captureId)}/devices`);
+                const data = await response.json();
+                const deviceCaptures = data.device_captures || [];
+
+                if (deviceCaptures.length === 0) {
+                    container.innerHTML = '';
+                    return;
+                }
+
+                container.innerHTML = `
+                    <div style="border-top: 1px solid var(--border); padding-top: 8px;">
+                        <div style="font-size: 11px; color: var(--text-secondary); margin-bottom: 6px;">Device Views (${deviceCaptures.length})</div>
+                        <div style="display: flex; gap: 6px; flex-wrap: wrap;">
+                            ${deviceCaptures.map(dc => `
+                                <div class="device-thumb" style="position: relative; width: 50px; height: 50px; border-radius: 4px; overflow: hidden; border: 1px solid var(--border); cursor: pointer;" onclick="openModal('/captures/${encodeURIComponent(dc.subimage_path)}')">
+                                    <img src="/captures/${encodeURIComponent(dc.subimage_path)}" alt="${dc.device_id}" style="width: 100%; height: 100%; object-fit: cover;">
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+                `;
+            } catch (error) {
+                console.error('Failed to load device captures:', error);
+                container.innerHTML = '';
+            }
+        }
+
+        function escapeForId(str) {
+            return str.replace(/[^a-zA-Z0-9-_]/g, '_');
         }
 
         function openModal(imagePath) {
@@ -1641,7 +1715,7 @@
 
                 for (const camera of cameras) {
                     try {
-                        const boxesResponse = await fetch(`/api/v1/cameras/${camera.id}/boxes`);
+                        const boxesResponse = await fetch(`/api/v1/cameras/${encodeURIComponent(camera.id)}/boxes`);
                         const boxesData = await boxesResponse.json();
                         const deviceBoxes = (boxesData.mappings || []).filter(m => m.device_id === currentDeviceId);
                         allMappings.push(...deviceBoxes.map(b => ({ ...b, camera_name: camera.name || camera.id })));
@@ -2296,7 +2370,7 @@
 
             try {
                 // Load existing bounding boxes
-                const boxesResponse = await fetch(`/api/v1/cameras/${cameraId}/boxes`);
+                const boxesResponse = await fetch(`/api/v1/cameras/${encodeURIComponent(cameraId)}/boxes`);
                 const boxesData = await boxesResponse.json();
                 mappingState.boxes = boxesData.mappings || [];
 
@@ -2710,7 +2784,7 @@
         // Load bounding boxes for camera
         async function loadBoundingBoxes(cameraId) {
             try {
-                const response = await fetch(`/api/v1/cameras/${cameraId}/boxes`);
+                const response = await fetch(`/api/v1/cameras/${encodeURIComponent(cameraId)}/boxes`);
                 const data = await response.json();
                 return data.mappings || [];
             } catch (error) {
@@ -2754,6 +2828,8 @@
                 const data = await response.json();
                 const cameras = data.cameras || [];
 
+                console.log('[Device Mapping] Available cameras:', cameras.map(c => ({ id: c.id, name: c.name })));
+
                 if (cameras.length === 0) {
                     content.innerHTML = '<div class="empty-state">No cameras available. Add a camera first.</div>';
                     return;
@@ -2782,14 +2858,18 @@
 
             if (!cameraId) return;
 
+            console.log('[Device Mapping] Loading mappings for camera:', cameraId);
+
             const content = document.getElementById('camera-mappings-content');
             content.innerHTML = '<div style="text-align: center; padding: 20px;"><span class="spinner"></span> Loading mappings...</div>';
 
             try {
-                const response = await fetch(`/api/v1/cameras/${cameraId}/boxes`);
+                const response = await fetch(`/api/v1/cameras/${encodeURIComponent(cameraId)}/boxes`);
                 const data = await response.json();
                 const mappings = data.mappings || [];
                 const calibration = data.calibration;
+
+                console.log('[Device Mapping] API Response:', { cameraId, mappingsCount: mappings.length, calibration, data });
 
                 content.innerHTML = `
                     <div style="margin-top: 16px;">

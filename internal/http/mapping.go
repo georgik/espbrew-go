@@ -51,7 +51,8 @@ type CreateBoundingBoxRequest struct {
 
 // UpdateBoundingBoxRequest represents a request to update a bounding box mapping
 type UpdateBoundingBoxRequest struct {
-	Bounds *persistence.BoundingBox `json:"bounds"`
+	Bounds     *persistence.BoundingBox     `json:"bounds"`
+	Adjustment *persistence.ImageAdjustment `json:"adjustment"`
 }
 
 // CreateCalibrationRequest represents a request to create a new calibration version
@@ -74,14 +75,15 @@ type CalibrationInfo struct {
 
 // DeviceBoundingBoxWithDevice extends mapping with device details
 type DeviceBoundingBoxWithDevice struct {
-	ID                 string                  `json:"id"`
-	DeviceID           string                  `json:"device_id"`
-	CameraID           string                  `json:"camera_id"`
-	Bounds             persistence.BoundingBox `json:"bounds"`
-	CalibrationVersion int                     `json:"calibration_version"`
-	CreatedAt          string                  `json:"created_at"`
-	UpdatedAt          string                  `json:"updated_at"`
-	Device             *DeviceInfo             `json:"device,omitempty"`
+	ID                 string                      `json:"id"`
+	DeviceID           string                      `json:"device_id"`
+	CameraID           string                      `json:"camera_id"`
+	Bounds             persistence.BoundingBox     `json:"bounds"`
+	CalibrationVersion int                         `json:"calibration_version"`
+	Adjustment         persistence.ImageAdjustment `json:"adjustment"`
+	CreatedAt          string                      `json:"created_at"`
+	UpdatedAt          string                      `json:"updated_at"`
+	Device             *DeviceInfo                 `json:"device,omitempty"`
 }
 
 // DeviceInfo represents basic device information
@@ -99,6 +101,8 @@ func (h *MappingHandler) handleCameraBoxes(w http.ResponseWriter, r *http.Reques
 	vars := mux.Vars(r)
 	cameraID := vars["id"]
 
+	log.Info().Str("camera_id", cameraID).Msg("Listing bounding boxes for camera")
+
 	if cameraID == "" {
 		respondError(w, http.StatusBadRequest, "camera_id required")
 		return
@@ -111,6 +115,11 @@ func (h *MappingHandler) handleCameraBoxes(w http.ResponseWriter, r *http.Reques
 		respondError(w, http.StatusInternalServerError, "Failed to retrieve bounding boxes")
 		return
 	}
+
+	log.Info().
+		Str("camera_id", cameraID).
+		Int("count", len(mappings)).
+		Msg("Retrieved bounding boxes")
 
 	// Get current calibration for camera
 	calib, err := h.store.GetCalibration(cameraID)
@@ -136,6 +145,7 @@ func (h *MappingHandler) handleCameraBoxes(w http.ResponseWriter, r *http.Reques
 			CameraID:           mapping.CameraID,
 			Bounds:             mapping.Bounds,
 			CalibrationVersion: mapping.CalibrationVersion,
+			Adjustment:         mapping.Adjustment,
 			CreatedAt:          mapping.CreatedAt.Format(time.RFC3339),
 			UpdatedAt:          mapping.UpdatedAt.Format(time.RFC3339),
 		}
@@ -232,6 +242,32 @@ func (h *MappingHandler) handleCreateBox(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	// Check if mapping already exists for this device+camera
+	existing, err := h.store.GetBoundingBoxForDeviceAndCamera(req.DeviceID, req.CameraID)
+	now := time.Now()
+
+	if err == nil && existing != nil {
+		// Update existing mapping
+		log.Info().
+			Str("mapping_id", existing.ID).
+			Str("device_id", req.DeviceID).
+			Str("camera_id", req.CameraID).
+			Msg("Updating existing bounding box mapping")
+
+		existing.Bounds = req.Bounds
+		existing.UpdatedAt = now
+
+		if err := h.store.SaveBoundingBox(existing); err != nil {
+			log.Error().Err(err).Str("device_id", req.DeviceID).Str("camera_id", req.CameraID).
+				Msg("Failed to update bounding box")
+			respondError(w, http.StatusInternalServerError, "Failed to update bounding box")
+			return
+		}
+
+		respondJSON(w, existing)
+		return
+	}
+
 	// Get current calibration version
 	calibVersion := 0
 	calib, err := h.store.GetCalibration(req.CameraID)
@@ -239,8 +275,7 @@ func (h *MappingHandler) handleCreateBox(w http.ResponseWriter, r *http.Request)
 		calibVersion = calib.Version
 	}
 
-	// Create mapping
-	now := time.Now()
+	// Create new mapping
 	mapping := &persistence.DeviceBoundingBoxMapping{
 		ID:                 uuid.New().String(),
 		DeviceID:           req.DeviceID,
@@ -251,12 +286,24 @@ func (h *MappingHandler) handleCreateBox(w http.ResponseWriter, r *http.Request)
 		UpdatedAt:          now,
 	}
 
+	log.Info().
+		Str("mapping_id", mapping.ID).
+		Str("device_id", req.DeviceID).
+		Str("camera_id", req.CameraID).
+		Msg("Creating new bounding box mapping")
+
 	if err := h.store.SaveBoundingBox(mapping); err != nil {
 		log.Error().Err(err).Str("device_id", req.DeviceID).Str("camera_id", req.CameraID).
 			Msg("Failed to save bounding box")
 		respondError(w, http.StatusInternalServerError, "Failed to create bounding box")
 		return
 	}
+
+	log.Info().
+		Str("mapping_id", mapping.ID).
+		Str("device_id", req.DeviceID).
+		Str("camera_id", req.CameraID).
+		Msg("Bounding box mapping saved successfully")
 
 	w.WriteHeader(http.StatusCreated)
 	respondJSON(w, mapping)
@@ -293,6 +340,15 @@ func (h *MappingHandler) handleUpdateBox(w http.ResponseWriter, r *http.Request)
 			return
 		}
 		mapping.Bounds = *req.Bounds
+	}
+
+	// Update adjustment if provided
+	if req.Adjustment != nil {
+		if err := req.Adjustment.Validate(); err != nil {
+			respondError(w, http.StatusBadRequest, fmt.Sprintf("Invalid adjustment: %s", err.Error()))
+			return
+		}
+		mapping.Adjustment = *req.Adjustment
 	}
 
 	// Save updated mapping

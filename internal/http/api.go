@@ -1,8 +1,10 @@
 package http
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"image"
 	"net/http"
 	"sort"
 	"time"
@@ -617,6 +619,29 @@ func (h *APIHandler) handleCameraCapture(w http.ResponseWriter, r *http.Request)
 	}
 
 	relPath, _ := store.GetRelativePath(savedPath)
+
+	// Auto-extract device subimages if mappings exist
+	go func() {
+		if h.store != nil {
+			extractor := camera.NewExtractor(store, h.store)
+			img, _, err := image.Decode(bytes.NewReader(result.Data))
+			if err != nil {
+				log.Warn().Err(err).Str("capture", savedPath).Msg("Failed to decode image for device extraction")
+				return
+			}
+			deviceCaptures, err := extractor.ExtractDevices(img, targetCam.ID, savedPath)
+			if err != nil {
+				log.Warn().Err(err).Str("capture", savedPath).Msg("Failed to extract device captures")
+				return
+			}
+			if len(deviceCaptures) > 0 {
+				log.Info().
+					Str("capture", savedPath).
+					Int("devices", len(deviceCaptures)).
+					Msg("Device subimages extracted")
+			}
+		}
+	}()
 
 	respondJSON(w, map[string]interface{}{
 		"status":    "success",

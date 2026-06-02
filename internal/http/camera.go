@@ -8,7 +8,9 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
+	"codeberg.org/georgik/espbrew-go/internal/camera"
 	"github.com/gorilla/mux"
 	"github.com/rs/zerolog/log"
 )
@@ -45,6 +47,8 @@ func NewCameraHandler() *CameraHandler {
 
 func (h *CameraHandler) RegisterRoutes(r *mux.Router) {
 	r.HandleFunc("/api/v1/captures", h.handleListCaptures).Methods("GET")
+	r.HandleFunc("/api/v1/captures/{captureId}/devices", h.handleListDeviceCaptures).Methods("GET")
+	r.HandleFunc("/api/v1/devices/{deviceId}/captures", h.handleDeviceCaptures).Methods("GET")
 	r.HandleFunc("/captures/{path:.*}", h.handleServeCapture).Methods("GET")
 	r.HandleFunc("/captures/{path:.*}", h.handleDeleteCapture).Methods("DELETE")
 }
@@ -121,15 +125,33 @@ func (h *CameraHandler) scanCaptures() ([]*CaptureInfo, error) {
 
 		metadataPath := filepath.Join(filepath.Dir(path), "metadata.json")
 		if metadataData, err := os.ReadFile(metadataPath); err == nil {
-			var metadata struct {
-				Captures map[string]CaptureMetadata `json:"captures"`
+			// Metadata structure: { "camera-id": { "camera_id": "...", "captures": [...] } }
+			type StorageCaptureMetadata struct {
+				Filename  string    `json:"filename"`
+				Timestamp time.Time `json:"timestamp"`
+				CameraID  string    `json:"camera_id"`
+				Format    string    `json:"format"`
+				SizeBytes int64     `json:"size_bytes"`
+			}
+			var metadata map[string]struct {
+				CameraID  string                   `json:"camera_id"`
+				CreatedAt string                   `json:"created_at"`
+				Captures  []StorageCaptureMetadata `json:"captures"`
 			}
 			if json.Unmarshal(metadataData, &metadata) == nil {
 				filename := filepath.Base(path)
-				if meta, ok := metadata.Captures[filename]; ok {
-					cameraID = meta.CameraID
-					cameraName = meta.CameraName
-					modTime = meta.Timestamp
+				// Search through all cameras' captures to find this file
+				for _, camData := range metadata {
+					for _, capture := range camData.Captures {
+						if capture.Filename == filename {
+							cameraID = capture.CameraID
+							modTime = capture.Timestamp.Unix()
+							break
+						}
+					}
+					if cameraID != "unknown" {
+						break
+					}
 				}
 			}
 		}
@@ -213,5 +235,125 @@ func (h *CameraHandler) handleDeleteCapture(w http.ResponseWriter, r *http.Reque
 	respondJSON(w, map[string]interface{}{
 		"status": "deleted",
 		"path":   path,
+	})
+}
+
+// handleListDeviceCaptures lists device-specific captures for a given full capture
+func (h *CameraHandler) handleListDeviceCaptures(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	captureId := vars["captureId"]
+	if captureId == "" {
+		respondError(w, http.StatusBadRequest, "capture ID required")
+		return
+	}
+
+	// Build full path to capture
+	fullPath := filepath.Join(h.capturesDir, captureId)
+
+	// Verify file exists
+	if _, err := os.Stat(fullPath); os.IsNotExist(err) {
+		respondError(w, http.StatusNotFound, "Capture not found")
+		return
+	}
+
+	// Check if it's an image file
+	ext := strings.ToLower(filepath.Ext(fullPath))
+	if ext != ".jpg" && ext != ".jpeg" && ext != ".png" {
+		respondError(w, http.StatusBadRequest, "Not an image file")
+		return
+	}
+
+	// Load device captures metadata
+	store, err := camera.NewStore(h.capturesDir)
+	if err != nil {
+		log.Error().Err(err).Msg("Failed to create store")
+		respondError(w, http.StatusInternalServerError, "Failed to access storage")
+		return
+	}
+
+	deviceCaptures, err := store.LoadDeviceCaptures(fullPath)
+	if err != nil {
+		log.Error().Err(err).Str("capture", captureId).Msg("Failed to load device captures")
+		respondError(w, http.StatusInternalServerError, "Failed to load device captures")
+		return
+	}
+
+	respondJSON(w, map[string]interface{}{
+		"capture_id":      captureId,
+		"device_captures": deviceCaptures,
+		"count":           len(deviceCaptures),
+	})
+}
+
+// handleDeviceCaptures lists all captures for a specific device across all cameras
+func (h *CameraHandler) handleDeviceCaptures(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	deviceId := vars["deviceId"]
+	if deviceId == "" {
+		respondError(w, http.StatusBadRequest, "device ID required")
+		return
+	}
+
+	// Scan all captures to find device-specific ones
+	var deviceCaptures []map[string]interface{}
+
+	err := filepath.Walk(h.capturesDir, func(path string, info fs.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info.IsDir() {
+			return nil
+		}
+
+		// Check for device capture metadata files
+		ext := strings.ToLower(filepath.Ext(path))
+		if ext != ".json" {
+			return nil
+		}
+
+		// Check if this is a device capture metadata file (ends with .json but not metadata.json)
+		if filepath.Base(path) == "metadata.json" {
+			return nil
+		}
+
+		// Read device capture metadata
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return nil
+		}
+
+		var captures []camera.DeviceCaptureInfo
+		if err := json.Unmarshal(data, &captures); err != nil {
+			return nil
+		}
+
+		// Find captures for the requested device
+		for _, cap := range captures {
+			if cap.DeviceID == deviceId {
+				relPath, _ := filepath.Rel(h.capturesDir, path)
+				deviceCaptures = append(deviceCaptures, map[string]interface{}{
+					"device_id":     cap.DeviceID,
+					"bounds":        cap.Bounds,
+					"subimage":      "/captures/" + cap.Subimage,
+					"adjustment":    cap.Adjustment,
+					"generated_at":  cap.GeneratedAt.Format(time.RFC3339),
+					"metadata_path": "/captures/" + relPath,
+				})
+			}
+		}
+
+		return nil
+	})
+
+	if err != nil && !os.IsNotExist(err) {
+		log.Error().Err(err).Msg("Failed to scan captures")
+		respondError(w, http.StatusInternalServerError, "Failed to scan captures")
+		return
+	}
+
+	respondJSON(w, map[string]interface{}{
+		"device_id":       deviceId,
+		"device_captures": deviceCaptures,
+		"count":           len(deviceCaptures),
 	})
 }

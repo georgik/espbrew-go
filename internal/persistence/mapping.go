@@ -10,13 +10,14 @@ import (
 
 // DeviceBoundingBoxMapping maps a device to its location in a camera view
 type DeviceBoundingBoxMapping struct {
-	ID                 string      `json:"id"`
-	DeviceID           string      `json:"device_id"`           // Device reference
-	CameraID           string      `json:"camera_id"`           // Camera reference
-	Bounds             BoundingBox `json:"bounds"`              // Normalized box
-	CalibrationVersion int         `json:"calibration_version"` // Camera position version
-	CreatedAt          time.Time   `json:"created_at"`
-	UpdatedAt          time.Time   `json:"updated_at"`
+	ID                 string          `json:"id"`
+	DeviceID           string          `json:"device_id"`           // Device reference
+	CameraID           string          `json:"camera_id"`           // Camera reference
+	Bounds             BoundingBox     `json:"bounds"`              // Normalized box
+	CalibrationVersion int             `json:"calibration_version"` // Camera position version
+	Adjustment         ImageAdjustment `json:"adjustment"`          // Per-region image enhancement
+	CreatedAt          time.Time       `json:"created_at"`
+	UpdatedAt          time.Time       `json:"updated_at"`
 }
 
 // CameraCalibration stores camera position data
@@ -136,6 +137,48 @@ func (s *Store) GetBoundingBox(id string) (*DeviceBoundingBoxMapping, error) {
 		var err error
 		mapping, err = codec.DecodeBoundingBoxMapping(data)
 		return err
+	})
+
+	if err != nil {
+		return nil, err
+	}
+	return mapping, nil
+}
+
+// GetBoundingBoxForDeviceAndCamera finds a bounding box mapping for a specific device and camera combination.
+// Returns the first matching mapping or nil if none exists.
+func (s *Store) GetBoundingBoxForDeviceAndCamera(deviceID, cameraID string) (*DeviceBoundingBoxMapping, error) {
+	var mapping *DeviceBoundingBoxMapping
+
+	err := s.db.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte(bucketBoundingBoxes))
+		if b == nil {
+			return fmt.Errorf("bounding_boxes bucket not found")
+		}
+
+		codec := &codec{}
+		prefix := cameraIndexPrefix(cameraID)
+		c := b.Cursor()
+
+		// Iterate through all mappings for this camera
+		for k, v := c.Seek(prefix); k != nil && bytes.HasPrefix(k, prefix); k, v = c.Next() {
+			bboxID := string(v)
+			data := b.Get(boundingBoxKey(bboxID))
+			if data == nil {
+				continue
+			}
+			m, err := codec.DecodeBoundingBoxMapping(data)
+			if err != nil {
+				continue
+			}
+			// Check if this is the device we're looking for
+			if m.DeviceID == deviceID {
+				mapping = m
+				return nil
+			}
+		}
+
+		return nil
 	})
 
 	if err != nil {

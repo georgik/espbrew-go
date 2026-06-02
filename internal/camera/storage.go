@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"codeberg.org/georgik/espbrew-go/internal/persistence"
 	"github.com/rs/zerolog/log"
 )
 
@@ -263,4 +264,53 @@ func (s *Store) GetRelativePath(fullPath string) (string, error) {
 		return "", err
 	}
 	return relPath, nil
+}
+
+// SaveDeviceCaptures saves device capture information for a full capture
+func (s *Store) SaveDeviceCaptures(capturePath string, deviceCaptures []DeviceCaptureInfo) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Create device-specific metadata file next to the capture
+	metadataPath := capturePath[0:len(capturePath)-len(filepath.Ext(capturePath))] + ".json"
+
+	data, err := json.MarshalIndent(deviceCaptures, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal device captures: %w", err)
+	}
+
+	if err := os.WriteFile(metadataPath, data, 0644); err != nil {
+		return fmt.Errorf("write device captures metadata: %w", err)
+	}
+
+	return nil
+}
+
+// LoadDeviceCaptures loads device capture information for a full capture
+func (s *Store) LoadDeviceCaptures(capturePath string) ([]DeviceCaptureInfo, error) {
+	metadataPath := capturePath[0:len(capturePath)-len(filepath.Ext(capturePath))] + ".json"
+
+	data, err := os.ReadFile(metadataPath)
+	if os.IsNotExist(err) {
+		return []DeviceCaptureInfo{}, nil // No device captures, not an error
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read device captures metadata: %w", err)
+	}
+
+	var deviceCaptures []DeviceCaptureInfo
+	if err := json.Unmarshal(data, &deviceCaptures); err != nil {
+		return nil, fmt.Errorf("parse device captures metadata: %w", err)
+	}
+
+	return deviceCaptures, nil
+}
+
+// DeviceCaptureInfo holds information about a device-specific capture
+type DeviceCaptureInfo struct {
+	DeviceID    string                      `json:"device_id"`
+	Bounds      persistence.BoundingBox     `json:"bounds"`
+	Subimage    string                      `json:"subimage_path"`
+	Adjustment  persistence.ImageAdjustment `json:"adjustment"`
+	GeneratedAt time.Time                   `json:"generated_at"`
 }

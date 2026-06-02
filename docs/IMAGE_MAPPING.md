@@ -32,15 +32,23 @@ type BoundingBox struct {
     Height float64 `json:"height"` // Height (0.0-1.0)
 }
 
+// ImageAdjustment stores per-region image enhancement settings
+type ImageAdjustment struct {
+    Brightness int `json:"brightness"` // -100 to 100, 0 = no change
+    Contrast   int `json:"contrast"`   // -100 to 100, 0 = no change
+    Saturation int `json:"saturation"` // -100 to 100, 0 = no change
+}
+
 // DeviceBoundingBoxMapping maps a device to its location in a camera view
 type DeviceBoundingBoxMapping struct {
-    ID                string      `json:"id"`
-    DeviceID          string      `json:"device_id"`           // Device reference
-    CameraID          string      `json:"camera_id"`           // Camera reference
-    Bounds            BoundingBox `json:"bounds"`              // Normalized box
-    CalibrationVersion int        `json:"calibration_version"` // Camera position version
-    CreatedAt         time.Time   `json:"created_at"`
-    UpdatedAt         time.Time   `json:"updated_at"`
+    ID                 string           `json:"id"`
+    DeviceID           string           `json:"device_id"`           // Device reference
+    CameraID           string           `json:"camera_id"`           // Camera reference
+    Bounds             BoundingBox      `json:"bounds"`              // Normalized box
+    CalibrationVersion int              `json:"calibration_version"` // Camera position version
+    Adjustment         ImageAdjustment  `json:"adjustment"`          // Per-region image enhancement
+    CreatedAt          time.Time        `json:"created_at"`
+    UpdatedAt          time.Time        `json:"updated_at"`
 }
 
 // CameraCalibration stores camera position data
@@ -187,6 +195,10 @@ espbrew mapping list --device-id esp-aa:bb:cc:dd:ee:ff
 # Create or update bounding box mapping
 espbrew mapping set --device-id esp-aa:bb:cc:dd:ee:ff --camera cam-001 --bounds 0.1,0.2,0.3,0.4
 
+# With image adjustments (per-device enhancement)
+espbrew mapping set --device-id esp-aa:bb:cc:dd:ee:ff --camera cam-001 --bounds 0.1,0.2,0.3,0.4 \
+  --adjust-brightness 20 --adjust-contrast 10 --adjust-saturation -5
+
 # Delete a mapping
 espbrew mapping remove --id bbox-123
 
@@ -308,11 +320,71 @@ espbrew workflow flash-and-verify firmware.bin \
   - Calibration version management tests
   - API handler tests (create, update, delete, list)
 - **Code quality** - fmt and vet clean
+- **URL encoding fix** - Camera IDs in API calls now use `encodeURIComponent()` to handle special characters like `/dev/video0`
 
-### Phase 5: Future Enhancements PLANNED
-- **Auto-detection hooks** - Placeholder for ML/CV integration
+### Phase 5: Image Enhancement COMPLETE
+- **Per-region adjustments** - Brightness/contrast/saturation per device box
+  - ImageAdjustment struct with validation (-100 to 100 range)
+  - Stored with DeviceBoundingBoxMapping
+  - Post-process when extracting region (internal/camera/postprocess.go)
+  - CLI: `--adjust-brightness`, `--adjust-contrast`, `--adjust-saturation`
+  - API: PUT /api/v1/bounding_boxes/{id} accepts adjustment
+
+### Phase 6: Device-Specific Screenshots COMPLETE
+- **Auto-extraction on capture** - Device subimages automatically extracted after capture
+  - Queries mappings for camera
+  - Extracts each device region using bounding boxes
+  - Applies adjustments if configured
+  - Saves device subimages to capture subdirectory
+- **Storage structure:**
+  ```
+  ~/.espbrew/captures/
+  ├── YYYY-MM-DD/
+  │   ├── cam-abcd-YYYYMMDD-HHMMSS.jpg       # Full capture
+  │   ├── cam-abcd-YYYYMMDD-HHMMSS.json      # Device captures metadata
+  │   └── cam-abcd-YYYYMMDD-HHMMSS/
+  │       ├── device-12345.jpg               # Device subimage
+  │       └── device-67890.jpg               # Another device
+  ```
+- **API Endpoints:**
+  - `GET /api/v1/captures/{captureId}/devices` - List device captures for specific capture
+  - `GET /api/v1/devices/{deviceId}/captures` - List all captures for a device
+- **Manual extraction:** ExtractFromCaptureFile() for on-demand extraction
+
+### Phase 7: UI Enhancements COMPLETE
+- **Device gallery thumbnails** - Device-specific subimages shown in capture gallery
+  - Automatic loading of device captures per capture
+  - Thumbnail display with device count badge
+  - Click to view full device subimage in modal
+  - Empty state handling when no device captures available
+  - URL-encoded paths for proper routing
+- **Loading states** - Async device capture loading with visual feedback
+
+### Phase 8: Bug Fixes COMPLETE
+- **URL encoding fix** - Camera IDs in API calls now use `encodeURIComponent()` to handle special characters like `/dev/video0`
+- **Device capture serving fix** - Fixed JSON field name mismatch (`subimage_path` vs `subimage`) in device gallery
+- **Persistence tests** - Added `TestBoundingBoxPersistenceAcrossReopen` to verify mappings survive database closure
+- **Extraction bug fix** - Fixed `ExtractAndAdjust` to always extract region first, then apply adjustments. Previously, when adjustments were zero, it returned full image instead of subimage
+- **Logging improvements** - Added debug logging for bounding box creation and retrieval
+- **Black image bug fix** - Fixed `ApplyAdjustments` to create result image with origin at (0,0) instead of using source bounds. Previously, extracting from non-origin bounds (e.g., (45,45)-(55,55)) created an image with those bounds, causing `Set(0,0, pixel)` to write outside valid bounds, resulting in black images
+- **Test coverage** - Added `TestExtractAndAdjust_NonOriginBounds` and `TestExtractAndAdjust_CornerExtraction` to prevent regression
+
+### Phase 9: Duplicate Prevention COMPLETE
+- **Unique device-camera constraint** - Creating a bounding box for same device+camera now updates existing mapping instead of creating duplicate
+- **Upsert behavior** - `POST /api/v1/bounding_boxes` checks for existing mapping and updates if found
+- **API change** - Create endpoint returns `200 OK` with updated mapping when duplicate detected, instead of `201 Created`
+- **Persistence layer** - Added `GetBoundingBoxForDeviceAndCamera(deviceID, cameraID)` for efficient lookup
+- **Test coverage** - Added `TestGetBoundingBoxForDeviceAndCamera` and `TestUniqueDeviceCameraMapping`
+
+### Phase 10: CLI Integration Extensions PLANNED
+- **Device capture listing command** - `espbrew capture list --device-id <id>`
+- **Device capture retrieval** - `espbrew capture get <capture-id> --device-id <id>`
 - **Workflow integration** - `espbrew workflow flash-and-verify` command
+
+### Phase 11: Future Enhancements PLANNED
+- **Auto-detection hooks** - Placeholder for ML/CV integration
 - **Enhanced error handling** - Better user feedback for edge cases
+- **Advanced verification** - OCR and template matching for device output validation
 
 ## Implementation Notes
 

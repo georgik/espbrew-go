@@ -67,3 +67,29 @@ func (b *BoundingBox) Validate() error {
 
 	return nil
 }
+
+// ImageAdjustment stores per-region image enhancement settings
+type ImageAdjustment struct {
+	Brightness int `json:"brightness"` // -100 to 100, 0 = no change
+	Contrast   int `json:"contrast"`   // -100 to 100, 0 = no change
+	Saturation int `json:"saturation"` // -100 to 100, 0 = no change
+}
+
+// Validate checks that adjustment values are in valid range
+func (a *ImageAdjustment) Validate() error {
+	if a.Brightness < -100 || a.Brightness > 100 {
+		return fmt.Errorf("brightness must be in [-100, 100], got %d", a.Brightness)
+	}
+	if a.Contrast < -100 || a.Contrast > 100 {
+		return fmt.Errorf("contrast must be in [-100, 100], got %d", a.Contrast)
+	}
+	if a.Saturation < -100 || a.Saturation > 100 {
+		return fmt.Errorf("saturation must be in [-100, 100], got %d", a.Saturation)
+	}
+	return nil
+}
+
+// IsZero returns true if all adjustments are zero (no changes)
+func (a *ImageAdjustment) IsZero() bool {
+	return a.Brightness == 0 && a.Contrast == 0 && a.Saturation == 0
+}

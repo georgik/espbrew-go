@@ -124,6 +124,7 @@ The serial monitor interface automatically handles Windows COM port paths withou
 - [Cluster Usage](docs/CLUSTER.md) - Multi-node setup, remote operations
 - [HTTP API Reference](docs/API.md) - REST and WebSocket endpoints
 - [Error Handling](docs/ERROR_HANDLING.md) - Timeouts, retries, recovery mechanisms
+- [Image Mapping](docs/IMAGE_MAPPING.md) - Device mapping and automated screenshot extraction
 
 ## CLI Quick Reference
 
@@ -617,6 +618,39 @@ Access at `http://localhost:8080` when cluster is running.
 - **AI Observation**: Feed camera images to AI for automated testing
 - **Remote Monitoring**: Capture and review images from cluster nodes
 - **Documentation**: Generate visual records of device states
+
+### Image Mapping and Device Screenshots
+
+ESPBrew can map physical device locations within camera captures using bounding boxes, enabling automated device-specific screenshot extraction. See [Image Mapping Documentation](docs/IMAGE_MAPPING.md) for details.
+
+**Features:**
+- **Bounding Box Editor**: Web UI for drawing device regions on camera captures
+- **Device Mapping**: Associate device IDs with camera regions
+- **Auto-Extraction**: Automatically extract device subimages after capture
+- **Per-Device Adjustments**: Configure brightness, contrast, saturation per device
+- **Device Gallery**: View device-specific screenshots in web UI
+- **Storage**: Device subimages stored alongside full captures
+
+**CLI Commands:**
+```bash
+# List device mappings
+espbrew mapping list --device-id esp-aa:bb:cc:dd:ee:ff
+
+# Create or update mapping
+espbrew mapping set --device-id esp-aa:bb:cc:dd:ee:ff --camera /dev/video0 --bounds 0.1,0.2,0.3,0.4
+
+# Capture with device extraction
+espbrew capture verify --device-id esp-aa:bb:cc:dd:ee:ff --camera /dev/video0
+
+# Export/import mappings
+espbrew mapping export --device-id esp-aa:bb:cc:dd:ee:ff --output mappings.json
+espbrew mapping import mappings.json
+```
+
+**Web Interface:**
+- Device Mapping tab with canvas-based bounding box editor
+- Device gallery thumbnails with click-to-view
+- Camera calibration version tracking
 
 ## Development
 

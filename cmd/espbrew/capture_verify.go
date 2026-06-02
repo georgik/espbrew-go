@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"image"
 	"image/jpeg"
 	"os"
 	"path/filepath"
@@ -206,12 +205,26 @@ func runCaptureVerify(cmd *cobra.Command, args []string) error {
 		return &exitCodeError{code: 3, err: fmt.Errorf("extraction failed")}
 	}
 
-	// Crop the image
-	cropped := image.NewRGBA(image.Rect(0, 0, width, height))
-	for py := y; py < y+height; py++ {
-		for px := x; px < x+width; px++ {
-			cropped.Set(px-x, py-y, img.At(px, py))
+	// Apply adjustment settings from mapping if configured
+	var adj *camera.AdjustmentParams
+	if !mapping.Adjustment.IsZero() {
+		adj = &camera.AdjustmentParams{
+			Brightness: mapping.Adjustment.Brightness,
+			Contrast:   mapping.Adjustment.Contrast,
+			Saturation: mapping.Adjustment.Saturation,
 		}
+		log.Info().
+			Int("brightness", adj.Brightness).
+			Int("contrast", adj.Contrast).
+			Int("saturation", adj.Saturation).
+			Msg("Applying image adjustments")
+	}
+
+	// Extract and optionally adjust region
+	cropped, err := camera.ExtractAndAdjust(img, x, y, width, height, adj)
+	if err != nil {
+		log.Error().Err(err).Msg("Failed to extract device region")
+		return &exitCodeError{code: 3, err: fmt.Errorf("extraction failed")}
 	}
 
 	// Step 4: Save to output or default location

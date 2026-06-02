@@ -316,3 +316,165 @@ func TestBoundingBoxCalibrationVersion(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, results, 2)
 }
+
+func TestBoundingBoxPersistenceAcrossReopen(t *testing.T) {
+	dbPath := t.TempDir() + "/test.db"
+
+	// Create and save a mapping
+	store1, err := Open(&Config{Path: dbPath})
+	require.NoError(t, err)
+
+	mapping := &DeviceBoundingBoxMapping{
+		ID:       "bbox-persist-1",
+		DeviceID: "esp-aa:bb:cc:dd:ee:ff",
+		CameraID: "cam-001",
+		Bounds: BoundingBox{
+			X:      0.1,
+			Y:      0.2,
+			Width:  0.3,
+			Height: 0.4,
+		},
+		CalibrationVersion: 1,
+		CreatedAt:          time.Now(),
+		UpdatedAt:          time.Now(),
+	}
+
+	err = store1.SaveBoundingBox(mapping)
+	require.NoError(t, err)
+	err = store1.Close()
+	require.NoError(t, err)
+
+	// Reopen database and verify mapping persists
+	store2, err := Open(&Config{Path: dbPath})
+	require.NoError(t, err)
+	defer store2.Close()
+
+	retrieved, err := store2.GetBoundingBox("bbox-persist-1")
+	require.NoError(t, err)
+
+	assert.Equal(t, "bbox-persist-1", retrieved.ID)
+	assert.Equal(t, "esp-aa:bb:cc:dd:ee:ff", retrieved.DeviceID)
+	assert.Equal(t, "cam-001", retrieved.CameraID)
+	assert.Equal(t, 0.1, retrieved.Bounds.X)
+	assert.Equal(t, 0.2, retrieved.Bounds.Y)
+	assert.Equal(t, 0.3, retrieved.Bounds.Width)
+	assert.Equal(t, 0.4, retrieved.Bounds.Height)
+
+	// Verify camera index also persists
+	results, err := store2.ListBoundingBoxesForCamera("cam-001")
+	require.NoError(t, err)
+	assert.Len(t, results, 1)
+}
+
+func TestGetBoundingBoxForDeviceAndCamera(t *testing.T) {
+	dbPath := t.TempDir() + "/test.db"
+	store, err := Open(&Config{Path: dbPath})
+	require.NoError(t, err)
+	defer store.Close()
+
+	// Create multiple mappings
+	mappings := []*DeviceBoundingBoxMapping{
+		{
+			ID:       "bbox-1",
+			DeviceID: "esp-aa:bb:cc:dd:ee:ff",
+			CameraID: "cam-001",
+			Bounds:   BoundingBox{X: 0, Y: 0, Width: 0.5, Height: 0.5},
+		},
+		{
+			ID:       "bbox-2",
+			DeviceID: "esp-11:11:11:11:11:11",
+			CameraID: "cam-001",
+			Bounds:   BoundingBox{X: 0.5, Y: 0, Width: 0.5, Height: 0.5},
+		},
+		{
+			ID:       "bbox-3",
+			DeviceID: "esp-aa:bb:cc:dd:ee:ff",
+			CameraID: "cam-002",
+			Bounds:   BoundingBox{X: 0.2, Y: 0.2, Width: 0.6, Height: 0.6},
+		},
+	}
+
+	for _, m := range mappings {
+		m.CreatedAt = time.Now()
+		m.UpdatedAt = time.Now()
+		err = store.SaveBoundingBox(m)
+		require.NoError(t, err)
+	}
+
+	// Find existing mapping for device+camera
+	result, err := store.GetBoundingBoxForDeviceAndCamera("esp-aa:bb:cc:dd:ee:ff", "cam-001")
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, "bbox-1", result.ID)
+	assert.Equal(t, "esp-aa:bb:cc:dd:ee:ff", result.DeviceID)
+	assert.Equal(t, "cam-001", result.CameraID)
+
+	// Find different device
+	result, err = store.GetBoundingBoxForDeviceAndCamera("esp-11:11:11:11:11:11", "cam-001")
+	require.NoError(t, err)
+	assert.Equal(t, "bbox-2", result.ID)
+
+	// Find same device on different camera
+	result, err = store.GetBoundingBoxForDeviceAndCamera("esp-aa:bb:cc:dd:ee:ff", "cam-002")
+	require.NoError(t, err)
+	assert.Equal(t, "bbox-3", result.ID)
+
+	// Non-existent combination should return nil
+	result, err = store.GetBoundingBoxForDeviceAndCamera("nonexistent", "cam-001")
+	require.NoError(t, err)
+	assert.Nil(t, result)
+
+	result, err = store.GetBoundingBoxForDeviceAndCamera("esp-aa:bb:cc:dd:ee:ff", "nonexistent")
+	require.NoError(t, err)
+	assert.Nil(t, result)
+}
+
+func TestUniqueDeviceCameraMapping(t *testing.T) {
+	dbPath := t.TempDir() + "/test.db"
+	store, err := Open(&Config{Path: dbPath})
+	require.NoError(t, err)
+	defer store.Close()
+
+	// Create initial mapping
+	mapping1 := &DeviceBoundingBoxMapping{
+		ID:        "bbox-1",
+		DeviceID:  "esp-aa:bb:cc:dd:ee:ff",
+		CameraID:  "cam-001",
+		Bounds:    BoundingBox{X: 0.1, Y: 0.1, Width: 0.3, Height: 0.3},
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}
+	err = store.SaveBoundingBox(mapping1)
+	require.NoError(t, err)
+
+	// Verify only one mapping exists for this device+camera
+	results, err := store.ListBoundingBoxesForCamera("cam-001")
+	require.NoError(t, err)
+	assert.Len(t, results, 1)
+
+	// Create mapping with same device but different camera - should work
+	mapping2 := &DeviceBoundingBoxMapping{
+		ID:        "bbox-2",
+		DeviceID:  "esp-aa:bb:cc:dd:ee:ff",
+		CameraID:  "cam-002",
+		Bounds:    BoundingBox{X: 0, Y: 0, Width: 1, Height: 1},
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}
+	err = store.SaveBoundingBox(mapping2)
+	require.NoError(t, err)
+
+	// Verify both cameras have mappings
+	results, err = store.ListBoundingBoxesForCamera("cam-001")
+	require.NoError(t, err)
+	assert.Len(t, results, 1)
+
+	results, err = store.ListBoundingBoxesForCamera("cam-002")
+	require.NoError(t, err)
+	assert.Len(t, results, 1)
+
+	// Verify device has two mappings (one per camera)
+	results, err = store.ListBoundingBoxesForDevice("esp-aa:bb:cc:dd:ee:ff")
+	require.NoError(t, err)
+	assert.Len(t, results, 2)
+}
