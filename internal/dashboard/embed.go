@@ -27,6 +27,12 @@ func MonitorHTML() []byte {
 	return content
 }
 
+// FaviconSVG returns the favicon.svg content
+func FaviconSVG() []byte {
+	content, _ := staticFiles.ReadFile("static/favicon.svg")
+	return content
+}
+
 // HasDashboard returns true if dashboard files are embedded
 func HasDashboard() bool {
 	_, err := staticFiles.ReadFile("static/index.html")

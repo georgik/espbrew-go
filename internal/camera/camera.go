@@ -2,6 +2,7 @@ package camera
 
 import (
 	"fmt"
+	"runtime"
 	"strings"
 )
 
@@ -17,9 +18,9 @@ const (
 
 // VideoFormat represents a supported video format
 type VideoFormat struct {
-	Width       uint32
-	Height      uint32
-	PixelFormat string // "MJPG", "YUYV", "RGB24", etc
+	Width       uint32 `json:"width"`
+	Height      uint32 `json:"height"`
+	PixelFormat string `json:"pixel_format"` // "MJPG", "YUYV", "RGB24", etc
 }
 
 // String returns a string representation of the format
@@ -29,12 +30,12 @@ func (v VideoFormat) String() string {
 
 // CameraInfo represents a discovered camera
 type CameraInfo struct {
-	ID      string        // Unique identifier
-	Name    string        // Human-readable name
-	Path    string        // Platform-specific device path
-	Backend Backend       // Platform backend
-	Formats []VideoFormat // Supported formats
-	NodeID  string        // Cluster node owning this camera (empty for local)
+	ID      string        `json:"id"`      // Unique identifier
+	Name    string        `json:"name"`    // Human-readable name
+	Path    string        `json:"path"`    // Platform-specific device path
+	Backend Backend       `json:"backend"` // Platform backend
+	Formats []VideoFormat `json:"formats"` // Supported formats
+	NodeID  string        `json:"node_id"` // Cluster node owning this camera (empty for local)
 }
 
 // IsAvailable checks if camera is available for capture
@@ -91,4 +92,95 @@ func DetectBackend(deviceID string) Backend {
 	}
 
 	return BackendUnknown
+}
+
+// Platform returns the camera backend/platform name
+func Platform() string {
+	switch runtime.GOOS {
+	case "linux":
+		return "v4l2"
+	case "darwin":
+		return "avfoundation"
+	case "windows":
+		return "directshow"
+	default:
+		return "unknown"
+	}
+}
+
+// Controller interface provides cross-platform camera control methods
+type Controller interface {
+	// Close releases the camera device
+	Close() error
+
+	// Path returns the device path/identifier
+	Path() string
+
+	// SetDisplayPreset configures camera for display photography
+	// On Linux: Applies optimized settings for glowing/backlit displays
+	// On other platforms: No-op (uses camera defaults)
+	SetDisplayPreset() error
+
+	// SetFocus configures focus distance (0-255)
+	SetFocus(distance int32) error
+
+	// SetBrightness adjusts brightness (0-255)
+	SetBrightness(value int32) error
+
+	// SetContrast adjusts contrast (0-255)
+	SetContrast(value int32) error
+
+	// SetSharpness adjusts sharpness (0-255)
+	SetSharpness(value int32) error
+
+	// SetSaturation adjusts saturation (0-255)
+	SetSaturation(value int32) error
+
+	// GetBrightness retrieves current brightness
+	GetBrightness() (int32, error)
+
+	// GetContrast retrieves current contrast
+	GetContrast() (int32, error)
+
+	// GetSettings retrieves all current settings
+	GetSettings() (map[string]int32, error)
+}
+
+// NewController creates a platform-appropriate camera controller
+func NewController(devicePath string) (Controller, error) {
+	if runtime.GOOS != "linux" {
+		return newStubController(devicePath)
+	}
+	return newLinuxController(devicePath)
+}
+
+// ControllerAvailable returns true if camera controls are available on this platform
+func ControllerAvailable() bool {
+	return runtime.GOOS == "linux"
+}
+
+// DisplayPresetSettings defines optimal values for display photography
+var DisplayPresetSettings = struct {
+	Brightness int32
+	Contrast   int32
+	Sharpness  int32
+	Saturation int32
+	Exposure   int32
+}{
+	Brightness: 80,  // Lowered from 128 to avoid overexposure
+	Contrast:   140, // Increased from 32 for text readability
+	Sharpness:  150, // Increased from 22 for clear text
+	Saturation: 90,  // Slightly reduced from 32
+	Exposure:   300, // Manual exposure value
+}
+
+// FocusPresets defines focus values for common distances
+var FocusPresets = struct {
+	Close   int32 // ~0.3m (macro)
+	Display int32 // ~1m (typical display distance)
+	Far     int32 // ~3m+ (distant objects)
+}{
+	Close:   200,
+	Display: 85,
+	Far:     30,
 }

@@ -8,6 +8,7 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"net/url"
 	"os"
 	"sync"
 	"time"
@@ -114,6 +115,8 @@ type DeviceInfo struct {
 	State      DeviceState `json:"status"`
 	NodeID     string      `json:"node_id,omitempty"`
 	ChipType   string      `json:"chip_type,omitempty"`
+	BoardModel string      `json:"board_model,omitempty"`
+	Tags       []string    `json:"tags,omitempty"`
 	ReservedBy string      `json:"reserved_by,omitempty"`
 }
 
@@ -527,4 +530,223 @@ func (p *ProgressClient) Close() error {
 		return p.conn.Close()
 	}
 	return nil
+}
+
+// SnapRequest represents a request to execute a device snapshot via cluster API.
+type SnapRequest struct {
+	DeviceID   string `json:"device_id"`   // Device identifier (device_id, MAC, or path)
+	Duration   int    `json:"duration"`    // Monitor duration in seconds
+	CameraID   string `json:"camera_id"`   // Camera device identifier (optional)
+	Firmware   string `json:"firmware"`    // Firmware path on server (or file_id reference)
+	ForceFlash bool   `json:"force_flash"` // Force flash even if hash matches
+	SkipFlash  bool   `json:"skip_flash"`  // Skip flashing entirely
+}
+
+// SnapResponse represents the response from a cluster snap operation.
+type SnapResponse struct {
+	SnapID    string        `json:"snap_id"`  // Unique snapshot identifier
+	Status    string        `json:"status"`   // Operation status (success, partial, failed)
+	Error     string        `json:"error"`    // Error message if failed
+	ImageData []byte        `json:"-"`        // Raw image data (not in JSON)
+	Metadata  *SnapMetadata `json:"metadata"` // Snapshot metadata
+}
+
+// SnapMetadata contains descriptive information about a cluster snapshot.
+type SnapMetadata struct {
+	Timestamp      time.Time `json:"timestamp"`       // When the snapshot was created
+	Duration       int64     `json:"duration_ms"`     // How long the snapshot took (milliseconds)
+	DevicePath     string    `json:"device_path"`     // Serial port path
+	DeviceNode     string    `json:"device_node"`     // Cluster node that owns the device
+	FlashEnabled   bool      `json:"flash_enabled"`   // Whether flashing was performed
+	MonitorEnabled bool      `json:"monitor_enabled"` // Whether serial monitoring was enabled
+	CaptureEnabled bool      `json:"capture_enabled"` // Whether camera capture was enabled
+	LogEntryCount  int       `json:"log_entry_count"` // Number of log lines captured
+	ImageSize      int       `json:"image_size"`      // Size of captured image in bytes
+}
+
+// ExecuteSnap submits a snap request to the cluster and returns the response.
+func (c *Client) ExecuteSnap(req SnapRequest) (*SnapResponse, error) {
+	// Build request URL with device ID as query parameter (avoids URL encoding issues with device paths)
+	url := fmt.Sprintf("%s/api/v1/devices/snap?device_id=%s", c.baseURL, url.QueryEscape(req.DeviceID))
+
+	// Marshal request body (keep for retries)
+	body, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("marshal request: %w", err)
+	}
+
+	// Execute with retry - recreate request body each time
+	var lastErr error
+	var resp *http.Response
+	for attempt := 0; attempt <= c.maxRetries; attempt++ {
+		if attempt > 0 {
+			log.Debug().Int("attempt", attempt).Int("max_retries", c.maxRetries).
+				Str("url", url).Msg("Retrying snap request")
+			time.Sleep(c.retryDelay * time.Duration(attempt))
+		}
+
+		// Create fresh request with new body for each attempt
+		httpReq, err := http.NewRequest("POST", url, bytes.NewReader(body))
+		if err != nil {
+			return nil, fmt.Errorf("create request: %w", err)
+		}
+		httpReq.Header.Set("Content-Type", "application/json")
+
+		resp, err = c.httpClient.Do(httpReq)
+		if err != nil {
+			lastErr = &RetryableError{Err: err}
+			continue
+		}
+
+		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			// Success - check status code
+			if resp.StatusCode != http.StatusOK {
+				bodyBytes, _ := io.ReadAll(resp.Body)
+				resp.Body.Close()
+				return nil, fmt.Errorf("status %d: %s", resp.StatusCode, string(bodyBytes))
+			}
+
+			// Decode response
+			var snapResp struct {
+				SnapID string                 `json:"snap_id"`
+				Status string                 `json:"status"`
+				Error  string                 `json:"error,omitempty"`
+				Result map[string]interface{} `json:"result,omitempty"`
+			}
+			if err := json.NewDecoder(resp.Body).Decode(&snapResp); err != nil {
+				resp.Body.Close()
+				return nil, fmt.Errorf("decode response: %w", err)
+			}
+			resp.Body.Close()
+
+			// Build response
+			response := &SnapResponse{
+				SnapID: snapResp.SnapID,
+				Status: snapResp.Status,
+				Error:  snapResp.Error,
+			}
+
+			// Extract metadata from result if available
+			if snapResp.Result != nil {
+				response.Metadata = extractSnapMetadata(snapResp.Result)
+			}
+
+			return response, nil
+		}
+
+		if !isRetryable(resp.StatusCode) {
+			bodyBytes, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			return nil, fmt.Errorf("status %d: %s", resp.StatusCode, string(bodyBytes))
+		}
+
+		resp.Body.Close()
+		lastErr = fmt.Errorf("status %d", resp.StatusCode)
+	}
+
+	return nil, fmt.Errorf("request failed: %w", lastErr)
+}
+
+// extractSnapMetadata extracts snap metadata from the result map.
+func extractSnapMetadata(result map[string]interface{}) *SnapMetadata {
+	metadata := &SnapMetadata{}
+
+	if m, ok := result["metadata"].(map[string]interface{}); ok {
+		// Extract timestamp
+		if ts, ok := m["timestamp"].(string); ok {
+			metadata.Timestamp, _ = time.Parse(time.RFC3339, ts)
+		}
+
+		// Extract duration
+		if dur, ok := m["duration_ms"].(float64); ok {
+			metadata.Duration = int64(dur)
+		}
+
+		// Extract device path
+		if dp, ok := m["device_path"].(string); ok {
+			metadata.DevicePath = dp
+		}
+
+		// Extract device node
+		if dn, ok := m["device_node"].(string); ok {
+			metadata.DeviceNode = dn
+		}
+
+		// Extract flash enabled
+		if fe, ok := m["flash_enabled"].(bool); ok {
+			metadata.FlashEnabled = fe
+		}
+
+		// Extract monitor enabled
+		if me, ok := m["monitor_enabled"].(bool); ok {
+			metadata.MonitorEnabled = me
+		}
+
+		// Extract capture enabled
+		if ce, ok := m["capture_enabled"].(bool); ok {
+			metadata.CaptureEnabled = ce
+		}
+
+		// Extract log entry count
+		if lec, ok := m["log_entry_count"].(float64); ok {
+			metadata.LogEntryCount = int(lec)
+		}
+
+		// Extract image size
+		if is, ok := m["image_size"].(float64); ok {
+			metadata.ImageSize = int(is)
+		}
+	}
+
+	return metadata
+}
+
+// FlashHashCheckRequest represents a flash hash check request.
+type FlashHashCheckRequest struct {
+	Firmware string `json:"firmware"` // Firmware path to check
+	Chip     string `json:"chip"`     // Chip type (optional, default: esp32s3)
+}
+
+// FlashHashCheckResponse represents the response from a flash hash check.
+type FlashHashCheckResponse struct {
+	DeviceID      string `json:"device_id"`
+	Match         bool   `json:"match"`
+	DeviceHash    string `json:"device_hash,omitempty"`
+	FirmwareHash  string `json:"firmware_hash,omitempty"`
+	FlashRequired bool   `json:"flash_required"`
+	Status        string `json:"status"` // "checked", "error"
+	Error         string `json:"error,omitempty"`
+}
+
+// CheckFlashHash checks if the device flash matches the firmware hash.
+func (c *Client) CheckFlashHash(deviceID string, req FlashHashCheckRequest) (*FlashHashCheckResponse, error) {
+	body, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("marshal request: %w", err)
+	}
+
+	url := fmt.Sprintf("%s/api/v1/devices/%s/flash-hash", c.baseURL, url.PathEscape(deviceID))
+	httpReq, err := http.NewRequest("POST", url, bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.doWithRetry(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("status %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	var hashResp FlashHashCheckResponse
+	if err := json.NewDecoder(resp.Body).Decode(&hashResp); err != nil {
+		return nil, fmt.Errorf("decode response: %w", err)
+	}
+
+	return &hashResp, nil
 }

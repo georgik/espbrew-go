@@ -16,6 +16,7 @@ ESP32 cluster flashing tool written in Go. Manages multiple ESP32 devices across
 - **Device Disabling**: Administratively disable devices to prevent accidental flashing
 - **Device Protection**: Flash read-only mode for production devices while allowing serial monitoring
 - **Camera Support**: Discover and capture images from connected cameras
+- **Snap Command**: Flash, monitor serial output, and capture camera image in one command
 - **Job Queue**: Queue and manage flash jobs across all available devices
 - **Device Locking**: Prevents concurrent access to serial ports
 - **Remote Flashing**: Flash devices from any machine on the network
@@ -121,9 +122,11 @@ The serial monitor interface automatically handles Windows COM port paths withou
 
 ## Documentation
 
+- [Snap Command](docs/SNAP.md) - Flash, monitor, capture workflow
 - [Cluster Usage](docs/CLUSTER.md) - Multi-node setup, remote operations
 - [HTTP API Reference](docs/API.md) - REST and WebSocket endpoints
 - [Error Handling](docs/ERROR_HANDLING.md) - Timeouts, retries, recovery mechanisms
+- [Hash-Based Flash](docs/HASH_BASED_FLASH.md) - Optimized flashing with hash detection
 - [Image Mapping](docs/IMAGE_MAPPING.md) - Device mapping and automated screenshot extraction
 
 ## CLI Quick Reference
@@ -243,6 +246,28 @@ Send data: `{type: "data", data: "character"}`
 ./espbrew capture --width 1920 --height 1080 --quality 90
 ./espbrew capture my-photo.jpg     # Save to specific file
 ```
+
+### Snap
+
+The `snap` command combines flashing, serial monitoring, and camera capture into a single streamlined operation:
+
+```bash
+./espbrew snap                                          # Auto-detect device and firmware
+./espbrew snap --device esp-aa:bb:cc:dd:ee:ff          # Use device from inventory
+./espbrew snap --duration 10                           # Monitor for 10 seconds
+./espbrew snap --skip-flash                             # Monitor and capture only
+./espbrew snap --no-capture                             # Flash and monitor only
+./espbrew snap --cluster http://leader:8080             # Remote snap via cluster
+```
+
+**Snap Features:**
+- Auto-detects devices and firmware from project directory
+- Hash-based flash optimization skips unchanged regions
+- Monitors serial output for boot verification
+- Captures camera image for visual confirmation
+- Works in local and cluster modes
+
+See [Snap Documentation](docs/SNAP.md) for complete details.
 
 ### Captures Management
 

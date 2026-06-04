@@ -140,6 +140,19 @@ func (i *Inventory) FindByAlias(alias string) (*DeviceInventory, error) {
 	return nil, fmt.Errorf("device not found with alias: %s", alias)
 }
 
+// FindByPath finds a device by its last known path
+func (i *Inventory) FindByPath(path string) (*DeviceInventory, error) {
+	i.mu.RLock()
+	defer i.mu.RUnlock()
+
+	for _, dev := range i.devices {
+		if dev.LastPath == path {
+			return dev, nil
+		}
+	}
+	return nil, fmt.Errorf("device not found with path: %s", path)
+}
+
 // FindByRequirements finds all devices matching the given requirements
 func (i *Inventory) FindByRequirements(req *FlashRequirement) ([]*DeviceInventory, error) {
 	i.mu.RLock()

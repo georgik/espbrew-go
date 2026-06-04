@@ -33,6 +33,7 @@ type Message struct {
 type NodeInfo struct {
 	ID       string    `json:"id"`
 	Address  string    `json:"address"`
+	Port     int       `json:"port,omitempty"` // HTTP port for API access
 	Role     string    `json:"role"`
 	LastSeen time.Time `json:"last_seen"`
 }
@@ -84,6 +85,7 @@ type JobInfo struct {
 
 type HeartbeatPayload struct {
 	NodeID      string        `json:"node_id"`
+	HTTPPort    int           `json:"http_port,omitempty"` // HTTP port for API access
 	DeviceCount int           `json:"device_count"`
 	CameraCount int           `json:"camera_count"`
 	ActiveJobs  int           `json:"active_jobs"`

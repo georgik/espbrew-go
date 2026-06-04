@@ -109,6 +109,10 @@ func (p *PeerNode) State() *ClusterState {
 	return p.state
 }
 
+func (p *PeerNode) ID() string {
+	return p.id
+}
+
 func (p *PeerNode) watchDevices() {
 	defer p.wg.Done()
 
@@ -179,6 +183,7 @@ func (p *PeerNode) sendHeartbeat() {
 
 	payload := &protocol.HeartbeatPayload{
 		NodeID:      p.id,
+		HTTPPort:    p.config.HTTPPort,
 		DeviceCount: len(devices),
 		CameraCount: len(cameras),
 		ActiveJobs:  0,

@@ -50,6 +50,10 @@ var flashOpts struct {
 	buildDir string
 	// Project detection
 	noDetect bool
+	// Device filtering
+	filterBoardModel string   // Filter by board model (e.g., "ESP32-S3-BOX")
+	filterTags       []string // Filter by tags (all must match)
+	filterChip       string   // Filter by chip type (e.g., "ESP32-S3")
 }
 
 func init() {
@@ -81,6 +85,10 @@ func init() {
 	flashCmd.Flags().StringVar(&flashOpts.buildDir, "build-dir", "", "ESP-IDF build directory (reads flash_args)")
 	// Project detection
 	flashCmd.Flags().BoolVar(&flashOpts.noDetect, "no-detect", false, "Disable automatic project detection")
+	// Device filtering
+	flashCmd.Flags().StringVar(&flashOpts.filterBoardModel, "filter-board", "", "Filter devices by board model (e.g., ESP32-S3-BOX)")
+	flashCmd.Flags().StringSliceVar(&flashOpts.filterTags, "filter-tag", []string{}, "Filter devices by tags (can be specified multiple times, all must match)")
+	flashCmd.Flags().StringVar(&flashOpts.filterChip, "filter-chip", "", "Filter devices by chip type (e.g., ESP32-S3)")
 
 	rootCmd.AddCommand(flashCmd)
 }
@@ -177,8 +185,14 @@ func runFlashRemote(args []string) error {
 			return fmt.Errorf("list devices: %w", err)
 		}
 
-		// Find first available device
-		for _, d := range devices {
+		// Filter devices based on criteria
+		filtered, err := filterDevices(devices)
+		if err != nil {
+			return err
+		}
+
+		// Find first available device from filtered list
+		for _, d := range filtered {
 			if d.State == "available" {
 				devicePath = d.Path
 				break
@@ -186,7 +200,7 @@ func runFlashRemote(args []string) error {
 		}
 
 		if devicePath == "" {
-			return fmt.Errorf("no available devices on cluster")
+			return fmt.Errorf("no matching devices on cluster (use --filter-board/--filter-tag/--filter-chip to specify criteria)")
 		}
 
 		log.Info().Str("device", devicePath).Msg("Auto-selected available device")
@@ -645,7 +659,13 @@ func runFlashRemoteMultiImage() error {
 			return fmt.Errorf("list devices: %w", err)
 		}
 
-		for _, d := range devices {
+		// Filter devices based on criteria
+		filtered, err := filterDevices(devices)
+		if err != nil {
+			return err
+		}
+
+		for _, d := range filtered {
 			if d.State == "available" {
 				devicePath = d.Path
 				break
@@ -763,4 +783,70 @@ func runFlashRemoteMultiImage() error {
 	}
 
 	return nil
+}
+
+// filterDevices filters devices based on CLI filter criteria
+func filterDevices(devices []cluster.DeviceInfo) ([]cluster.DeviceInfo, error) {
+	// If no filters specified, return all devices
+	if flashOpts.filterBoardModel == "" && len(flashOpts.filterTags) == 0 && flashOpts.filterChip == "" {
+		return devices, nil
+	}
+
+	log.Info().
+		Str("board", flashOpts.filterBoardModel).
+		Strs("tags", flashOpts.filterTags).
+		Str("chip", flashOpts.filterChip).
+		Msg("Filtering devices")
+
+	// Filter devices by matching against API-provided metadata
+	var filtered []cluster.DeviceInfo
+	for _, d := range devices {
+		// Check if device matches all filter criteria
+		if matchesFilters(d) {
+			filtered = append(filtered, d)
+			log.Info().Str("device", d.Path).
+				Str("board", d.BoardModel).
+				Strs("tags", d.Tags).
+				Msg("Device matches filter")
+		}
+	}
+
+	log.Info().Int("total", len(devices)).Int("matched", len(filtered)).Msg("Device filter results")
+
+	if len(filtered) == 0 {
+		return nil, fmt.Errorf("no devices match the specified filters")
+	}
+
+	return filtered, nil
+}
+
+// matchesFilters checks if a device from the API matches the filter criteria
+func matchesFilters(d cluster.DeviceInfo) bool {
+	// Check board model filter
+	if flashOpts.filterBoardModel != "" && d.BoardModel != flashOpts.filterBoardModel {
+		return false
+	}
+
+	// Check chip type filter
+	if flashOpts.filterChip != "" && d.ChipType != flashOpts.filterChip {
+		return false
+	}
+
+	// Check tags filter (all specified tags must be present)
+	if len(flashOpts.filterTags) > 0 {
+		for _, requiredTag := range flashOpts.filterTags {
+			found := false
+			for _, deviceTag := range d.Tags {
+				if deviceTag == requiredTag {
+					found = true
+					break
+				}
+			}
+			if !found {
+				return false
+			}
+		}
+	}
+
+	return true
 }

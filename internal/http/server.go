@@ -59,6 +59,10 @@ func (s *Server) setupRoutes(store *persistence.Store) {
 	cameraHandler := NewCameraHandler()
 	cameraHandler.RegisterRoutes(s.router)
 
+	// Camera settings routes
+	cameraSettingsHandler := NewCameraSettingsHandler(store)
+	cameraSettingsHandler.RegisterRoutes(s.router)
+
 	// Bounding box mapping routes
 	mappingHandler := NewMappingHandler(store)
 	mappingHandler.RegisterRoutes(s.router)
@@ -66,6 +70,10 @@ func (s *Server) setupRoutes(store *persistence.Store) {
 	// Flash status routes
 	flashStatusHandler := NewFlashStatusHandler(store)
 	flashStatusHandler.RegisterRoutes(s.router)
+
+	// Snap API routes
+	snapAPI := NewSnapAPI(store, s.node)
+	snapAPI.RegisterRoutes(s.router)
 
 	// Device disable/enable routes
 	deviceDisableHandler := NewDeviceDisableHandler(s.node, store)
@@ -104,6 +112,9 @@ func (s *Server) setupRoutes(store *persistence.Store) {
 
 	// Serial monitor page
 	s.router.HandleFunc("/monitor", s.handleMonitor).Methods("GET")
+
+	// Favicon
+	s.router.HandleFunc("/favicon.ico", s.handleFavicon).Methods("GET")
 
 	// Static files (dashboard)
 	s.router.PathPrefix("/").Handler(s.handleStatic())
@@ -165,6 +176,11 @@ func (s *Server) handleMonitor(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html")
 		w.Write([]byte(fallbackMonitor))
 	}
+}
+
+func (s *Server) handleFavicon(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "image/svg+xml")
+	w.Write(dashboard.FaviconSVG())
 }
 
 func (s *Server) handleStatic() http.Handler {

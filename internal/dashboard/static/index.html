@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>ESPBrew Cluster Dashboard</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.ico">
     <style>
         :root {
             --bg-primary: #0f172a;
@@ -818,6 +819,7 @@
                 <div class="nav-tabs">
                     <button class="nav-tab active" onclick="switchTab('dashboard')">Dashboard</button>
                     <button class="nav-tab" onclick="switchTab('cameras')">Cameras</button>
+                    <button class="nav-tab" onclick="switchTab('camera-settings')">Camera Settings</button>
                     <button class="nav-tab" onclick="switchTab('mapping')">Device Mapping</button>
                     <button class="nav-tab" onclick="location.href='/monitor'">Serial Monitor</button>
                 </div>
@@ -901,6 +903,31 @@
                 </div>
                 <div id="gallery-grid" class="gallery-grid">
                     <div class="empty-state">No captures yet. Take a photo above!</div>
+                </div>
+            </div>
+        </div>
+
+        <div id="tab-camera-settings" class="tab-content">
+            <div class="grid" style="grid-template-columns: 1fr 1fr; gap: 20px;">
+                <div class="card">
+                    <div class="card-title">Camera Configuration</div>
+                    <div id="camera-settings-content">
+                        <div class="empty-state">Select a camera to configure</div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-title">Control Panel</div>
+                    <div id="camera-controls-content">
+                        <div class="empty-state">Select a camera to view controls</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card" style="margin-top: 20px;">
+                <div class="card-title">Saved Camera Profiles</div>
+                <div id="camera-profiles-list">
+                    <div class="empty-state">No saved camera profiles</div>
                 </div>
             </div>
         </div>
@@ -1020,6 +1047,8 @@
             if (tabName === 'cameras') {
                 loadCameras();
                 loadGallery();
+            } else if (tabName === 'camera-settings') {
+                loadCameraSettings();
             } else if (tabName === 'mapping') {
                 loadMappingTab();
             }
@@ -2935,6 +2964,424 @@
             } catch (error) {
                 console.error('Failed to load device bounding boxes:', error);
                 return [];
+            }
+        }
+
+        // Camera Settings Functions
+        let selectedCameraId = null;
+        let currentCameraSettings = null;
+
+        // Load camera settings when tab is switched
+        async function loadCameraSettings() {
+            try {
+                const response = await fetch('/api/v1/camera/discover');
+                const data = await response.json();
+                const cameras = data.cameras || [];
+
+                renderCameraSettingsList(cameras);
+                loadCameraProfiles();
+            } catch (error) {
+                console.error('Failed to load cameras for settings:', error);
+                document.getElementById('camera-settings-content').innerHTML =
+                    '<div class="empty-state">Failed to load cameras</div>';
+            }
+        }
+
+        // Render list of cameras for configuration
+        function renderCameraSettingsList(cameras) {
+            const content = document.getElementById('camera-settings-content');
+
+            if (cameras.length === 0) {
+                content.innerHTML = '<div class="empty-state">No cameras found</div>';
+                return;
+            }
+
+            content.innerHTML = `
+                <div style="margin-bottom: 16px;">
+                    <label style="font-size: 13px; font-weight: 500; color: var(--text-secondary);">Select Camera:</label>
+                    <select id="camera-select" onchange="selectCameraForSettings(this.value)" style="width: 100%; margin-top: 8px;">
+                        <option value="">-- Select a camera --</option>
+                        ${cameras.map(cam => `<option value="${cam.id}">${cam.name || cam.id}</option>`).join('')}
+                    </select>
+                </div>
+                <div id="camera-config-panel" style="display: none;">
+                    <div style="margin-bottom: 16px;">
+                        <label style="font-size: 13px; font-weight: 500; display: block; margin-bottom: 8px;">Profile Name:</label>
+                        <input type="text" id="profile-name" placeholder="My Display Camera" style="width: 100%; max-width: 300px; padding: 8px; background: var(--bg-tertiary); border: 1px solid var(--border); color: var(--text-primary); border-radius: 6px;">
+                    </div>
+                    ${renderCameraControlsForm()}
+                    <div style="display: flex; gap: 8px; margin-top: 16px;">
+                        <button class="btn" onclick="saveCameraSettings()">Save Profile</button>
+                        <button class="btn btn-secondary" onclick="applyCameraSettings()">Apply to Camera</button>
+                    </div>
+                </div>
+            `;
+        }
+
+        // Render camera control sliders
+        function renderCameraControlsForm() {
+            const controls = [
+                { id: 'brightness', label: 'Brightness', min: 0, max: 255, default: 128 },
+                { id: 'contrast', label: 'Contrast', min: 0, max: 255, default: 32 },
+                { id: 'saturation', label: 'Saturation', min: 0, max: 255, default: 32 },
+                { id: 'sharpness', label: 'Sharpness', min: 0, max: 255, default: 22 },
+                { id: 'gain', label: 'Gain', min: 0, max: 255, default: 64 },
+                { id: 'focus', label: 'Focus', min: 0, max: 255, default: 51 },
+                { id: 'exposure', label: 'Exposure', min: 0, max: 2047, default: 166 },
+            ];
+
+            return controls.map(ctrl => `
+                <div style="margin-bottom: 12px;">
+                    <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
+                        <label style="font-size: 13px; font-weight: 500;">${ctrl.label}:</label>
+                        <span id="${ctrl.id}-value" style="font-size: 12px; color: var(--text-secondary);">${ctrl.default}</span>
+                    </div>
+                    <input type="range" id="${ctrl.id}" min="${ctrl.min}" max="${ctrl.max}" value="${ctrl.default}"
+                           oninput="document.getElementById('${ctrl.id}-value').textContent = this.value"
+                           style="width: 100%;">
+                </div>
+            `).join('') + `
+                <div style="margin-bottom: 12px;">
+                    <div style="display: flex; gap: 16px;">
+                        <label style="font-size: 13px; display: flex; align-items: center; gap: 8px;">
+                            <input type="checkbox" id="auto-exposure">
+                            Auto Exposure
+                        </label>
+                        <label style="font-size: 13px; display: flex; align-items: center; gap: 8px;">
+                            <input type="checkbox" id="auto-focus">
+                            Auto Focus
+                        </label>
+                        <label style="font-size: 13px; display: flex; align-items: center; gap: 8px;">
+                            <input type="checkbox" id="auto-white-balance">
+                            Auto White Balance
+                        </label>
+                    </div>
+                </div>
+            `;
+        }
+
+        // Select camera for configuration
+        async function selectCameraForSettings(cameraId) {
+            if (!cameraId) {
+                document.getElementById('camera-config-panel').style.display = 'none';
+                selectedCameraId = null;
+                currentCameraSettings = null;
+                return;
+            }
+
+            // Validate camera ID format - reject old UUID format
+            const isOldFormat = !cameraId.startsWith('/dev/') &&
+                                cameraId.includes('-') &&
+                                cameraId.length > 20;
+            if (isOldFormat) {
+                console.error('Invalid camera ID format (old UUID):', cameraId);
+                document.getElementById('camera-config-panel').style.display = 'none';
+                alert('Invalid camera ID format. Please select a camera from the dropdown.');
+                return;
+            }
+
+            selectedCameraId = cameraId;
+
+            try {
+                const response = await fetch(`/api/v1/camera/settings/${encodeURIComponent(cameraId)}`);
+                if (response.ok) {
+                    const data = await response.json();
+                    currentCameraSettings = data.settings;
+                    populateCameraForm(currentCameraSettings);
+                } else {
+                    currentCameraSettings = null;
+                }
+                document.getElementById('camera-config-panel').style.display = 'block';
+
+                // Load camera controls (async)
+                loadCameraControls(cameraId);
+
+                // Auto-capture preview after controls render
+                setTimeout(() => captureCameraPreview(cameraId, 640, 360), 500);
+            } catch (error) {
+                console.error('Failed to load camera settings:', error);
+                document.getElementById('camera-config-panel').style.display = 'block';
+                currentCameraSettings = null;
+            }
+        }
+
+        // Populate form with existing settings
+        function populateCameraForm(settings) {
+            if (!settings) return;
+
+            if (settings.name) {
+                document.getElementById('profile-name').value = settings.name;
+            }
+
+            const controls = ['brightness', 'contrast', 'saturation', 'sharpness', 'gain', 'focus', 'exposure'];
+            controls.forEach(id => {
+                const value = settings[id] || 0;
+                document.getElementById(id).value = value;
+                document.getElementById(`${id}-value`).textContent = value;
+            });
+
+            document.getElementById('auto-exposure').checked = settings.auto_exposure || false;
+            document.getElementById('auto-focus').checked = settings.auto_focus || false;
+            document.getElementById('auto-white-balance').checked = settings.auto_white_balance || false;
+        }
+
+        // Load current camera controls
+        async function loadCameraControls(cameraId) {
+            const content = document.getElementById('camera-controls-content');
+
+            try {
+                const response = await fetch(`/api/v1/camera/${encodeURIComponent(cameraId)}/controls`);
+                const data = await response.json();
+
+                if (!data.available) {
+                    content.innerHTML = `
+                        <div style="text-align: center; padding: 20px;">
+                            <p style="color: var(--text-secondary); margin-bottom: 8px;">Camera controls not available</p>
+                            <p style="font-size: 12px; color: var(--text-secondary);">Platform: ${data.platform || 'unknown'}</p>
+                        </div>
+                    `;
+                    return;
+                }
+
+                content.innerHTML = `
+                    <div style="margin-bottom: 16px;">
+                        <div style="font-size: 13px; font-weight: 500; margin-bottom: 8px;">Camera Preview</div>
+                        <div id="camera-preview-${cameraId}" style="background: #000; border-radius: 8px; overflow: hidden; aspect-ratio: 16/9; display: flex; align-items: center; justify-content: center;">
+                            <div style="color: var(--text-secondary); font-size: 12px;">Click "Refresh Preview" to capture</div>
+                        </div>
+                        <button class="btn btn-secondary" onclick="captureCameraPreview('${cameraId}', 640, 360)" style="width: 100%; margin-top: 8px;">Refresh Preview</button>
+                    </div>
+                    <div style="margin-bottom: 16px;">
+                        <div style="font-size: 13px; font-weight: 500; margin-bottom: 8px;">Platform:</div>
+                        <div style="font-size: 12px; color: var(--text-secondary);">${data.platform || 'unknown'}</div>
+                    </div>
+                    <div style="margin-bottom: 16px;">
+                        <div style="font-size: 13px; font-weight: 500; margin-bottom: 8px;">Current Values:</div>
+                        ${renderCurrentControls(data.current)}
+                    </div>
+                `;
+            } catch (error) {
+                console.error('Failed to load camera controls:', error);
+                content.innerHTML = '<div class="empty-state">Failed to load camera controls</div>';
+            }
+        }
+
+        // Render current control values
+        function renderCurrentControls(current) {
+            if (!current || Object.keys(current).length === 0) {
+                return '<div style="font-size: 12px; color: var(--text-secondary);">No current values available</div>';
+            }
+
+            return Object.entries(current).map(([key, value]) => `
+                <div style="display: flex; justify-content: space-between; padding: 4px 0; font-size: 12px;">
+                    <span style="color: var(--text-secondary);">${key}:</span>
+                    <span>${value}</span>
+                </div>
+            `).join('');
+        }
+
+        // Save camera settings to storage
+        async function saveCameraSettings() {
+            if (!selectedCameraId) {
+                alert('Please select a camera first');
+                return;
+            }
+
+            const settings = {
+                camera_id: selectedCameraId,
+                name: document.getElementById('profile-name').value,
+                brightness: parseInt(document.getElementById('brightness').value),
+                contrast: parseInt(document.getElementById('contrast').value),
+                saturation: parseInt(document.getElementById('saturation').value),
+                sharpness: parseInt(document.getElementById('sharpness').value),
+                gain: parseInt(document.getElementById('gain').value),
+                focus: parseInt(document.getElementById('focus').value),
+                exposure: parseInt(document.getElementById('exposure').value),
+                auto_exposure: document.getElementById('auto-exposure').checked,
+                auto_focus: document.getElementById('auto-focus').checked,
+                auto_white_balance: document.getElementById('auto-white-balance').checked,
+            };
+
+            try {
+                const response = await fetch('/api/v1/camera/settings', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(settings)
+                });
+
+                if (response.ok) {
+                    const data = await response.json();
+                    alert('Camera settings saved successfully');
+                    loadCameraProfiles();
+                } else {
+                    const error = await response.json();
+                    alert('Failed to save camera settings: ' + error.error);
+                }
+            } catch (error) {
+                alert('Failed to save camera settings: ' + error.message);
+            }
+        }
+
+        // Apply settings to physical camera
+        async function applyCameraSettings() {
+            if (!selectedCameraId) {
+                alert('Please select a camera first');
+                return;
+            }
+
+            try {
+                const response = await fetch(`/api/v1/camera/settings/${encodeURIComponent(selectedCameraId)}/apply`, {
+                    method: 'POST'
+                });
+
+                if (response.ok) {
+                    const data = await response.json();
+                    alert('Camera settings applied successfully');
+                    loadCameraControls(selectedCameraId);
+                } else {
+                    const error = await response.json();
+                    alert('Failed to apply camera settings: ' + error.error);
+                }
+            } catch (error) {
+                alert('Failed to apply camera settings: ' + error.message);
+            }
+        }
+
+        // Capture camera preview
+        async function captureCameraPreview(cameraId, width, height) {
+            const previewDiv = document.getElementById(`camera-preview-${cameraId}`);
+            if (!previewDiv) {
+                console.warn('Preview div not found for camera:', cameraId);
+                return;
+            }
+            previewDiv.innerHTML = '<div style="color: var(--text-secondary);">Capturing...</div>';
+
+            try {
+                const response = await fetch('/api/v1/cameras/capture', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        camera_id: cameraId,
+                        width: width || 640,
+                        height: height || 360,
+                        format: 'jpg',
+                        quality: 75
+                    })
+                });
+
+                if (response.ok) {
+                    const data = await response.json();
+                    if (data.url) {
+                        previewDiv.innerHTML = `<img src="${data.url}" style="width: 100%; height: 100%; object-fit: contain;" alt="Camera preview">`;
+                    } else if (data.image) {
+                        // Base64 encoded image
+                        previewDiv.innerHTML = `<img src="data:image/jpeg;base64,${data.image}" style="width: 100%; height: 100%; object-fit: contain;" alt="Camera preview">`;
+                    } else {
+                        previewDiv.innerHTML = '<div style="color: var(--error);">Failed to load preview</div>';
+                    }
+                } else {
+                    const error = await response.json();
+                    previewDiv.innerHTML = `<div style="color: var(--error);">Capture failed: ${error.error || 'Unknown error'}</div>`;
+                }
+            } catch (error) {
+                previewDiv.innerHTML = `<div style="color: var(--error);">Capture failed: ${error.message}</div>`;
+            }
+        }
+
+        // Load saved camera profiles
+        async function loadCameraProfiles() {
+            try {
+                const response = await fetch('/api/v1/camera/settings');
+                const data = await response.json();
+                const profiles = data.settings || [];
+
+                renderCameraProfiles(profiles);
+            } catch (error) {
+                console.error('Failed to load camera profiles:', error);
+            }
+        }
+
+        // Render camera profiles list
+        function renderCameraProfiles(profiles) {
+            const list = document.getElementById('camera-profiles-list');
+
+            if (profiles.length === 0) {
+                list.innerHTML = '<div class="empty-state">No saved camera profiles</div>';
+                return;
+            }
+
+            list.innerHTML = `
+                <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 12px;">
+                    ${profiles.map(profile => {
+                        // Check if profile has old UUID format (not a valid device path)
+                        const isOldFormat = !profile.camera_id.startsWith('/dev/') &&
+                                          profile.camera_id.includes('-') &&
+                                          profile.camera_id.length > 20;
+                        const warning = isOldFormat ?
+                            '<div style="color: var(--warning); font-size: 11px; margin-bottom: 4px;">⚠️ Old format - Delete and recreate</div>' : '';
+
+                        return `
+                        <div class="card" style="padding: 12px; ${isOldFormat ? 'border: 1px solid var(--warning);' : ''}">
+                            ${warning}
+                            <div style="font-size: 14px; font-weight: 500; margin-bottom: 4px;">
+                                ${profile.name || profile.camera_id}
+                            </div>
+                            <div style="font-size: 12px; color: var(--text-secondary); margin-bottom: 8px;">
+                                Camera: ${profile.camera_id}
+                            </div>
+                            <div style="display: flex; gap: 8px;">
+                                <button class="btn btn-secondary" style="flex: 1; font-size: 12px;" onclick="loadProfileIntoForm('${profile.camera_id}')" ${isOldFormat ? 'disabled' : ''}>Load</button>
+                                <button class="btn btn-danger" style="flex: 1; font-size: 12px;" onclick="deleteCameraProfile('${profile.camera_id}')">Delete</button>
+                            </div>
+                        </div>
+                    `;
+                    }).join('')}
+                </div>
+            `;
+        }
+
+        // Load profile into form
+        async function loadProfileIntoForm(cameraId) {
+            // Check if camera ID is old UUID format (not a valid device path)
+            const isOldFormat = !cameraId.startsWith('/dev/') &&
+                                cameraId.includes('-') &&
+                                cameraId.length > 20;
+
+            if (isOldFormat) {
+                alert('This profile uses an old camera ID format.\n\nPlease delete this profile and create a new one.\n\nOld ID: ' + cameraId);
+                return;
+            }
+
+            const select = document.getElementById('camera-select');
+
+            // Check if the camera ID exists in the dropdown
+            const cameraExists = Array.from(select.options).some(opt => opt.value === cameraId);
+            if (!cameraExists) {
+                alert('Camera "' + cameraId + '" not found.\n\nThe camera may be disconnected or the ID has changed.');
+                return;
+            }
+
+            select.value = cameraId;
+            await selectCameraForSettings(cameraId);
+            switchTab('camera-settings');
+        }
+
+        // Delete camera profile
+        async function deleteCameraProfile(cameraId) {
+            if (!confirm('Delete this camera profile?')) return;
+
+            try {
+                const response = await fetch(`/api/v1/camera/settings/${encodeURIComponent(cameraId)}`, {
+                    method: 'DELETE'
+                });
+
+                if (response.ok) {
+                    loadCameraProfiles();
+                } else {
+                    alert('Failed to delete camera profile');
+                }
+            } catch (error) {
+                alert('Failed to delete camera profile: ' + error.message);
             }
         }
 

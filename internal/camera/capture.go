@@ -188,14 +188,19 @@ func (c *Capturer) captureLinux(ctx context.Context, cameraID string, width, hei
 	// Create temp file for capture
 	tmpFile := "/tmp/espbrew-capture.jpg"
 
-	// Build command - fswebcam uses /dev/video0 by default
+	// Build command - specify device if provided
 	args := []string{
 		"-r", fmt.Sprintf("%dx%d", width, height),
 		"--jpeg", fmt.Sprintf("%d", quality),
 		"-q",       // Skip banner
 		"-S", "10", // Skip frames for stability
-		tmpFile,
 	}
+
+	// Add device argument if cameraID is specified and not "default"
+	if cameraID != "" && cameraID != "default" {
+		args = append([]string{"-d", cameraID}, args...)
+	}
+	args = append(args, tmpFile)
 
 	cmd := exec.CommandContext(ctx, "fswebcam", args...)
 	if output, err := cmd.CombinedOutput(); err != nil {

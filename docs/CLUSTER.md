@@ -100,6 +100,55 @@ Connect to a cluster from any machine:
 ./espbrew --cluster http://leader:8080 flash firmware.bin --monitor
 ```
 
+### Device Filtering
+
+When multiple devices are connected, you can filter which device to flash based on hardware properties or user-defined tags. All specified filters must match for a device to be selected.
+
+```bash
+# Flash only ESP32-S3-BOX boards
+./espbrew --cluster http://leader:8080 flash --filter-board "ESP32-S3-BOX" firmware.bin
+
+# Flash devices with "production" tag
+./espbrew --cluster http://leader:8080 flash --filter-tag "production" firmware.bin
+
+# Flash ESP32-S3 devices with both "test" and "s3" tags
+./espbrew --cluster http://leader:8080 flash --filter-tag "test" --filter-tag "s3" firmware.bin
+
+# Combine filters (ESP32-S3 chip + "dev" tag)
+./espbrew --cluster http://leader:8080 flash --filter-chip "ESP32-S3" --filter-tag "dev" firmware.bin
+```
+
+**Filter Criteria:**
+
+| Flag | Description | Example |
+|------|-------------|---------|
+| `--filter-board` | Board model from inventory | `ESP32-S3-BOX`, `ESP32-S3-BOX-3` |
+| `--filter-tag` | User-defined tags (repeatable, all must match) | `production`, `test`, `dev` |
+| `--filter-chip` | Chip type | `ESP32`, `ESP32-S3`, `ESP32-C3` |
+
+**Filtering Behavior:**
+
+1. ESPBrew queries the cluster API for available devices and their metadata
+2. Devices are matched against all specified filter criteria (AND logic)
+3. The first available matching device is selected for flashing
+4. If no devices match, the command fails with an error message
+
+**Setting Device Properties:**
+
+Device board models and tags can be configured via the web dashboard or API:
+
+```bash
+# Via web UI: http://localhost:8080 → Devices → Edit device
+# Via API: PATCH /api/v1/devices/{device_id} with board_model and tags fields
+```
+
+**Use Cases:**
+
+- Production Deployment: Tag production devices with "prod" and use `--filter-tag "prod"` to target only production units
+- Board Variants: Use `--filter-board` when different board types require different firmware variants
+- Testing Environments: Tag test devices with "test" to prevent accidentally flashing production hardware
+- Hardware Requirements: Filter by chip type when firmware is compiled for specific ESP variants
+
 ## Remote Monitor
 
 Monitor device serial output remotely:

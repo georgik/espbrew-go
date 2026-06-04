@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- Beer mug body -->
+  <rect x="16" y="20" width="24" height="32" rx="2" fill="#f59e0b" stroke="#78350f" stroke-width="2"/>
+  <!-- Beer foam -->
+  <path d="M14 18 Q16 10 24 10 Q32 10 34 14 Q38 8 44 14 Q48 18 46 22 L14 18" fill="#fef3c7" stroke="#78350f" stroke-width="1.5"/>
+  <!-- Mug handle -->
+  <path d="M40 26 Q50 24 50 32 Q50 40 40 38" fill="none" stroke="#78350f" stroke-width="3"/>
+  <!-- ESP32 chip on mug -->
+  <rect x="20" y="28" width="16" height="16" rx="1" fill="#1e293b" stroke="#0f172a" stroke-width="1.5"/>
+  <!-- Chip pins left -->
+  <line x1="18" y1="31" x2="20" y2="31" stroke="#94a3b8" stroke-width="1.5"/>
+  <line x1="18" y1="36" x2="20" y2="36" stroke="#94a3b8" stroke-width="1.5"/>
+  <line x1="18" y1="41" x2="20" y2="41" stroke="#94a3b8" stroke-width="1.5"/>
+  <!-- Chip pins right -->
+  <line x1="36" y1="31" x2="38" y2="31" stroke="#94a3b8" stroke-width="1.5"/>
+  <line x1="36" y1="36" x2="38" y2="36" stroke="#94a3b8" stroke-width="1.5"/>
+  <line x1="36" y1="41" x2="38" y2="41" stroke="#94a3b8" stroke-width="1.5"/>
+  <!-- ESP32 text on chip -->
+  <text x="28" y="37" font-size="5" fill="#22c55e" text-anchor="middle" font-family="monospace" font-weight="bold">ESP</text>
+  <!-- Bubbles -->
+  <circle cx="22" cy="26" r="1.5" fill="#fef3c7"/>
+  <circle cx="28" cy="24" r="1" fill="#fef3c7"/>
+  <circle cx="34" cy="26" r="1.5" fill="#fef3c7"/>
+</svg>

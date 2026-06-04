@@ -4,13 +4,14 @@ import bolt "go.etcd.io/bbolt"
 
 const (
 	// Bucket names
-	bucketDevices       = "devices"
-	bucketJobs          = "jobs"
-	bucketHistory       = "history"
-	bucketMeta          = "meta"
-	bucketBoundingBoxes = "bounding_boxes"
-	bucketCalibrations  = "calibrations"
-	bucketFlashHashes   = "flash_hashes"
+	bucketDevices        = "devices"
+	bucketJobs           = "jobs"
+	bucketHistory        = "history"
+	bucketMeta           = "meta"
+	bucketBoundingBoxes  = "bounding_boxes"
+	bucketCalibrations   = "calibrations"
+	bucketFlashHashes    = "flash_hashes"
+	bucketCameraSettings = "camera_settings"
 
 	// Key prefixes
 	prefixDevice        = "device:"
@@ -44,6 +45,7 @@ func initBuckets(tx *bolt.Tx) error {
 		[]byte(bucketBoundingBoxes),
 		[]byte(bucketCalibrations),
 		[]byte(bucketFlashHashes),
+		[]byte(bucketCameraSettings),
 	}
 
 	for _, name := range buckets {

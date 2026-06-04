@@ -3,6 +3,8 @@ package cluster
 import (
 	"context"
 	"fmt"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -129,6 +131,10 @@ func (l *LeaderNode) State() *ClusterState {
 	return l.state
 }
 
+func (l *LeaderNode) ID() string {
+	return l.id
+}
+
 func (l *LeaderNode) RegisterNode(node *protocol.NodeInfo) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -159,6 +165,9 @@ func (l *LeaderNode) UpdateHeartbeat(nodeID string, payload *protocol.HeartbeatP
 
 	if node, exists := l.state.Nodes[nodeID]; exists {
 		node.LastSeen = time.Now()
+		if payload.HTTPPort > 0 {
+			node.Port = payload.HTTPPort
+		}
 		log.Debug().Str("node_id", nodeID).Time("last_seen", node.LastSeen).
 			Msg("Heartbeat received, LastSeen updated")
 	} else {
@@ -753,6 +762,13 @@ func (l *LeaderNode) discoverCameras() {
 		return
 	}
 
+	// Filter to keep only index0 (primary interface) per physical camera
+	// Most USB cameras expose video-index0 (main) and video-index1 (metadata)
+	cameras = filterPrimaryCameras(cameras)
+
+	// Sort cameras alphabetically by name for consistent ordering
+	sortCamerasByName(cameras)
+
 	for _, cam := range cameras {
 		protoCam := &protocol.CameraInfo{
 			ID:      cam.ID,
@@ -765,6 +781,43 @@ func (l *LeaderNode) discoverCameras() {
 	}
 
 	log.Info().Int("count", len(cameras)).Msg("Cameras discovered")
+}
+
+// filterPrimaryCameras keeps only video-index0 (primary interface) per physical camera.
+// This filters out video-index1 which is often used for metadata/controls.
+func filterPrimaryCameras(cameras []*camera.CameraInfo) []*camera.CameraInfo {
+	seen := make(map[string]bool) // base camera name -> already seen
+	filtered := make([]*camera.CameraInfo, 0, len(cameras))
+
+	for _, cam := range cameras {
+		// Extract base camera name (remove -video-indexN suffix)
+		baseName := cam.Name
+		if idx := strings.Index(cam.Name, "-video-index"); idx > 0 {
+			baseName = cam.Name[:idx]
+		}
+
+		// Prefer index0 over index1
+		if strings.Contains(cam.Name, "-video-index1") {
+			continue
+		}
+
+		// Skip if we already have this camera (index0)
+		if seen[baseName] {
+			continue
+		}
+
+		seen[baseName] = true
+		filtered = append(filtered, cam)
+	}
+
+	return filtered
+}
+
+// sortCamerasByName sorts cameras alphabetically by name.
+func sortCamerasByName(cameras []*camera.CameraInfo) {
+	sort.Slice(cameras, func(i, j int) bool {
+		return cameras[i].Name < cameras[j].Name
+	})
 }
 
 // UpdateDeviceInfo updates device info in cluster state (for manual entry)

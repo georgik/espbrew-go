@@ -9,6 +9,7 @@ type Node interface {
 	Start(ctx context.Context) error
 	Stop() error
 	State() *ClusterState
+	ID() string
 }
 
 type ClusterState struct {

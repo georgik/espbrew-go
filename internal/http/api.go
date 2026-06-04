@@ -203,6 +203,9 @@ func (h *APIHandler) handleDevices(w http.ResponseWriter, r *http.Request) {
 		if serial != "" {
 			devMap["serial"] = serial
 		}
+		if dev.BoardModel != "" {
+			devMap["board_model"] = dev.BoardModel
+		}
 		if len(dev.Aliases) > 0 {
 			devMap["aliases"] = dev.Aliases
 		}

@@ -73,7 +73,7 @@ Response:
     "path": "/dev/ttyUSB0",
     "vid": "0x4348",
     "pid": "0x0028",
-    "state": "available",
+    "status": "available",
     "node_id": "node-abc123"
   }
 ]
@@ -90,6 +90,7 @@ Device response fields:
 - `path` - Current connection path (empty if offline)
 - `device_id` - Unique device identifier
 - `chip_type` - Detected chip variant
+- `board_model` - Board model from inventory (if set)
 - `status` - Connection status
 - `connected` - Boolean indicating if device is currently connected
 - `vid` / `pid` - Vendor/product IDs (if connected)
@@ -993,6 +994,407 @@ Response:
 Error responses:
 - `400 Bad Request` - Invalid or unsafe path
 - `404 Not Found` - File doesn't exist
+
+### Check Flash Hash
+
+```
+POST /devices/{deviceId}/flash-hash
+```
+
+Checks if the device's current firmware matches the specified firmware file by comparing MD5 hashes of the application region. Use this before flashing to determine if flashing is necessary.
+
+Request body:
+```json
+{
+  "firmware": "build/app.bin",
+  "chip": "esp32s3"
+}
+```
+
+Parameters:
+- `firmware` (string, required): Path to firmware file to compare
+- `chip` (string, optional): Chip type. Default: esp32s3
+
+Response:
+```json
+{
+  "device_id": "esp-aa:bb:cc:dd:ee:ff",
+  "match": false,
+  "device_hash": "abc123...",
+  "firmware_hash": "def456...",
+  "flash_required": true,
+  "status": "checked"
+}
+```
+
+Parameters:
+- `device_id`: Device identifier
+- `match`: true if hashes match (no flash needed), false otherwise
+- `device_hash`: MD5 hash of device's application region (first 64KB at 0x10000)
+- `firmware_hash`: MD5 hash of firmware file's application region
+- `flash_required`: true if flashing is needed, false if hashes match
+- `status`: Operation status ("checked", "error")
+
+Error responses:
+- `400 Bad Request` - Invalid request body or missing firmware path
+- `404 Not Found` - Device not found
+- `500 Internal Server Error` - Hash computation failed
+
+### Execute Snap
+
+```
+POST /devices/snap?device_id={deviceId}
+```
+
+Executes a snap operation on the specified device. Snap performs serial monitoring and camera capture. Flashing is handled separately via the hash check and flash endpoints.
+
+Query parameters:
+- `device_id` (string, required): Device identifier (path, ID, or alias)
+
+Request body:
+```json
+{
+  "duration": 10,
+  "camera_id": "",
+  "skip_flash": true,
+  "skip_capture": false,
+  "skip_monitor": false
+}
+```
+
+Parameters:
+- `duration` (integer, optional): Monitor/capture duration in seconds. Default: 10
+- `camera_id` (string, optional): Camera device identifier. Default: auto-select first available
+- `skip_flash` (boolean, optional): Skip flashing (should be true for snap-only). Default: true
+- `skip_capture` (boolean, optional): Skip camera capture. Default: false
+- `skip_monitor` (boolean, optional): Skip serial monitoring. Default: false
+
+Note: The snap endpoint only performs monitor+capture operations. Use the flash hash check endpoint before snap to determine if flashing is needed.
+
+Response:
+```json
+{
+  "snap_id": "snap-20240602-123456",
+  "status": "success",
+  "metadata": {
+    "snap_id": "snap-20240602-123456",
+    "timestamp": "2024-06-02T12:34:56Z",
+    "duration_ms": 10234,
+    "status": "success",
+    "device_path": "/dev/ttyUSB0",
+    "device_chip": "esp32-s3",
+    "flash_enabled": true,
+    "flash_firmware": "build/app.bin",
+    "flash_offset": 0,
+    "flashed": true,
+    "flash_skipped": false,
+    "flash_hash_before": "abc123...",
+    "monitor_enabled": true,
+    "monitor_duration": 10,
+    "monitor_baud": 115200,
+    "log_entry_count": 42,
+    "capture_enabled": true,
+    "camera_id": "esp32-cam",
+    "image_captured": true,
+    "image_format": "jpeg",
+    "image_size": 45678
+  },
+  "logs": "Boot complete. Ready.",
+  "image": "base64_encoded_jpeg_data..."
+}
+```
+
+Status values:
+- `success`: All operations completed successfully
+- `partial`: Some operations failed (e.g., capture failed but monitor succeeded)
+- `failed`: Critical operation failed
+
+Error responses:
+- `400 Bad Request` - Invalid request body or parameters
+- `404 Not Found` - Device not found
+- `500 Internal Server Error` - Snap execution failed
+
+### List Device Snaps
+
+```
+GET /devices/{deviceId}/snaps
+```
+
+Lists all snap operations for a specific device.
+
+Response:
+```json
+{
+  "device_id": "esp-aa:bb:cc:dd:ee:ff",
+  "snaps": [
+    {
+      "snap_id": "snap-20240602-123456",
+      "timestamp": "2024-06-02T12:34:56Z",
+      "status": "success",
+      "duration_ms": 10234
+    }
+  ]
+}
+```
+
+### Get Snap Result
+
+```
+GET /snaps/{snapId}
+```
+
+Retrieves the result of a specific snap operation.
+
+Response: Same as Execute Snap response.
+
+Error responses:
+- `404 Not Found` - Snap ID not found
+
+### Camera Settings
+
+#### List Camera Settings
+
+```
+GET /api/v1/camera/settings
+```
+
+Lists all camera settings stored in the database.
+
+Response:
+```json
+{
+  "settings": [
+    {
+      "camera_id": "/dev/video0",
+      "name": "Logitech C615",
+      "brightness": 128,
+      "contrast": 32,
+      "saturation": 32,
+      "sharpness": 22,
+      "gain": 0,
+      "focus": 85,
+      "exposure": 300,
+      "white_balance": 4000,
+      "auto_exposure": false,
+      "auto_focus": false,
+      "auto_white_balance": false,
+      "created_at": "2026-06-04T10:00:00Z",
+      "updated_at": "2026-06-04T10:00:00Z"
+    }
+  ],
+  "count": 1
+}
+```
+
+#### Get Camera Settings
+
+```
+GET /api/v1/camera/settings/{cameraId}
+```
+
+Retrieves settings for a specific camera.
+
+Response:
+```json
+{
+  "settings": {
+    "camera_id": "/dev/video0",
+    "name": "Logitech C615",
+    "brightness": 128,
+    "contrast": 32,
+    "saturation": 32,
+    "sharpness": 22,
+    "gain": 0,
+    "focus": 85,
+    "exposure": 300,
+    "white_balance": 4000,
+    "auto_exposure": false,
+    "auto_focus": false,
+    "auto_white_balance": false
+  },
+  "controls_available": true,
+  "platform": "v4l2"
+}
+```
+
+#### Create Camera Settings
+
+```
+POST /api/v1/camera/settings
+Content-Type: application/json
+```
+
+Request body:
+```json
+{
+  "camera_id": "/dev/video0",
+  "name": "Logitech C615",
+  "brightness": 128,
+  "contrast": 32,
+  "saturation": 32,
+  "sharpness": 22,
+  "gain": 0,
+  "focus": 85,
+  "exposure": 300,
+  "white_balance": 4000,
+  "auto_exposure": false,
+  "auto_focus": false,
+  "auto_white_balance": false
+}
+```
+
+Parameters:
+- `camera_id` (string, required): Unique camera identifier
+- `name` (string, optional): Human-readable name for the camera
+- `brightness` (integer, optional): Brightness value (0-255)
+- `contrast` (integer, optional): Contrast value (0-255)
+- `saturation` (integer, optional): Saturation value (0-255)
+- `sharpness` (integer, optional): Sharpness value (0-255)
+- `gain` (integer, optional): Gain value (0-255)
+- `focus` (integer, optional): Focus distance (0-255)
+- `exposure` (integer, optional): Manual exposure value
+- `white_balance` (integer, optional): White balance temperature
+- `auto_exposure` (boolean, optional): Enable auto exposure
+- `auto_focus` (boolean, optional): Enable auto focus
+- `auto_white_balance` (boolean, optional): Enable auto white balance
+
+Response:
+```json
+{
+  "status": "created",
+  "camera_id": "/dev/video0",
+  "settings": {...}
+}
+```
+
+#### Update Camera Settings
+
+```
+PUT /api/v1/camera/settings/{cameraId}
+PATCH /api/v1/camera/settings/{cameraId}
+```
+
+Updates camera settings. PUT replaces all settings, PATCH updates only provided fields.
+
+Request body: Same as Create Camera Settings.
+
+Response:
+```json
+{
+  "status": "updated",
+  "camera_id": "/dev/video0",
+  "settings": {...}
+}
+```
+
+#### Delete Camera Settings
+
+```
+DELETE /api/v1/camera/settings/{cameraId}
+```
+
+Removes camera settings for the specified camera.
+
+Response:
+```json
+{
+  "status": "deleted",
+  "camera_id": "/dev/video0"
+}
+```
+
+#### Apply Camera Settings
+
+```
+POST /api/v1/camera/settings/{cameraId}/apply
+```
+
+Applies stored settings to the physical camera device. Only available on Linux with V4L2 support.
+
+Response:
+```json
+{
+  "status": "applied",
+  "camera_id": "/dev/video0",
+  "settings": {...},
+  "current": {
+    "brightness": 128,
+    "contrast": 32,
+    "focus": 85
+  },
+  "platform": "v4l2"
+}
+```
+
+If camera controls are not available on the platform:
+```json
+{
+  "status": "skipped",
+  "message": "Camera controls not available on this platform",
+  "platform": "darwin"
+}
+```
+
+#### Discover Cameras
+
+```
+GET /api/v1/camera/discover
+```
+
+Lists available cameras on the system.
+
+Response:
+```json
+{
+  "cameras": [
+    {
+      "id": "/dev/video0",
+      "name": "Logitech C615",
+      "backend": "v4l2",
+      "formats": [
+        {"width": 1280, "height": 720, "pixel_format": "MJPG"}
+      ]
+    }
+  ],
+  "count": 1,
+  "controls_available": true,
+  "platform": "v4l2"
+}
+```
+
+#### Get Camera Controls
+
+```
+GET /api/v1/camera/{cameraId}/controls
+```
+
+Queries available controls and current settings for a camera.
+
+Response:
+```json
+{
+  "current": {
+    "brightness": 128,
+    "contrast": 32,
+    "saturation": 32,
+    "sharpness": 22
+  },
+  "available": true,
+  "platform": "v4l2",
+  "display_preset": {
+    "brightness": 80,
+    "contrast": 140,
+    "sharpness": 150,
+    "saturation": 90,
+    "exposure": 300
+  },
+  "focus_presets": {
+    "close": 200,
+    "display": 85,
+    "far": 30
+  }
+}
+```
 
 ## Error Responses
 

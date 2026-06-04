@@ -3,6 +3,7 @@ package camera
 import (
 	"fmt"
 	"runtime"
+	"strings"
 	"sync"
 
 	"github.com/pion/mediadevices"
@@ -48,8 +49,14 @@ func (d *Discoverer) Discover() ([]*CameraInfo, error) {
 			continue
 		}
 		if info != nil {
-			d.cameras[info.ID] = info
-			cameras = append(cameras, info)
+			// Skip non-primary video devices (video1, video3, etc.)
+			// V4L2 creates multiple nodes per camera; we want the primary one
+			if isPrimaryVideoDevice(info.ID) {
+				d.cameras[info.ID] = info
+				cameras = append(cameras, info)
+			} else {
+				log.Debug().Str("device_id", info.ID).Msg("Skipping non-primary video device")
+			}
 		}
 	}
 
@@ -93,10 +100,20 @@ func deviceToCameraInfo(dm mediadevices.MediaDeviceInfo) (*CameraInfo, error) {
 		return nil, fmt.Errorf("device has no label")
 	}
 
+	// For V4L2, extract actual device path from pion's device ID
+	// pion returns: "usb-046d_HD_Webcam_C615_C574F460-video-index0"
+	// We need: "/dev/video0" as the ID for API calls
+	cameraID := dm.DeviceID
+	devicePath := dm.DeviceID
+	if runtime.GOOS == "linux" {
+		devicePath = extractV4L2Path(dm.DeviceID)
+		cameraID = devicePath // Use /dev/video0 as the primary ID
+	}
+
 	info := &CameraInfo{
-		ID:      dm.DeviceID,
+		ID:      cameraID,
 		Name:    dm.Label,
-		Path:    dm.DeviceID,
+		Path:    devicePath,
 		Backend: DetectBackend(dm.DeviceID),
 	}
 
@@ -113,6 +130,42 @@ func deviceToCameraInfo(dm mediadevices.MediaDeviceInfo) (*CameraInfo, error) {
 	}
 
 	return info, nil
+}
+
+// isPrimaryVideoDevice checks if the device ID represents the primary video device
+// V4L2 creates multiple nodes per camera (video0=primary, video1=metadata, etc.)
+// We want only the primary device (even-indexed video devices)
+func isPrimaryVideoDevice(deviceID string) bool {
+	// Check for pion's video-index pattern (e.g., "video-index0", "video-index1")
+	idx := strings.LastIndex(deviceID, "-video-index")
+	if idx != -1 && idx+12 < len(deviceID) {
+		numStr := deviceID[idx+12:]
+		var videoNum int
+		if _, err := fmt.Sscanf(numStr, "%d", &videoNum); err == nil {
+			// Primary devices have even numbers (0, 2, 4, ...)
+			return videoNum%2 == 0
+		}
+	}
+	// For non-V4L2 devices (macOS, Windows), include all
+	return true
+}
+
+// extractV4L2Path converts a pion device ID to a V4L2 device path
+// Input: "usb-046d_HD_Webcam_C615_C574F460-video-index0"
+// Output: "/dev/video0"
+func extractV4L2Path(deviceID string) string {
+	// Extract the video index from the device ID
+	// Format: ...-video-indexN
+	idx := strings.LastIndex(deviceID, "-video-index")
+	if idx != -1 && idx+12 < len(deviceID) {
+		numStr := deviceID[idx+12:]
+		var videoNum int
+		if _, err := fmt.Sscanf(numStr, "%d", &videoNum); err == nil {
+			return fmt.Sprintf("/dev/video%d", videoNum)
+		}
+	}
+	// Fallback: try to find any number in the string
+	return deviceID
 }
 
 // Discover is a convenience function that discovers cameras without a discoverer instance

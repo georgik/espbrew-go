@@ -39,6 +39,10 @@ func (m *mockNode) Stop() error {
 	return nil
 }
 
+func (m *mockNode) ID() string {
+	return "test-node"
+}
+
 func TestReadFlashHandlerSubmit(t *testing.T) {
 	tmpDir := t.TempDir()
 	node := &mockNode{
