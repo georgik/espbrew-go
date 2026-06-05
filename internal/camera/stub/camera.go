@@ -86,3 +86,25 @@ func (c *Camera) GetSettings() (map[string]int32, error) {
 func (c *Camera) QueryControls() ([]interface{}, error) {
 	return nil, fmt.Errorf("camera controls not available on this platform")
 }
+
+// GetControlRange returns default range on non-Linux platforms
+func (c *Camera) GetControlRange(controlName string) (min, max int32, err error) {
+	// Return standard ranges for non-Linux platforms
+	switch controlName {
+	case "brightness", "contrast", "saturation", "sharpness", "gain":
+		return 0, 255, nil
+	case "focus_absolute":
+		return 0, 255, nil
+	case "exposure_absolute":
+		return 0, 2047, nil
+	default:
+		return 0, 255, nil
+	}
+}
+
+// GetControlInfo returns default info on non-Linux platforms
+func (c *Camera) GetControlInfo(controlName string) (min, max, current int32, err error) {
+	min, max, _ := c.GetControlRange(controlName)
+	current = (min + max) / 2 // Midpoint as default
+	return min, max, current, nil
+}

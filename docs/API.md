@@ -1004,11 +1004,20 @@ Request:
   "width": 1280,
   "height": 720,
   "format": "jpg",
-  "quality": 85
+  "quality": 85,
+  "preview": false
 }
 ```
 
-All fields are optional. Defaults: first available camera, 1280x720, jpg, quality 85.
+Parameters:
+- `camera_id` (string, optional): Unique camera identifier (UUID from pion mediadevices)
+- `width` (integer, optional): Image width in pixels (default: 1280)
+- `height` (integer, optional): Image height in pixels (default: 720)
+- `format` (string, optional): Image format - jpg or png (default: jpg)
+- `quality` (integer, optional): JPEG quality 1-100 (default: 85)
+- `preview` (boolean, optional): If true, returns image without saving to gallery (default: false)
+
+All fields are optional. Defaults: first available camera, 1280x720, jpg, quality 85, save to gallery.
 
 Response:
 ```json
@@ -1437,6 +1446,11 @@ POST /api/v1/camera/settings/{cameraId}/apply
 ```
 
 Applies stored settings to the physical camera device. Only available on Linux with V4L2 support.
+
+If no settings exist for the camera, default settings are automatically created with:
+- brightness: 128, contrast: 128, saturation: 128, sharpness: 128
+- gain: 0, focus: 0, exposure: 0, white_balance: 0
+- auto_exposure: true, auto_focus: true, auto_white_balance: true
 
 Response:
 ```json

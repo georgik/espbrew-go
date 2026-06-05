@@ -294,6 +294,91 @@
 
         .connecting { animation: pulse 1.5s infinite; }
 
+        /* Toast notifications */
+        .toast-container {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            z-index: 10000;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            max-width: 350px;
+        }
+
+        .toast {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 12px 16px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            animation: slideIn 0.3s ease-out;
+            max-width: 350px;
+        }
+
+        @keyframes slideIn {
+            from { transform: translateX(100%); opacity: 0; }
+            to { transform: translateX(0); opacity: 1; }
+        }
+
+        @keyframes fadeOut {
+            from { opacity: 1; }
+            to { opacity: 0; }
+        }
+
+        .toast.removing {
+            animation: fadeOut 0.3s ease-out forwards;
+        }
+
+        .toast-icon {
+            flex-shrink: 0;
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 12px;
+            font-weight: bold;
+        }
+
+        .toast.success .toast-icon { background: var(--success); color: white; }
+        .toast.success { border-left: 3px solid var(--success); }
+        .toast.error .toast-icon { background: var(--error); color: white; }
+        .toast.error { border-left: 3px solid var(--error); }
+        .toast.warning .toast-icon { background: var(--warning); color: #1f2937; }
+        .toast.warning { border-left: 3px solid var(--warning); }
+        .toast.info .toast-icon { background: var(--accent); color: white; }
+        .toast.info { border-left: 3px solid var(--accent); }
+
+        .toast-content {
+            flex: 1;
+            font-size: 13px;
+            color: var(--text-primary);
+            word-wrap: break-word;
+        }
+
+        .toast-close {
+            flex-shrink: 0;
+            background: transparent;
+            border: none;
+            color: var(--text-secondary);
+            cursor: pointer;
+            font-size: 16px;
+            line-height: 1;
+            padding: 0;
+            width: 20px;
+            height: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .toast-close:hover { color: var(--text-primary); }
+
         .camera-grid {
             display: grid;
             grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
@@ -817,10 +902,10 @@
             <div class="header-left">
                 <h1>ESPBrew Cluster</h1>
                 <div class="nav-tabs">
-                    <button class="nav-tab active" onclick="switchTab('dashboard')">Dashboard</button>
-                    <button class="nav-tab" onclick="switchTab('cameras')">Cameras</button>
-                    <button class="nav-tab" onclick="switchTab('camera-settings')">Camera Settings</button>
-                    <button class="nav-tab" onclick="switchTab('mapping')">Device Mapping</button>
+                    <button class="nav-tab active" data-tab="dashboard" onclick="switchTab('dashboard', event)">Dashboard</button>
+                    <button class="nav-tab" data-tab="cameras" onclick="switchTab('cameras', event)">Cameras</button>
+                    <button class="nav-tab" data-tab="camera-settings" onclick="switchTab('camera-settings', event)">Camera Settings</button>
+                    <button class="nav-tab" data-tab="mapping" onclick="switchTab('mapping', event)">Device Mapping</button>
                     <button class="nav-tab" onclick="location.href='/monitor'">Serial Monitor</button>
                 </div>
             </div>
@@ -980,6 +1065,59 @@
         let cameras = [];
 
         let reconnectTimeout;
+        let cameraControlRanges = {};  // Store dynamic control ranges per camera
+
+        // Toast notification system
+        function showToast(message, type = 'info', duration = 3000) {
+            const container = document.getElementById('toast-container') || createToastContainer();
+
+            const toast = document.createElement('div');
+            toast.className = `toast ${type}`;
+
+            const icon = document.createElement('div');
+            icon.className = 'toast-icon';
+            const icons = { success: '✓', error: '✕', warning: '!', info: 'i' };
+            icon.textContent = icons[type] || icons.info;
+
+            const content = document.createElement('div');
+            content.className = 'toast-content';
+            content.textContent = message;
+
+            const closeBtn = document.createElement('button');
+            closeBtn.className = 'toast-close';
+            closeBtn.innerHTML = '×';
+            closeBtn.onclick = () => removeToast(toast);
+
+            toast.appendChild(icon);
+            toast.appendChild(content);
+            toast.appendChild(closeBtn);
+
+            container.appendChild(toast);
+
+            if (duration > 0) {
+                setTimeout(() => removeToast(toast), duration);
+            }
+
+            return toast;
+        }
+
+        function createToastContainer() {
+            const container = document.createElement('div');
+            container.id = 'toast-container';
+            container.className = 'toast-container';
+            document.body.appendChild(container);
+            return container;
+        }
+
+        function removeToast(toast) {
+            if (!toast || !toast.parentNode) return;
+            toast.classList.add('removing');
+            toast.addEventListener('animationend', () => {
+                if (toast.parentNode) {
+                    toast.parentNode.removeChild(toast);
+                }
+            });
+        }
 
         function connect() {
             const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -1037,11 +1175,23 @@
             }
         }
 
-        function switchTab(tabName) {
+        function switchTab(tabName, event) {
             document.querySelectorAll('.nav-tab').forEach(tab => tab.classList.remove('active'));
             document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
 
-            event.target.classList.add('active');
+            // Find and activate the tab - either from event or by finding the matching tab
+            let tabElement;
+            if (event && event.target) {
+                tabElement = event.target;
+            } else {
+                // Find tab by data-tab attribute or text content
+                tabElement = Array.from(document.querySelectorAll('.nav-tab')).find(tab =>
+                    tab.getAttribute('data-tab') === tabName || tab.textContent.toLowerCase().includes(tabName.replace('-', ' '))
+                );
+            }
+            if (tabElement) {
+                tabElement.classList.add('active');
+            }
             document.getElementById('tab-' + tabName).classList.add('active');
 
             if (tabName === 'cameras') {
@@ -3020,14 +3170,15 @@
 
         // Render camera control sliders
         function renderCameraControlsForm() {
+            // Default ranges - will be updated with actual camera ranges when loaded
             const controls = [
                 { id: 'brightness', label: 'Brightness', min: 0, max: 255, default: 128 },
                 { id: 'contrast', label: 'Contrast', min: 0, max: 255, default: 32 },
                 { id: 'saturation', label: 'Saturation', min: 0, max: 255, default: 32 },
                 { id: 'sharpness', label: 'Sharpness', min: 0, max: 255, default: 22 },
                 { id: 'gain', label: 'Gain', min: 0, max: 255, default: 64 },
-                { id: 'focus', label: 'Focus', min: 0, max: 255, default: 51 },
-                { id: 'exposure', label: 'Exposure', min: 0, max: 2047, default: 166 },
+                { id: 'focus_absolute', label: 'Focus', min: 0, max: 255, default: 51 },
+                { id: 'exposure_absolute', label: 'Exposure', min: 0, max: 2047, default: 166 },
             ];
 
             return controls.map(ctrl => `
@@ -3078,18 +3229,18 @@
             selectedCameraId = cameraId;
 
             try {
+                // Load saved settings first
                 const response = await fetch(`/api/v1/camera/settings/${encodeURIComponent(cameraId)}`);
                 if (response.ok) {
                     const data = await response.json();
                     currentCameraSettings = data.settings;
-                    populateCameraForm(currentCameraSettings);
                 } else {
                     currentCameraSettings = null;
                 }
                 document.getElementById('camera-config-panel').style.display = 'block';
 
-                // Load camera controls (async)
-                loadCameraControls(cameraId);
+                // Load camera controls (async) - this will update ranges but preserve saved settings
+                loadCameraControls(cameraId, currentCameraSettings);
 
                 // Auto-capture preview after controls render
                 setTimeout(() => captureCameraPreview(cameraId, 640, 360), 500);
@@ -3108,11 +3259,23 @@
                 document.getElementById('profile-name').value = settings.name;
             }
 
-            const controls = ['brightness', 'contrast', 'saturation', 'sharpness', 'gain', 'focus', 'exposure'];
-            controls.forEach(id => {
-                const value = settings[id] || 0;
-                document.getElementById(id).value = value;
-                document.getElementById(`${id}-value`).textContent = value;
+            // Map settings keys to form element IDs
+            const controlMap = {
+                'brightness': 'brightness',
+                'contrast': 'contrast',
+                'saturation': 'saturation',
+                'sharpness': 'sharpness',
+                'gain': 'gain',
+                'focus': 'focus_absolute',
+                'exposure': 'exposure_absolute'
+            };
+
+            Object.entries(controlMap).forEach(([settingKey, elementId]) => {
+                const value = settings[settingKey] ?? 0;
+                const input = document.getElementById(elementId);
+                const valueDisplay = document.getElementById(`${elementId}-value`);
+                if (input) input.value = value;
+                if (valueDisplay) valueDisplay.textContent = value;
             });
 
             document.getElementById('auto-exposure').checked = settings.auto_exposure || false;
@@ -3121,7 +3284,7 @@
         }
 
         // Load current camera controls
-        async function loadCameraControls(cameraId) {
+        async function loadCameraControls(cameraId, savedSettings) {
             const content = document.getElementById('camera-controls-content');
 
             try {
@@ -3136,6 +3299,14 @@
                         </div>
                     `;
                     return;
+                }
+
+                // Store control ranges for this camera
+                if (data.ranges) {
+                    cameraControlRanges[cameraId] = data.ranges;
+                    // Use saved settings if available, otherwise use current camera values
+                    const valuesToUse = savedSettings || data.current;
+                    updateControlSliders(data.ranges, valuesToUse, !!savedSettings);
                 }
 
                 content.innerHTML = `
@@ -3161,6 +3332,71 @@
             }
         }
 
+        // Update control sliders based on camera-specific ranges
+        // hasSavedSettings: if true, valuesToUse contains saved settings that should take priority
+        function updateControlSliders(ranges, valuesToUse, hasSavedSettings = false) {
+            // Map form element IDs to API control names
+            const controlMap = {
+                'brightness': 'brightness',
+                'contrast': 'contrast',
+                'saturation': 'saturation',
+                'sharpness': 'sharpness',
+                'gain': 'gain',
+                'focus_absolute': 'focus',
+                'exposure_absolute': 'exposure'
+            };
+
+            for (const [formId, apiName] of Object.entries(controlMap)) {
+                const range = ranges[apiName];
+                const input = document.getElementById(formId);
+                const valueDisplay = document.getElementById(`${formId}-value`);
+
+                if (!input) continue;
+
+                // Set slider range
+                if (range) {
+                    input.min = range.min;
+                    input.max = range.max;
+                }
+
+                // Determine value to set
+                let valueToSet;
+
+                if (valuesToUse && valuesToUse[apiName] !== undefined && valuesToUse[apiName] !== null) {
+                    const currentValue = valuesToUse[apiName];
+                    // Validate that current value is within range and is a valid number
+                    if (range && typeof currentValue === 'number' && !isNaN(currentValue)) {
+                        if (currentValue >= range.min && currentValue <= range.max) {
+                            valueToSet = currentValue;
+                        } else {
+                            // Value outside range, clamp it
+                            valueToSet = Math.max(range.min, Math.min(range.max, currentValue));
+                            console.debug(`${apiName}: clamped ${currentValue} to ${valueToSet} (range: ${range.min}-${range.max})`);
+                        }
+                    } else {
+                        // Invalid value - use midpoint if we have saved settings, otherwise skip
+                        if (hasSavedSettings && range) {
+                            valueToSet = Math.round((range.min + range.max) / 2);
+                            console.debug(`${apiName}: invalid saved value ${currentValue}, using midpoint`);
+                        }
+                    }
+                }
+
+                // Fallback to midpoint of range if no valid value found
+                if (valueToSet === undefined && range) {
+                    valueToSet = Math.round((range.min + range.max) / 2);
+                }
+
+                // Apply the value
+                if (valueToSet !== undefined) {
+                    input.value = valueToSet;
+                    if (valueDisplay) {
+                        valueDisplay.textContent = valueToSet;
+                    }
+                }
+            }
+        }
+
         // Render current control values
         function renderCurrentControls(current) {
             if (!current || Object.keys(current).length === 0) {
@@ -3178,7 +3414,7 @@
         // Save camera settings to storage
         async function saveCameraSettings() {
             if (!selectedCameraId) {
-                alert('Please select a camera first');
+                showToast('Please select a camera first', 'warning');
                 return;
             }
 
@@ -3190,8 +3426,8 @@
                 saturation: parseInt(document.getElementById('saturation').value),
                 sharpness: parseInt(document.getElementById('sharpness').value),
                 gain: parseInt(document.getElementById('gain').value),
-                focus: parseInt(document.getElementById('focus').value),
-                exposure: parseInt(document.getElementById('exposure').value),
+                focus: parseInt(document.getElementById('focus_absolute').value),
+                exposure: parseInt(document.getElementById('exposure_absolute').value),
                 auto_exposure: document.getElementById('auto-exposure').checked,
                 auto_focus: document.getElementById('auto-focus').checked,
                 auto_white_balance: document.getElementById('auto-white-balance').checked,
@@ -3206,39 +3442,61 @@
 
                 if (response.ok) {
                     const data = await response.json();
-                    alert('Camera settings saved successfully');
+                    showToast('Camera settings saved successfully', 'success');
                     loadCameraProfiles();
                 } else {
                     const error = await response.json();
-                    alert('Failed to save camera settings: ' + error.error);
+                    showToast('Failed to save camera settings: ' + (error.error || 'Unknown error'), 'error');
                 }
             } catch (error) {
-                alert('Failed to save camera settings: ' + error.message);
+                showToast('Failed to save camera settings: ' + error.message, 'error');
             }
         }
 
         // Apply settings to physical camera
         async function applyCameraSettings() {
             if (!selectedCameraId) {
-                alert('Please select a camera first');
+                showToast('Please select a camera first', 'warning');
                 return;
             }
 
             try {
+                // Get current form values
+                const settings = {
+                    camera_id: selectedCameraId,
+                    name: document.getElementById('profile-name').value || selectedCameraId,
+                    brightness: parseInt(document.getElementById('brightness').value),
+                    contrast: parseInt(document.getElementById('contrast').value),
+                    saturation: parseInt(document.getElementById('saturation').value),
+                    sharpness: parseInt(document.getElementById('sharpness').value),
+                    gain: parseInt(document.getElementById('gain').value),
+                    focus: parseInt(document.getElementById('focus_absolute').value),
+                    exposure: parseInt(document.getElementById('exposure_absolute').value),
+                    auto_exposure: document.getElementById('auto-exposure').checked,
+                    auto_focus: document.getElementById('auto-focus').checked,
+                    auto_white_balance: document.getElementById('auto-white-balance').checked,
+                };
+
+                // Apply the settings directly (don't save, just apply)
                 const response = await fetch(`/api/v1/camera/settings/${encodeURIComponent(selectedCameraId)}/apply`, {
-                    method: 'POST'
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(settings)
                 });
 
                 if (response.ok) {
                     const data = await response.json();
-                    alert('Camera settings applied successfully');
+                    showToast('Camera settings applied successfully', 'success', 2000);
+                    // Reload controls to show updated current values from camera
                     loadCameraControls(selectedCameraId);
+                    // Auto-refresh preview after a short delay to allow settings to take effect
+                    setTimeout(() => captureCameraPreview(selectedCameraId, 640, 360), 500);
                 } else {
                     const error = await response.json();
-                    alert('Failed to apply camera settings: ' + error.error);
+                    showToast('Failed to apply camera settings: ' + (error.error || 'Unknown error'), 'error');
                 }
             } catch (error) {
-                alert('Failed to apply camera settings: ' + error.message);
+                showToast('Failed to apply camera settings: ' + error.message, 'error');
             }
         }
 
@@ -3263,13 +3521,13 @@
                     // Reload profiles list
                     loadCameraProfiles();
 
-                    alert('Camera settings deleted successfully');
+                    showToast('Camera settings deleted successfully', 'success');
                 } else {
                     const error = await response.json();
-                    alert('Failed to delete camera settings: ' + error.error);
+                    showToast('Failed to delete camera settings: ' + (error.error || 'Unknown error'), 'error');
                 }
             } catch (error) {
-                alert('Failed to delete camera settings: ' + error.message);
+                showToast('Failed to delete camera settings: ' + error.message, 'error');
             }
         }
 
@@ -3361,16 +3619,73 @@
         async function loadProfileIntoForm(cameraId) {
             const select = document.getElementById('camera-select');
 
-            // Check if the camera ID exists in the dropdown
-            const cameraExists = Array.from(select.options).some(opt => opt.value === cameraId);
-            if (!cameraExists) {
-                alert('Camera "' + cameraId + '" not found.\n\nThe camera may be disconnected or the ID has changed.');
-                return;
+            // First, try to find exact camera ID match
+            let matchedCameraId = null;
+            const exactMatch = Array.from(select.options).find(opt => opt.value === cameraId);
+            if (exactMatch) {
+                matchedCameraId = cameraId;
+            } else {
+                // Camera ID not found - try to find by name/label
+                // Get profile data to extract the name
+                try {
+                    const response = await fetch(`/api/v1/camera/settings/${encodeURIComponent(cameraId)}`);
+                    if (response.ok) {
+                        const data = await response.json();
+                        const profile = data.settings;
+                        const profileName = profile.name || cameraId;
+
+                        // Try to find camera with matching name in label
+                        const nameMatch = Array.from(select.options).find(opt => {
+                            const label = opt.textContent || '';
+                            return label.includes(profileName) || label.includes(cameraId.substring(0, 8));
+                        });
+
+                        if (nameMatch) {
+                            matchedCameraId = nameMatch.value;
+                            showToast(`Camera ID changed - using "${nameMatch.textContent}"`, 'info', 3000);
+                        } else {
+                            // No match found - show warning but allow loading
+                            showToast(`Camera "${profileName}" not currently connected. Loading profile for viewing only.`, 'warning', 4000);
+                            // Load the profile data anyway for viewing/editing
+                            loadProfileDataIntoForm(profile);
+                            switchTab('camera-settings');
+                            return;
+                        }
+                    }
+                } catch (error) {
+                    console.error('Failed to load profile:', error);
+                    alert('Failed to load camera profile: ' + error.message);
+                    return;
+                }
             }
 
-            select.value = cameraId;
-            await selectCameraForSettings(cameraId);
-            switchTab('camera-settings');
+            if (matchedCameraId) {
+                select.value = matchedCameraId;
+                await selectCameraForSettings(matchedCameraId);
+                switchTab('camera-settings');
+            }
+        }
+
+        // Load profile data directly into form (without camera selection)
+        async function loadProfileDataIntoForm(profile) {
+            selectedCameraId = null;
+            currentCameraSettings = profile;
+
+            // Load the profile values into the form
+            document.getElementById('profile-name').value = profile.name || '';
+            document.getElementById('brightness').value = profile.brightness || 128;
+            document.getElementById('contrast').value = profile.contrast || 128;
+            document.getElementById('saturation').value = profile.saturation || 128;
+            document.getElementById('sharpness').value = profile.sharpness || 128;
+            document.getElementById('gain').value = profile.gain || 0;
+            document.getElementById('focus_absolute').value = profile.focus || 0;
+            document.getElementById('exposure_absolute').value = profile.exposure || 0;
+            document.getElementById('auto-exposure').checked = profile.auto_exposure || false;
+            document.getElementById('auto-focus').checked = profile.auto_focus || false;
+            document.getElementById('auto-white-balance').checked = profile.auto_white_balance || false;
+
+            // Show that no camera is selected
+            document.getElementById('current-values').innerHTML = '<em style="color: var(--text-secondary)">No camera selected - viewing saved profile</em>';
         }
 
         // Delete camera profile

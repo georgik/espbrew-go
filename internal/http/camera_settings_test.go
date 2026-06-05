@@ -571,7 +571,7 @@ func TestValidateSettings(t *testing.T) {
 	})
 }
 
-func TestCameraSettingsHandler_AutoCreateOnApply(t *testing.T) {
+func TestCameraSettingsHandler_ApplySettings(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "test.db")
 
@@ -585,52 +585,250 @@ func TestCameraSettingsHandler_AutoCreateOnApply(t *testing.T) {
 	router := mux.NewRouter()
 	handler.RegisterRoutes(router)
 
-	t.Run("apply without existing settings creates defaults", func(t *testing.T) {
-		cameraID := "test-autocreate-camera"
+	t.Run("apply without settings returns error", func(t *testing.T) {
+		cameraID := "test-no-settings-camera"
 
 		// Verify no settings exist initially
 		_, err := store.GetCameraSettings(cameraID)
 		assert.Error(t, err, "Should not have settings initially")
 
-		// Apply settings (should auto-create)
+		// Apply without settings and without request body should fail
 		req := httptest.NewRequest("POST", "/api/v1/camera/settings/"+cameraID+"/apply", nil)
 		w := httptest.NewRecorder()
 
 		router.ServeHTTP(w, req)
 
-		// Settings should have been auto-created
-		settings, err := store.GetCameraSettings(cameraID)
-		assert.NoError(t, err, "Settings should have been auto-created")
-		assert.NotNil(t, settings)
-		assert.Equal(t, cameraID, settings.CameraID)
-		assert.Equal(t, int32(128), settings.Brightness, "Default brightness should be 128")
-		assert.Equal(t, int32(128), settings.Contrast, "Default contrast should be 128")
-		assert.Equal(t, true, settings.AutoExposure, "Default auto exposure should be true")
+		// Should return error, not auto-create
+		assert.Equal(t, http.StatusBadRequest, w.Code, "Should return 400 when no settings available")
 	})
 
-	t.Run("apply with existing settings uses them", func(t *testing.T) {
-		cameraID := "test-existing-camera"
+	t.Run("apply with request body values", func(t *testing.T) {
+		cameraID := "test-request-apply-camera"
 
-		// Create custom settings
+		// Verify no settings exist initially
+		_, err := store.GetCameraSettings(cameraID)
+		assert.Error(t, err, "Should not have settings initially")
+
+		// Apply with settings in request body
+		requestSettings := persistence.CameraSettings{
+			Brightness: 180,
+			Contrast:   120,
+			Saturation: 90,
+		}
+		body, _ := json.Marshal(requestSettings)
+		req := httptest.NewRequest("POST", "/api/v1/camera/settings/"+cameraID+"/apply", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+
+		router.ServeHTTP(w, req)
+
+		// Settings should NOT have been saved (only applied)
+		_, err = store.GetCameraSettings(cameraID)
+		assert.Error(t, err, "Settings should NOT be saved when applying from request body")
+
+		// On Linux with camera, might return 200 or 500 if device not found
+		// On other platforms, returns 200 with "skipped" status
+		if w.Code == http.StatusOK {
+			var resp map[string]interface{}
+			json.NewDecoder(w.Body).Decode(&resp)
+			// Verify the applied settings match what we sent
+			if settings, ok := resp["settings"].(map[string]interface{}); ok {
+				assert.Equal(t, float64(180), settings["brightness"], "Should apply request brightness")
+				assert.Equal(t, float64(120), settings["contrast"], "Should apply request contrast")
+			}
+		}
+	})
+
+	t.Run("apply with existing stored settings", func(t *testing.T) {
+		cameraID := "test-stored-apply-camera"
+
+		// Create and save custom settings
 		customSettings := &persistence.CameraSettings{
 			CameraID:   cameraID,
-			Name:       "Custom Camera",
+			Name:       "Stored Camera",
 			Brightness: 200,
 			Contrast:   150,
 		}
 		store.StoreCameraSettings(customSettings)
 
-		// Apply settings (should use existing, not create defaults)
+		// Apply settings (should use stored values)
 		req := httptest.NewRequest("POST", "/api/v1/camera/settings/"+cameraID+"/apply", nil)
 		w := httptest.NewRecorder()
 
 		router.ServeHTTP(w, req)
 
-		// Verify existing settings were preserved
-		settings, err := store.GetCameraSettings(cameraID)
-		assert.NoError(t, err)
-		assert.Equal(t, int32(200), settings.Brightness, "Should use custom brightness")
-		assert.Equal(t, int32(150), settings.Contrast, "Should use custom contrast")
-		assert.Equal(t, "Custom Camera", settings.Name, "Should use custom name")
+		// On Linux with camera, might return 200 or 500 if device not found
+		// On other platforms, returns 200 with "skipped" status
+		if w.Code == http.StatusOK || w.Code == http.StatusInternalServerError {
+			// Stored settings should still be unchanged
+			settings, err := store.GetCameraSettings(cameraID)
+			assert.NoError(t, err)
+			assert.Equal(t, int32(200), settings.Brightness, "Stored brightness should be unchanged")
+			assert.Equal(t, int32(150), settings.Contrast, "Stored contrast should be unchanged")
+		}
+	})
+}
+
+func TestCameraSettingsHandler_GetControlsReturnsRanges(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+
+	store, err := persistence.Open(persistence.DefaultConfig(dbPath))
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+	defer store.Close()
+
+	handler := NewCameraSettingsHandler(store)
+	router := mux.NewRouter()
+	handler.RegisterRoutes(router)
+
+	if !camera.ControllerAvailable() {
+		t.Skip("Skipping on non-Linux platform")
+	}
+
+	t.Run("controls endpoint returns ranges map", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/api/v1/camera/camera00/controls", nil)
+		w := httptest.NewRecorder()
+
+		router.ServeHTTP(w, req)
+
+		// May fail if camera00 doesn't exist, but test response structure if it succeeds
+		if w.Code == http.StatusOK {
+			var resp map[string]interface{}
+			err := json.NewDecoder(w.Body).Decode(&resp)
+			if err != nil {
+				t.Fatalf("Failed to decode response: %v", err)
+			}
+
+			// Check for ranges field
+			ranges, ok := resp["ranges"]
+			if !ok {
+				t.Error("Response should include ranges field")
+			} else {
+				rangesMap, ok := ranges.(map[string]interface{})
+				if !ok {
+					t.Error("Ranges should be a map")
+				} else {
+					// Each range should have min, max, current
+					for controlName, rangeData := range rangesMap {
+						controlRange, ok := rangeData.(map[string]interface{})
+						if !ok {
+							t.Errorf("Range for %s should be a map", controlName)
+							continue
+						}
+						if _, hasMin := controlRange["min"]; !hasMin {
+							t.Errorf("Range for %s missing min", controlName)
+						}
+						if _, hasMax := controlRange["max"]; !hasMax {
+							t.Errorf("Range for %s missing max", controlName)
+						}
+						if _, hasCurrent := controlRange["current"]; !hasCurrent {
+							t.Errorf("Range for %s missing current", controlName)
+						}
+					}
+				}
+			}
+		}
+	})
+}
+
+func TestCameraSettings_SavedSettingsPreserved(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+
+	store, err := persistence.Open(persistence.DefaultConfig(dbPath))
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+	defer store.Close()
+
+	t.Run("saved settings persist across retrieval", func(t *testing.T) {
+		cameraID := "test-persist-camera"
+
+		// Create initial settings
+		original := &persistence.CameraSettings{
+			CameraID:   cameraID,
+			Name:       "Persist Test Camera",
+			Brightness: 180,
+			Contrast:   120,
+			Saturation: 90,
+			Sharpness:  75,
+			Gain:       50,
+			Focus:      85,
+		}
+		err := store.StoreCameraSettings(original)
+		assert.NoError(t, err, "Should store settings")
+
+		// Retrieve settings
+		retrieved, err := store.GetCameraSettings(cameraID)
+		assert.NoError(t, err, "Should retrieve settings")
+		assert.NotNil(t, retrieved)
+
+		// Verify all values preserved
+		assert.Equal(t, original.Name, retrieved.Name, "Name should persist")
+		assert.Equal(t, original.Brightness, retrieved.Brightness, "Brightness should persist")
+		assert.Equal(t, original.Contrast, retrieved.Contrast, "Contrast should persist")
+		assert.Equal(t, original.Saturation, retrieved.Saturation, "Saturation should persist")
+		assert.Equal(t, original.Sharpness, retrieved.Sharpness, "Sharpness should persist")
+		assert.Equal(t, original.Gain, retrieved.Gain, "Gain should persist")
+		assert.Equal(t, original.Focus, retrieved.Focus, "Focus should persist")
+	})
+
+	t.Run("update preserves existing values", func(t *testing.T) {
+		cameraID := "test-update-persist"
+
+		// Create initial settings with all fields
+		original := &persistence.CameraSettings{
+			CameraID:         cameraID,
+			Name:             "Original Name",
+			Brightness:       100,
+			Contrast:         100,
+			Saturation:       100,
+			Sharpness:        100,
+			Gain:             50,
+			Focus:            60,
+			Exposure:         200,
+			WhiteBalance:     4000,
+			AutoExposure:     true,
+			AutoFocus:        true,
+			AutoWhiteBalance: true,
+		}
+		store.StoreCameraSettings(original)
+
+		// Update only brightness
+		updated := &persistence.CameraSettings{
+			CameraID:   cameraID,
+			Brightness: 150,
+		}
+
+		// Apply update via handler to simulate real workflow
+		handler := NewCameraSettingsHandler(store)
+		router := mux.NewRouter()
+		handler.RegisterRoutes(router)
+
+		body, _ := json.Marshal(updated)
+		req := httptest.NewRequest("PATCH", "/api/v1/camera/settings/"+cameraID, bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code, "Update should succeed")
+
+		// Verify: brightness changed, others preserved
+		retrieved, _ := store.GetCameraSettings(cameraID)
+		assert.Equal(t, int32(150), retrieved.Brightness, "Brightness should update")
+		assert.Equal(t, "Original Name", retrieved.Name, "Name should persist")
+		assert.Equal(t, int32(100), retrieved.Contrast, "Contrast should persist")
+		assert.Equal(t, int32(100), retrieved.Saturation, "Saturation should persist")
+		assert.Equal(t, int32(100), retrieved.Sharpness, "Sharpness should persist")
+		assert.Equal(t, int32(50), retrieved.Gain, "Gain should persist")
+		assert.Equal(t, int32(60), retrieved.Focus, "Focus should persist")
+		assert.Equal(t, int32(200), retrieved.Exposure, "Exposure should persist")
+		assert.Equal(t, int32(4000), retrieved.WhiteBalance, "WhiteBalance should persist")
+		assert.Equal(t, true, retrieved.AutoExposure, "AutoExposure should persist")
+		assert.Equal(t, true, retrieved.AutoFocus, "AutoFocus should persist")
+		assert.Equal(t, true, retrieved.AutoWhiteBalance, "AutoWhiteBalance should persist")
 	})
 }

@@ -1,88 +1,80 @@
 # Camera Identification Strategy
 
-## Problem
+## Current Implementation
 
-Currently, cameras are identified inconsistently across the application:
-- Discovery uses pion's device IDs (UUID-like: `usb-046d_HD_Webcam_C615_C574F460-video-index0`)
-- V4L2 controls expect device paths (`/dev/video0`)
-- Storage and API use these IDs interchangeably, causing failures
+Cameras are identified using UUIDs from pion/mediadevices library, with separate device path information for platform-specific operations.
 
-## Current State
+## Data Structure
 
 ```go
 type CameraInfo struct {
-    ID   string // pion UUID: "usb-046d_HD_Webcam_C615_C574F460-video-index0"
-    Path string // V4L2 path: "/dev/video0"
+    ID   string // UUID from pion mediadevices
+    Name string // Device label from system
+    Path string // Platform-specific device path (e.g. /dev/video0 on Linux)
 }
 ```
 
-**Issues:**
-- UI passes `ID` (UUID) to API endpoints
-- API tries to use UUID as device path for V4L2 controls
-- V4L2 rejects UUID: `stat usb-...: no such file or directory`
-- Camera controls and preview don't work
+## Identification by Platform
 
-## Desired State
+### Linux (V4L2)
+- **ID**: UUID from pion mediadevices (e.g. "61beb4c3-142a-4de5-bfa6-b55f3cb63577")
+- **Path**: V4L2 device node (e.g. "/dev/video0")
+- **Discovery**: pion/mediadevices with v4l2 backend
+- **Controls**: go4vl library using Path field
 
-### Camera Identification Rules
+### macOS (AVFoundation)
+- **ID**: Platform-specific UUID
+- **Path**: Empty or platform identifier
+- **Discovery**: pion/mediadevices with avfoundation backend
+- **Controls**: Not supported
 
-1. **Linux V4L2**: Use device path `/dev/video0` as primary identifier
-2. **macOS AVFoundation**: Use device UUID (platform-specific)
-3. **Windows DirectShow**: Use device path or UUID (platform-specific)
+### Windows (DirectShow)
+- **ID**: Platform-specific identifier
+- **Path**: Device path or empty
+- **Discovery**: pion/mediadevices with directshow backend
+- **Controls**: Not supported
 
-### Storage Key Strategy
-
-**Camera settings storage key**: Use the platform-specific device path/ID
-- Linux: `/dev/video0`
-- macOS: `0x1a2b3c4d...` (UUID)
-- Windows: `@device:pnp://...` (path)
-
-**Display name**: Keep human-readable name separate
-- `CameraInfo.Name`: "HD Webcam C615" (for UI display)
-
-### API Behavior
+## API Behavior
 
 **Discovery Response**:
 ```json
 {
   "cameras": [
     {
-      "id": "/dev/video0",
-      "name": "HD Webcam C615",
-      "path": "/dev/video0",
+      "id": "61beb4c3-142a-4de5-bfa6-b55f3cb63577",
+      "name": "usb-046d_Brio_100_2437APG0Y788-video-index0;video4",
+      "path": "/dev/video4",
       "backend": "v4l2"
     }
   ]
 }
 ```
 
-**Controls Request**: `GET /api/v1/camera/{id}/controls`
-- `id` = `/dev/video0` (directly usable by V4L2)
+**Controls Request**: `GET /api/v1/camera/{cameraId}/controls`
+- `cameraId` = UUID from discovery
+- Server uses internal `getCameraPathByID()` to resolve UUID to device path
 
-**Settings Storage**: Keyed by `id` (`/dev/video0`)
+**Settings Storage**: Keyed by camera ID (UUID)
 
-## Implementation Plan
+## Path Extraction
 
-1. **Modify CameraInfo struct**: Make `ID` contain the usable device identifier
-2. **Update discovery**: Set `ID` to device path on Linux
-3. **Update UI**: Use `id` for all API calls (already correct)
-4. **Add alias mapping**: For backward compatibility with existing settings
+On Linux, device path is extracted from pion's device label using pattern matching:
+- Label format: `usb-046d_Brio_100_2437APG0Y788-video-index0;video4`
+- Extract `;videoN` suffix to get device node number
+- Construct path: `/dev/videoN`
 
-### Backward Compatibility
-
-Existing settings stored with UUID keys need migration:
-1. On startup, scan settings for UUID keys
-2. Map UUIDs to current device paths
-3. Migrate settings to new keys
-4. Keep UUID->path mapping for future reference
+Primary vs metadata device filtering:
+- Even-numbered devices (/dev/video0, /dev/video2) are primary video devices
+- Odd-numbered devices (/dev/video1, /dev/video3) are metadata devices
+- Discovery returns only primary devices
 
 ## Cross-Platform Comparison
 
 Similar to device identification:
-- **Devices**: Identified by path (`/dev/ttyUSB0`) + metadata (chip_type)
-- **Cameras**: Identified by path (`/dev/video0`) + metadata (name, backend)
+- **Devices**: Identified by MAC address + metadata (chip_type, path)
+- **Cameras**: Identified by UUID + metadata (name, path)
 
-Both should:
-- Use stable device path as primary key
-- Store metadata separately
-- Provide discovery for hotplug support
+Both provide:
+- Stable identifiers across hotplug events
+- Platform-specific path for operations
+- Discovery for dynamic device detection

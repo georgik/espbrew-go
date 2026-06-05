@@ -16,15 +16,24 @@ func getCameraPathByID(cameraID string) string {
 	discoverer := camera.NewDiscoverer()
 	cameras, err := discoverer.Discover()
 	if err != nil {
-		log.Debug().Err(err).Str("camera_id", cameraID).Msg("Failed to discover cameras for path lookup")
+		log.Error().Err(err).Str("camera_id", cameraID).Msg("Failed to discover cameras for path lookup")
 		return ""
 	}
 
+	log.Debug().Str("camera_id", cameraID).Int("found_cameras", len(cameras)).Msg("Looking up camera path")
+
 	for _, cam := range cameras {
+		log.Debug().
+			Str("looking_for", cameraID).
+			Str("found_id", cam.ID).
+			Str("found_path", cam.Path).
+			Msg("Camera comparison")
 		if cam.ID == cameraID && cam.Path != "" {
+			log.Info().Str("camera_id", cameraID).Str("path", cam.Path).Msg("Found camera path")
 			return cam.Path
 		}
 	}
+	log.Warn().Str("camera_id", cameraID).Msg("Camera not found in discovery")
 	return ""
 }
 
@@ -241,7 +250,8 @@ func (h *CameraSettingsHandler) handleDeleteCameraSettings(w http.ResponseWriter
 	})
 }
 
-// handleApplyCameraSettings applies stored settings to the physical camera
+// handleApplyCameraSettings applies settings to the physical camera
+// If request body contains settings, applies those. Otherwise uses stored settings.
 func (h *CameraSettingsHandler) handleApplyCameraSettings(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	cameraID := vars["cameraId"]
@@ -261,32 +271,36 @@ func (h *CameraSettingsHandler) handleApplyCameraSettings(w http.ResponseWriter,
 		return
 	}
 
-	// Get stored settings, or create default settings if none exist
-	settings, err := h.store.GetCameraSettings(cameraID)
-	if err != nil {
-		// Auto-create default settings for this camera
-		log.Info().Str("camera_id", cameraID).Msg("No settings found, creating defaults")
-		settings = &persistence.CameraSettings{
-			CameraID:         cameraID,
-			Name:             cameraID,
-			Brightness:       128,
-			Contrast:         128,
-			Saturation:       128,
-			Sharpness:        128,
-			Gain:             0,
-			Focus:            0,
-			Exposure:         0,
-			WhiteBalance:     0,
-			AutoExposure:     true,
-			AutoFocus:        true,
-			AutoWhiteBalance: true,
-		}
-		if err := h.store.StoreCameraSettings(settings); err != nil {
-			log.Error().Err(err).Str("camera_id", cameraID).Msg("Failed to create default settings")
-			respondError(w, http.StatusInternalServerError, "Failed to create default settings")
+	// Try to read settings from request body (optional)
+	var requestSettings *persistence.CameraSettings
+	bodyErr := json.NewDecoder(r.Body).Decode(&requestSettings)
+	if bodyErr == nil && requestSettings != nil {
+		// Validate the provided settings
+		if !h.validateSettings(requestSettings) {
+			respondError(w, http.StatusBadRequest, "Invalid settings values")
 			return
 		}
-		log.Info().Str("camera_id", cameraID).Msg("Default settings created")
+		requestSettings.CameraID = cameraID // Ensure camera ID matches
+	}
+
+	// Get stored settings
+	storedSettings, err := h.store.GetCameraSettings(cameraID)
+
+	// Determine which settings to apply
+	var settingsToApply *persistence.CameraSettings
+	if requestSettings != nil {
+		// Use settings from request body (don't save, just apply)
+		settingsToApply = requestSettings
+		log.Debug().Str("camera_id", cameraID).Msg("Applying settings from request body")
+	} else if storedSettings != nil {
+		// Use stored settings
+		settingsToApply = storedSettings
+		log.Debug().Str("camera_id", cameraID).Msg("Applying stored settings")
+	} else {
+		// No settings available - return error instead of creating defaults
+		log.Warn().Str("camera_id", cameraID).Msg("No settings to apply")
+		respondError(w, http.StatusBadRequest, "No settings available. Please save settings first or provide settings in request.")
+		return
 	}
 
 	// Create camera controller using device path
@@ -306,7 +320,7 @@ func (h *CameraSettingsHandler) handleApplyCameraSettings(w http.ResponseWriter,
 	defer ctrl.Close()
 
 	// Apply settings
-	if err := h.applySettingsToCamera(ctrl, settings); err != nil {
+	if err := h.applySettingsToCamera(ctrl, settingsToApply); err != nil {
 		log.Error().Err(err).Str("camera_id", cameraID).Msg("Failed to apply camera settings")
 		respondError(w, http.StatusInternalServerError, "Failed to apply camera settings: "+err.Error())
 		return
@@ -318,7 +332,7 @@ func (h *CameraSettingsHandler) handleApplyCameraSettings(w http.ResponseWriter,
 	respondJSON(w, map[string]interface{}{
 		"status":    "applied",
 		"camera_id": cameraID,
-		"settings":  settings,
+		"settings":  settingsToApply,
 		"current":   current,
 		"platform":  camera.Platform(),
 	})
@@ -391,12 +405,30 @@ func (h *CameraSettingsHandler) handleGetCameraControls(w http.ResponseWriter, r
 		log.Error().Err(err).Str("camera_id", cameraID).Msg("Failed to get current settings")
 	}
 
+	// Get control ranges for UI sliders
+	controlRanges := make(map[string]map[string]int32)
+	controlsToQuery := []string{"brightness", "contrast", "saturation", "sharpness", "gain", "focus_absolute", "exposure_absolute"}
+	for _, controlName := range controlsToQuery {
+		min, max, currentVal, err := ctrl.GetControlInfo(controlName)
+		if err != nil {
+			// Use default ranges if query fails
+			log.Debug().Str("control", controlName).Err(err).Msg("Failed to get control range, using defaults")
+			continue
+		}
+		controlRanges[controlName] = map[string]int32{
+			"min":     min,
+			"max":     max,
+			"current": currentVal,
+		}
+	}
+
 	respondJSON(w, map[string]interface{}{
 		"current":        current,
 		"available":      true,
 		"platform":       camera.Platform(),
 		"display_preset": camera.DisplayPresetSettings,
 		"focus_presets":  camera.FocusPresets,
+		"ranges":         controlRanges,
 	})
 }
 

@@ -144,6 +144,12 @@ type Controller interface {
 
 	// GetSettings retrieves all current settings
 	GetSettings() (map[string]int32, error)
+
+	// GetControlRange returns min/max values for a control
+	GetControlRange(controlName string) (min, max int32, err error)
+
+	// GetControlInfo returns detailed info for a control
+	GetControlInfo(controlName string) (min, max, current int32, err error)
 }
 
 // NewController creates a platform-appropriate camera controller

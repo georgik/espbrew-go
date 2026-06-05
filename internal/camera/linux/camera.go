@@ -152,20 +152,58 @@ func (c *Camera) GetContrast() (int32, error) {
 func (c *Camera) GetSettings() (map[string]int32, error) {
 	settings := make(map[string]int32)
 
-	// Get basic controls
+	// Helper to safely add a setting if value is valid
+	addSetting := func(key string, value int32, min, max int32) {
+		if value >= min && value <= max {
+			settings[key] = value
+		} else {
+			// Clamp invalid values to valid range
+			if value < min {
+				settings[key] = min
+			} else if value > max {
+				settings[key] = max
+			}
+			log.Printf("Warning: %s value %d out of range [%d, %d], clamped", key, value, min, max)
+		}
+	}
+
+	// Get basic controls with reasonable defaults
 	if brightness, err := c.dev.GetBrightness(); err == nil {
-		settings["brightness"] = brightness
+		addSetting("brightness", brightness, 0, 255)
+	} else {
+		log.Printf("Failed to get brightness: %v", err)
 	}
 	if contrast, err := c.dev.GetContrast(); err == nil {
-		settings["contrast"] = contrast
+		addSetting("contrast", contrast, 0, 255)
+	} else {
+		log.Printf("Failed to get contrast: %v", err)
 	}
 
 	// Get extended controls
 	if saturation, err := c.dev.GetControl(v4l2.CtrlSaturation); err == nil {
-		settings["saturation"] = saturation.Value
+		addSetting("saturation", saturation.Value, 0, 255)
+	} else {
+		log.Printf("Failed to get saturation: %v", err)
 	}
 	if sharpness, err := c.dev.GetControl(v4l2.CtrlSharpness); err == nil {
-		settings["sharpness"] = sharpness.Value
+		addSetting("sharpness", sharpness.Value, 0, 255)
+	} else {
+		log.Printf("Failed to get sharpness: %v", err)
+	}
+
+	// Try to get gain (may not be supported on all cameras)
+	if gain, err := c.dev.GetControl(v4l2.CtrlGain); err == nil {
+		addSetting("gain", gain.Value, 0, 255)
+	}
+
+	// Try to get focus (may not be supported on all cameras)
+	if focus, err := c.dev.GetControl(v4l2.CtrlCameraFocusAbsolute); err == nil {
+		addSetting("focus", focus.Value, 0, 255)
+	}
+
+	// Try to get exposure (may not be supported on all cameras)
+	if exposure, err := c.dev.GetControl(v4l2.CtrlCameraExposureAbsolute); err == nil {
+		addSetting("exposure", exposure.Value, 0, 2047)
 	}
 
 	return settings, nil
@@ -174,4 +212,80 @@ func (c *Camera) GetSettings() (map[string]int32, error) {
 // QueryControls returns all available controls for the device
 func (c *Camera) QueryControls() ([]v4l2.Control, error) {
 	return c.dev.QueryAllControls()
+}
+
+// GetControlRange returns the min/max range for a specific control
+func (c *Camera) GetControlRange(controlID v4l2.CtrlID) (min, max int32, err error) {
+	ctrl, err := v4l2.QueryControlInfo(c.dev.Fd(), controlID)
+	if err != nil {
+		return 0, 0, err
+	}
+	return ctrl.Minimum, ctrl.Maximum, nil
+}
+
+// GetControlInfo returns detailed information about a control
+func (c *Camera) GetControlInfo(controlID v4l2.CtrlID) (*v4l2.Control, error) {
+	ctrl, err := v4l2.QueryControlInfo(c.dev.Fd(), controlID)
+	if err != nil {
+		return nil, err
+	}
+	return &ctrl, nil
+}
+
+// GetControlRangeByName returns min/max for a control by name
+func (c *Camera) GetControlRangeByName(controlName string) (min, max int32, err error) {
+	var ctrlID v4l2.CtrlID
+	switch controlName {
+	case "brightness":
+		ctrlID = v4l2.CtrlBrightness
+	case "contrast":
+		ctrlID = v4l2.CtrlContrast
+	case "saturation":
+		ctrlID = v4l2.CtrlSaturation
+	case "sharpness":
+		ctrlID = v4l2.CtrlSharpness
+	case "gain":
+		ctrlID = v4l2.CtrlGain
+	case "focus_absolute":
+		ctrlID = v4l2.CtrlCameraFocusAbsolute
+	case "exposure_absolute":
+		ctrlID = v4l2.CtrlCameraExposureAbsolute
+	default:
+		return 0, 0, fmt.Errorf("unknown control: %s", controlName)
+	}
+	return c.GetControlRange(ctrlID)
+}
+
+// GetControlInfoByName returns full control info including current value
+func (c *Camera) GetControlInfoByName(controlName string) (min, max, current int32, err error) {
+	var ctrlID v4l2.CtrlID
+	switch controlName {
+	case "brightness":
+		ctrlID = v4l2.CtrlBrightness
+	case "contrast":
+		ctrlID = v4l2.CtrlContrast
+	case "saturation":
+		ctrlID = v4l2.CtrlSaturation
+	case "sharpness":
+		ctrlID = v4l2.CtrlSharpness
+	case "gain":
+		ctrlID = v4l2.CtrlGain
+	case "focus_absolute":
+		ctrlID = v4l2.CtrlCameraFocusAbsolute
+	case "exposure_absolute":
+		ctrlID = v4l2.CtrlCameraExposureAbsolute
+	default:
+		return 0, 0, 0, fmt.Errorf("unknown control: %s", controlName)
+	}
+	ctrl, err := v4l2.QueryControlInfo(c.dev.Fd(), ctrlID)
+	if err != nil {
+		return 0, 0, 0, err
+	}
+	// QueryControlInfo doesn't include current value, need to query it separately
+	currentCtrl, err := v4l2.GetControl(c.dev.Fd(), ctrlID)
+	if err != nil {
+		// If we can't get current value, use the default
+		return ctrl.Minimum, ctrl.Maximum, ctrl.Default, nil
+	}
+	return ctrl.Minimum, ctrl.Maximum, currentCtrl.Value, nil
 }
