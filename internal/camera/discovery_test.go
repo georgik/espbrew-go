@@ -2,6 +2,8 @@ package camera
 
 import (
 	"testing"
+
+	"github.com/pion/mediadevices"
 )
 
 func TestNewDiscoverer(t *testing.T) {
@@ -174,5 +176,118 @@ func TestVideoFormatFields(t *testing.T) {
 	}
 	if f.PixelFormat != "MJPG" {
 		t.Errorf("PixelFormat = %v, want MJPG", f.PixelFormat)
+	}
+}
+
+func TestExtractV4L2Path(t *testing.T) {
+	tests := []struct {
+		name     string
+		deviceID string
+		want     string
+	}{
+		{
+			name:     "Standard pion format",
+			deviceID: "usb-046d_HD_Webcam_C615_C574F460-video-index0",
+			want:     "/dev/video0",
+		},
+		{
+			name:     "Video index 1",
+			deviceID: "usb-046d_HD_Webcam_C615_C574F460-video-index1",
+			want:     "/dev/video1",
+		},
+		{
+			name:     "Higher video index",
+			deviceID: "usb-046d_HD_Webcam_C615_C574F460-video-index5",
+			want:     "/dev/video5",
+		},
+		{
+			name:     "UUID format (no parse pattern)",
+			deviceID: "65177c62-d991-4900-9f90-c1fb8692e550",
+			want:     "65177c62-d991-4900-9f90-c1fb8692e550",
+		},
+		{
+			name:     "UUID with video index (mixed format)",
+			deviceID: "65177c62-d991-4900-9f90-c1fb8692e550-video-index2",
+			want:     "/dev/video2",
+		},
+		{
+			name:     "Platform camera (macOS)",
+			deviceID: "0x80200000005ac2",
+			want:     "0x80200000005ac2",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// extractV4L2Path is not exported, so we test via deviceToCameraInfo
+			// by creating a mock MediaDeviceInfo
+			info, err := deviceToCameraInfo(mediadevices.MediaDeviceInfo{
+				DeviceID: tt.deviceID,
+				Label:    "Test Camera",
+				Kind:     mediadevices.VideoInput,
+			})
+
+			if err != nil {
+				t.Fatalf("deviceToCameraInfo failed: %v", err)
+			}
+
+			if info == nil {
+				t.Fatal("deviceToCameraInfo returned nil camera info")
+			}
+
+			// Check that we got a camera info
+			if info.ID == "" {
+				t.Error("Camera ID is empty")
+			}
+
+			// For V4L2-format inputs, Path should contain /dev/videoN
+			// ID should remain as the original DeviceID (UUID for V4L2)
+			// For UUID/other formats with no V4L2 pattern, Path equals DeviceID
+			if tt.want != "" && info.Path != tt.want {
+				t.Errorf("Camera Path = %q, want %q", info.Path, tt.want)
+			}
+			// ID should be the original DeviceID
+			if info.ID != tt.deviceID {
+				t.Errorf("Camera ID = %q, want original DeviceID %q", info.ID, tt.deviceID)
+			}
+		})
+	}
+}
+
+func TestIsPrimaryVideoDevice(t *testing.T) {
+	tests := []struct {
+		name     string
+		deviceID string
+		want     bool
+	}{
+		{
+			name:     "Primary video device index 0",
+			deviceID: "usb-camera-video-index0",
+			want:     true,
+		},
+		{
+			name:     "Secondary video device index 1",
+			deviceID: "usb-camera-video-index1",
+			want:     false,
+		},
+		{
+			name:     "UUID format (no video-index)",
+			deviceID: "65177c62-d991-4900-9f90-c1fb8692e550",
+			want:     true, // Non-V4L2 devices are considered primary
+		},
+		{
+			name:     "Platform camera (macOS)",
+			deviceID: "Facetime HD Camera",
+			want:     true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := isPrimaryVideoDevice(tt.deviceID)
+			if got != tt.want {
+				t.Errorf("isPrimaryVideoDevice(%q) = %v, want %v", tt.deviceID, got, tt.want)
+			}
+		})
 	}
 }

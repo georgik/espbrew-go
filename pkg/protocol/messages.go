@@ -62,6 +62,7 @@ type DeviceInfo struct {
 type CameraInfo struct {
 	ID      string `json:"id"`
 	Name    string `json:"name"`
+	Path    string `json:"path"`    // Platform-specific device path (e.g. /dev/video0)
 	Backend string `json:"backend"` // v4l2, avfoundation, directshow
 	NodeID  string `json:"node_id"`
 	Status  string `json:"status"` // available, busy, offline

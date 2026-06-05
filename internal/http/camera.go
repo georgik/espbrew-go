@@ -47,7 +47,7 @@ func NewCameraHandler() *CameraHandler {
 
 func (h *CameraHandler) RegisterRoutes(r *mux.Router) {
 	r.HandleFunc("/api/v1/captures", h.handleListCaptures).Methods("GET")
-	r.HandleFunc("/api/v1/captures/{captureId}/devices", h.handleListDeviceCaptures).Methods("GET")
+	r.HandleFunc("/api/v1/captures/{captureId:.*}/devices", h.handleListDeviceCaptures).Methods("GET")
 	r.HandleFunc("/api/v1/devices/{deviceId}/captures", h.handleDeviceCaptures).Methods("GET")
 	r.HandleFunc("/captures/{path:.*}", h.handleServeCapture).Methods("GET")
 	r.HandleFunc("/captures/{path:.*}", h.handleDeleteCapture).Methods("DELETE")

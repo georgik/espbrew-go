@@ -257,7 +257,7 @@ func (l *LeaderNode) RegisterCamera(camera *protocol.CameraInfo) {
 
 	camera.NodeID = l.id
 	l.state.Cameras[camera.ID] = camera
-	log.Info().Str("camera_id", camera.ID).Str("name", camera.Name).Msg("Camera registered on leader")
+	log.Info().Str("camera_id", camera.ID).Str("name", camera.Name).Str("path", camera.Path).Msg("Camera registered on leader")
 }
 
 // GetCameras returns all registered cameras
@@ -773,6 +773,7 @@ func (l *LeaderNode) discoverCameras() {
 		protoCam := &protocol.CameraInfo{
 			ID:      cam.ID,
 			Name:    cam.Name,
+			Path:    cam.Path,
 			Backend: string(cam.Backend),
 			NodeID:  l.id,
 			Status:  "available",

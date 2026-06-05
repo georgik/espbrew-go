@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"image"
 	"net/http"
+	"runtime"
 	"sort"
 	"time"
 
@@ -51,6 +52,7 @@ func (h *APIHandler) RegisterRoutes(r *mux.Router) {
 	api.HandleFunc("/devices/{id}", h.handleUpdateDevice).Methods("PUT", "PATCH")
 	api.HandleFunc("/devices/{id}", h.handleDeleteDevice).Methods("DELETE")
 	api.HandleFunc("/cameras", h.handleCameras).Methods("GET")
+	api.HandleFunc("/boards", h.handleBoards).Methods("GET")
 
 	// Device reservation (use device name without /dev/ prefix)
 	api.HandleFunc("/devices/{name}/reserve", h.handleReserveDevice).Methods("POST", "DELETE")
@@ -530,6 +532,7 @@ type CameraCaptureRequest struct {
 	Height   uint32 `json:"height"`
 	Format   string `json:"format"`
 	Quality  int    `json:"quality"`
+	Preview  bool   `json:"preview"` // If true, return image without saving to gallery
 }
 
 func (h *APIHandler) handleCameraCapture(w http.ResponseWriter, r *http.Request) {
@@ -600,12 +603,15 @@ func (h *APIHandler) handleCameraCapture(w http.ResponseWriter, r *http.Request)
 	capturer := camera.NewCapturer(store)
 
 	captureReq := &camera.CaptureRequest{
-		CameraID: targetCam.ID,
+		CameraID: targetCam.Path,
 		Width:    req.Width,
 		Height:   req.Height,
 		Format:   "jpg",
 		Quality:  req.Quality,
+		Preview:  req.Preview, // Pass through preview flag
 	}
+
+	log.Debug().Str("camera_id", targetCam.ID).Str("camera_path", targetCam.Path).Bool("preview", req.Preview).Msg("Capture request using camera path")
 
 	result, err := capturer.Capture(r.Context(), captureReq)
 	if err != nil {
@@ -614,7 +620,15 @@ func (h *APIHandler) handleCameraCapture(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	savedPath, err := store.Save(targetCam.ID, req.Format, result.Data)
+	// For preview requests, return image directly (already skipped saving in capturer)
+	if req.Preview {
+		w.Header().Set("Content-Type", "image/"+req.Format)
+		w.Write(result.Data)
+		return
+	}
+
+	// Result already saved by capturer, get relative path for response
+	savedPath := result.Path
 	if err != nil {
 		log.Error().Err(err).Msg("Failed to save capture")
 		respondError(w, http.StatusInternalServerError, "Failed to save capture")
@@ -1086,4 +1100,130 @@ func (h *APIHandler) handleProbeDevice(w http.ResponseWriter, r *http.Request) {
 		"chip_type": devInfo.ChipType,
 		"path":      devInfo.Path,
 	})
+}
+
+func (h *APIHandler) handleBoards(w http.ResponseWriter, r *http.Request) {
+	// Get all devices from store
+	storeDevices, err := h.store.ListDevices()
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "Failed to list devices")
+		return
+	}
+
+	// Group devices by MAC address to identify boards
+	boardMap := make(map[string][]*persistence.DeviceRecord)
+	for _, dev := range storeDevices {
+		if dev.MACAddress != "" {
+			boardMap[dev.MACAddress] = append(boardMap[dev.MACAddress], dev)
+		}
+	}
+
+	// Build response with correlated boards
+	type UARTPort struct {
+		Type     string `json:"type"`
+		Port     string `json:"port,omitempty"`
+		Location string `json:"usb_location,omitempty"`
+	}
+
+	type JTAGPort struct {
+		Type     string `json:"type"`
+		Location string `json:"usb_location,omitempty"`
+	}
+
+	type Recommended struct {
+		FlashPort   string `json:"flash_port,omitempty"`
+		MonitorPort string `json:"monitor_port,omitempty"`
+		Reason      string `json:"reason,omitempty"`
+	}
+
+	type Target struct {
+		Target      string      `json:"target"`
+		MAC         string      `json:"mac"`
+		UART        []UARTPort  `json:"uart"`
+		JTAG        []JTAGPort  `json:"jtag"`
+		Recommended Recommended `json:"recommended"`
+	}
+
+	type UnidentifiedPort struct {
+		Type     string `json:"type"`
+		Path     string `json:"path,omitempty"`
+		Location string `json:"usb_location,omitempty"`
+	}
+
+	targets := []Target{}
+	unidentifiedPorts := []UnidentifiedPort{}
+
+	for mac, devices := range boardMap {
+		if len(devices) == 0 {
+			continue
+		}
+
+		// Get chip type from first device
+		chipType := devices[0].ChipType
+
+		// Collect UART ports
+		uartPorts := []UARTPort{}
+		for _, dev := range devices {
+			if dev.LastPath != "" {
+				uartPorts = append(uartPorts, UARTPort{
+					Type: "uart",
+					Port: dev.LastPath,
+				})
+			}
+		}
+
+		// For now, we don't track JTAG separately in DeviceRecord
+		// This would need to be added to the schema for full correlation
+		target := Target{
+			Target: chipType,
+			MAC:    mac,
+			UART:   uartPorts,
+			JTAG:   []JTAGPort{},
+			Recommended: Recommended{
+				FlashPort:   getFirstPort(devices),
+				MonitorPort: getFirstPort(devices),
+				Reason:      "first_identified_port",
+			},
+		}
+
+		targets = append(targets, target)
+	}
+
+	// Sort targets by chip type, then MAC
+	sort.Slice(targets, func(i, j int) bool {
+		if targets[i].Target != targets[j].Target {
+			return targets[i].Target < targets[j].Target
+		}
+		return targets[i].MAC < targets[j].MAC
+	})
+
+	respondJSON(w, map[string]interface{}{
+		"targets":            targets,
+		"unidentified_ports": unidentifiedPorts,
+		"metadata": map[string]string{
+			"platform":  runtimeGOOS(),
+			"scan_time": time.Now().Format(time.RFC3339),
+		},
+	})
+}
+
+// getFirstPort returns the last path from the first device with a path
+func getFirstPort(devices []*persistence.DeviceRecord) string {
+	for _, dev := range devices {
+		if dev.LastPath != "" {
+			return dev.LastPath
+		}
+	}
+	return ""
+}
+
+// runtimeGOOS returns the runtime GOOS for mockability in tests
+func runtimeGOOS() string {
+	return runtimeGOOSVar
+}
+
+var runtimeGOOSVar = runtimeGOOSValue()
+
+func runtimeGOOSValue() string {
+	return runtime.GOOS
 }

@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"codeberg.org/georgik/espbrew-go/internal/camera"
 	"codeberg.org/georgik/espbrew-go/internal/cluster"
 	"codeberg.org/georgik/espbrew-go/internal/persistence"
 	"codeberg.org/georgik/espbrew-go/internal/snap"
@@ -669,6 +670,7 @@ func TestHandleSnap_VariousCombinations(t *testing.T) {
 		request            SnapRequest
 		expectedStatus     int
 		expectedSnapStatus string
+		skipIfNoCamera     bool // Skip test if camera is not available
 	}{
 		{
 			name: "all_skipped",
@@ -691,6 +693,7 @@ func TestHandleSnap_VariousCombinations(t *testing.T) {
 			},
 			expectedStatus:     http.StatusOK,
 			expectedSnapStatus: string(snap.SnapStatusSuccess),
+			skipIfNoCamera:     true, // Skip if no camera available
 		},
 		{
 			name: "minimal",
@@ -707,6 +710,26 @@ func TestHandleSnap_VariousCombinations(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
+			// Skip test if camera is required but not available
+			if tc.skipIfNoCamera && !camera.ControllerAvailable() {
+				t.Skip("Camera capture not available on this platform")
+			}
+			if tc.skipIfNoCamera && camera.ControllerAvailable() {
+				// Quick check if camera actually works
+				ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+				defer cancel()
+				camCapturer := camera.NewCapturer(nil)
+				_, err := camCapturer.Capture(ctx, &camera.CaptureRequest{
+					Format:  "jpg",
+					Quality: 75,
+					Timeout: 2 * time.Second,
+					Preview: true, // Don't save, just test capture
+				})
+				if err != nil {
+					t.Skip("Camera capture failed in test environment:", err.Error())
+				}
+			}
+
 			body, _ := json.Marshal(tc.request)
 			req := httptest.NewRequest("POST", "/api/v1/devices/snap?device_id=virtual-combinations", strings.NewReader(string(body)))
 			req.Header.Set("Content-Type", "application/json")

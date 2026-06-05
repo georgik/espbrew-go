@@ -177,7 +177,7 @@ func testCapture(dev *device.Device) {
 		return
 	}
 
-	fmt.Printf("Format: %s (%dx%d)\n", format.PixelFormat, format.Width, format.Height)
+	fmt.Printf("Format: 0x%08x (%dx%d)\n", uint32(format.PixelFormat), format.Width, format.Height)
 
 	// Try to capture a single frame
 	ctx := context.Background()

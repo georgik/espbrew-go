@@ -7,6 +7,25 @@ import (
 	"codeberg.org/georgik/espbrew-go/internal/inventory/rom"
 )
 
+// ProbeStatus represents the result of a probe attempt
+type ProbeStatus string
+
+const (
+	ProbeStatusIdentified   ProbeStatus = "identified"
+	ProbeStatusUnidentified ProbeStatus = "unidentified"
+	ProbeStatusError        ProbeStatus = "error"
+	ProbeStatusTimeout      ProbeStatus = "timeout"
+)
+
+// ProbeResult contains the probe outcome with status information
+type ProbeResult struct {
+	Status   ProbeStatus
+	Identity *DeviceIdentity
+	Error    string
+	Port     string
+	Duration time.Duration
+}
+
 // ProbeDeviceQuick reads device identity with short timeout.
 // Use this immediately after device connect when device is in bootloader mode.
 func ProbeDeviceQuick(port string) (*DeviceIdentity, error) {
@@ -186,4 +205,58 @@ func ProbeFromBootLogWithTimeout(port string, timeout time.Duration) (*DeviceIde
 	}
 
 	return BootLogToIdentity(info, port), nil
+}
+
+// ProbeDeviceWithStatus probes a device and returns detailed status
+func ProbeDeviceWithStatus(port string) *ProbeResult {
+	start := time.Now()
+	identity, err := ProbeDevice(port)
+	duration := time.Since(start)
+
+	if err != nil {
+		status := ProbeStatusUnidentified
+		if timeoutErr, ok := err.(interface{ Timeout() bool }); ok && timeoutErr.Timeout() {
+			status = ProbeStatusTimeout
+		}
+		return &ProbeResult{
+			Status:   status,
+			Error:    err.Error(),
+			Port:     port,
+			Duration: duration,
+		}
+	}
+
+	return &ProbeResult{
+		Status:   ProbeStatusIdentified,
+		Identity: identity,
+		Port:     port,
+		Duration: duration,
+	}
+}
+
+// ProbeFromBootLogWithStatus probes via boot log and returns detailed status
+func ProbeFromBootLogWithStatus(port string, timeout time.Duration) *ProbeResult {
+	start := time.Now()
+	identity, err := ProbeFromBootLogWithTimeout(port, timeout)
+	duration := time.Since(start)
+
+	if err != nil {
+		status := ProbeStatusUnidentified
+		if timeoutErr, ok := err.(interface{ Timeout() bool }); ok && timeoutErr.Timeout() {
+			status = ProbeStatusTimeout
+		}
+		return &ProbeResult{
+			Status:   status,
+			Error:    err.Error(),
+			Port:     port,
+			Duration: duration,
+		}
+	}
+
+	return &ProbeResult{
+		Status:   ProbeStatusIdentified,
+		Identity: identity,
+		Port:     port,
+		Duration: duration,
+	}
 }

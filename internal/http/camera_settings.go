@@ -10,6 +10,24 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
+// getCameraPathByID looks up a camera's device path by its ID
+// Returns the path (e.g. /dev/video0) or empty string if not found
+func getCameraPathByID(cameraID string) string {
+	discoverer := camera.NewDiscoverer()
+	cameras, err := discoverer.Discover()
+	if err != nil {
+		log.Debug().Err(err).Str("camera_id", cameraID).Msg("Failed to discover cameras for path lookup")
+		return ""
+	}
+
+	for _, cam := range cameras {
+		if cam.ID == cameraID && cam.Path != "" {
+			return cam.Path
+		}
+	}
+	return ""
+}
+
 // CameraSettingsHandler handles camera settings API endpoints
 type CameraSettingsHandler struct {
 	store *persistence.Store
@@ -243,18 +261,45 @@ func (h *CameraSettingsHandler) handleApplyCameraSettings(w http.ResponseWriter,
 		return
 	}
 
-	// Get stored settings
+	// Get stored settings, or create default settings if none exist
 	settings, err := h.store.GetCameraSettings(cameraID)
 	if err != nil {
-		log.Error().Err(err).Str("camera_id", cameraID).Msg("Failed to get camera settings")
-		respondError(w, http.StatusNotFound, "Camera settings not found")
+		// Auto-create default settings for this camera
+		log.Info().Str("camera_id", cameraID).Msg("No settings found, creating defaults")
+		settings = &persistence.CameraSettings{
+			CameraID:         cameraID,
+			Name:             cameraID,
+			Brightness:       128,
+			Contrast:         128,
+			Saturation:       128,
+			Sharpness:        128,
+			Gain:             0,
+			Focus:            0,
+			Exposure:         0,
+			WhiteBalance:     0,
+			AutoExposure:     true,
+			AutoFocus:        true,
+			AutoWhiteBalance: true,
+		}
+		if err := h.store.StoreCameraSettings(settings); err != nil {
+			log.Error().Err(err).Str("camera_id", cameraID).Msg("Failed to create default settings")
+			respondError(w, http.StatusInternalServerError, "Failed to create default settings")
+			return
+		}
+		log.Info().Str("camera_id", cameraID).Msg("Default settings created")
+	}
+
+	// Create camera controller using device path
+	cameraPath := getCameraPathByID(cameraID)
+	if cameraPath == "" {
+		log.Error().Str("camera_id", cameraID).Msg("Camera not found in discovery")
+		respondError(w, http.StatusNotFound, "Camera not found or not available")
 		return
 	}
 
-	// Create camera controller
-	ctrl, err := camera.NewController(cameraID)
+	ctrl, err := camera.NewController(cameraPath)
 	if err != nil {
-		log.Error().Err(err).Str("camera_id", cameraID).Msg("Failed to create camera controller")
+		log.Error().Err(err).Str("camera_id", cameraID).Str("path", cameraPath).Msg("Failed to create camera controller")
 		respondError(w, http.StatusInternalServerError, "Failed to access camera")
 		return
 	}
@@ -325,9 +370,16 @@ func (h *CameraSettingsHandler) handleGetCameraControls(w http.ResponseWriter, r
 		return
 	}
 
-	ctrl, err := camera.NewController(cameraID)
+	cameraPath := getCameraPathByID(cameraID)
+	if cameraPath == "" {
+		log.Error().Str("camera_id", cameraID).Msg("Camera not found in discovery")
+		respondError(w, http.StatusNotFound, "Camera not found or not available")
+		return
+	}
+
+	ctrl, err := camera.NewController(cameraPath)
 	if err != nil {
-		log.Error().Err(err).Str("camera_id", cameraID).Msg("Failed to create camera controller")
+		log.Error().Err(err).Str("camera_id", cameraID).Str("path", cameraPath).Msg("Failed to create camera controller")
 		respondError(w, http.StatusInternalServerError, "Failed to access camera")
 		return
 	}

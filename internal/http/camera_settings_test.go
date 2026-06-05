@@ -11,6 +11,7 @@ import (
 	"codeberg.org/georgik/espbrew-go/internal/camera"
 	"codeberg.org/georgik/espbrew-go/internal/persistence"
 	"github.com/gorilla/mux"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestCameraSettingsHandler_List(t *testing.T) {
@@ -567,5 +568,69 @@ func TestValidateSettings(t *testing.T) {
 		if !handler.validateSettings(settings) {
 			t.Error("Should accept 0 and 255 as valid")
 		}
+	})
+}
+
+func TestCameraSettingsHandler_AutoCreateOnApply(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+
+	store, err := persistence.Open(persistence.DefaultConfig(dbPath))
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+	defer store.Close()
+
+	handler := NewCameraSettingsHandler(store)
+	router := mux.NewRouter()
+	handler.RegisterRoutes(router)
+
+	t.Run("apply without existing settings creates defaults", func(t *testing.T) {
+		cameraID := "test-autocreate-camera"
+
+		// Verify no settings exist initially
+		_, err := store.GetCameraSettings(cameraID)
+		assert.Error(t, err, "Should not have settings initially")
+
+		// Apply settings (should auto-create)
+		req := httptest.NewRequest("POST", "/api/v1/camera/settings/"+cameraID+"/apply", nil)
+		w := httptest.NewRecorder()
+
+		router.ServeHTTP(w, req)
+
+		// Settings should have been auto-created
+		settings, err := store.GetCameraSettings(cameraID)
+		assert.NoError(t, err, "Settings should have been auto-created")
+		assert.NotNil(t, settings)
+		assert.Equal(t, cameraID, settings.CameraID)
+		assert.Equal(t, int32(128), settings.Brightness, "Default brightness should be 128")
+		assert.Equal(t, int32(128), settings.Contrast, "Default contrast should be 128")
+		assert.Equal(t, true, settings.AutoExposure, "Default auto exposure should be true")
+	})
+
+	t.Run("apply with existing settings uses them", func(t *testing.T) {
+		cameraID := "test-existing-camera"
+
+		// Create custom settings
+		customSettings := &persistence.CameraSettings{
+			CameraID:   cameraID,
+			Name:       "Custom Camera",
+			Brightness: 200,
+			Contrast:   150,
+		}
+		store.StoreCameraSettings(customSettings)
+
+		// Apply settings (should use existing, not create defaults)
+		req := httptest.NewRequest("POST", "/api/v1/camera/settings/"+cameraID+"/apply", nil)
+		w := httptest.NewRecorder()
+
+		router.ServeHTTP(w, req)
+
+		// Verify existing settings were preserved
+		settings, err := store.GetCameraSettings(cameraID)
+		assert.NoError(t, err)
+		assert.Equal(t, int32(200), settings.Brightness, "Should use custom brightness")
+		assert.Equal(t, int32(150), settings.Contrast, "Should use custom contrast")
+		assert.Equal(t, "Custom Camera", settings.Name, "Should use custom name")
 	})
 }

@@ -3069,15 +3069,10 @@
                 return;
             }
 
-            // Validate camera ID format - reject old UUID format
-            const isOldFormat = !cameraId.startsWith('/dev/') &&
-                                cameraId.includes('-') &&
-                                cameraId.length > 20;
-            if (isOldFormat) {
-                console.error('Invalid camera ID format (old UUID):', cameraId);
-                document.getElementById('camera-config-panel').style.display = 'none';
-                alert('Invalid camera ID format. Please select a camera from the dropdown.');
-                return;
+            // Remove any existing old format warning
+            const existingWarning = document.getElementById('old-format-warning');
+            if (existingWarning) {
+                existingWarning.remove();
             }
 
             selectedCameraId = cameraId;
@@ -3247,6 +3242,37 @@
             }
         }
 
+        // Delete camera settings profile
+        async function deleteCameraSettings(cameraId) {
+            if (!confirm(`Delete camera settings for ${cameraId}? This action cannot be undone.`)) {
+                return;
+            }
+
+            try {
+                const response = await fetch(`/api/v1/camera/settings/${encodeURIComponent(cameraId)}`, {
+                    method: 'DELETE'
+                });
+
+                if (response.ok) {
+                    // Hide panel and reset state
+                    document.getElementById('camera-config-panel').style.display = 'none';
+                    selectedCameraId = null;
+                    currentCameraSettings = null;
+                    document.getElementById('camera-select').value = '';
+
+                    // Reload profiles list
+                    loadCameraProfiles();
+
+                    alert('Camera settings deleted successfully');
+                } else {
+                    const error = await response.json();
+                    alert('Failed to delete camera settings: ' + error.error);
+                }
+            } catch (error) {
+                alert('Failed to delete camera settings: ' + error.message);
+            }
+        }
+
         // Capture camera preview
         async function captureCameraPreview(cameraId, width, height) {
             const previewDiv = document.getElementById(`camera-preview-${cameraId}`);
@@ -3265,20 +3291,16 @@
                         width: width || 640,
                         height: height || 360,
                         format: 'jpg',
-                        quality: 75
+                        quality: 75,
+                        preview: true  // Mark as preview - won't save to gallery
                     })
                 });
 
                 if (response.ok) {
-                    const data = await response.json();
-                    if (data.url) {
-                        previewDiv.innerHTML = `<img src="${data.url}" style="width: 100%; height: 100%; object-fit: contain;" alt="Camera preview">`;
-                    } else if (data.image) {
-                        // Base64 encoded image
-                        previewDiv.innerHTML = `<img src="data:image/jpeg;base64,${data.image}" style="width: 100%; height: 100%; object-fit: contain;" alt="Camera preview">`;
-                    } else {
-                        previewDiv.innerHTML = '<div style="color: var(--error);">Failed to load preview</div>';
-                    }
+                    // Preview returns image directly, not JSON
+                    const blob = await response.blob();
+                    const imageUrl = URL.createObjectURL(blob);
+                    previewDiv.innerHTML = `<img src="${imageUrl}" style="width: 100%; height: 100%; object-fit: contain;" alt="Camera preview">`;
                 } else {
                     const error = await response.json();
                     previewDiv.innerHTML = `<div style="color: var(--error);">Capture failed: ${error.error || 'Unknown error'}</div>`;
@@ -3313,16 +3335,11 @@
             list.innerHTML = `
                 <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 12px;">
                     ${profiles.map(profile => {
-                        // Check if profile has old UUID format (not a valid device path)
-                        const isOldFormat = !profile.camera_id.startsWith('/dev/') &&
-                                          profile.camera_id.includes('-') &&
-                                          profile.camera_id.length > 20;
-                        const warning = isOldFormat ?
-                            '<div style="color: var(--warning); font-size: 11px; margin-bottom: 4px;">⚠️ Old format - Delete and recreate</div>' : '';
+                        // No old format check needed - UUIDs are valid camera IDs
+                        // The system now uses UUIDs internally with device paths stored separately
 
                         return `
-                        <div class="card" style="padding: 12px; ${isOldFormat ? 'border: 1px solid var(--warning);' : ''}">
-                            ${warning}
+                        <div class="card" style="padding: 12px;">
                             <div style="font-size: 14px; font-weight: 500; margin-bottom: 4px;">
                                 ${profile.name || profile.camera_id}
                             </div>
@@ -3330,7 +3347,7 @@
                                 Camera: ${profile.camera_id}
                             </div>
                             <div style="display: flex; gap: 8px;">
-                                <button class="btn btn-secondary" style="flex: 1; font-size: 12px;" onclick="loadProfileIntoForm('${profile.camera_id}')" ${isOldFormat ? 'disabled' : ''}>Load</button>
+                                <button class="btn btn-secondary" style="flex: 1; font-size: 12px;" onclick="loadProfileIntoForm('${profile.camera_id}')">Load</button>
                                 <button class="btn btn-danger" style="flex: 1; font-size: 12px;" onclick="deleteCameraProfile('${profile.camera_id}')">Delete</button>
                             </div>
                         </div>
@@ -3342,16 +3359,6 @@
 
         // Load profile into form
         async function loadProfileIntoForm(cameraId) {
-            // Check if camera ID is old UUID format (not a valid device path)
-            const isOldFormat = !cameraId.startsWith('/dev/') &&
-                                cameraId.includes('-') &&
-                                cameraId.length > 20;
-
-            if (isOldFormat) {
-                alert('This profile uses an old camera ID format.\n\nPlease delete this profile and create a new one.\n\nOld ID: ' + cameraId);
-                return;
-            }
-
             const select = document.getElementById('camera-select');
 
             // Check if the camera ID exists in the dropdown

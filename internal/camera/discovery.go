@@ -51,11 +51,12 @@ func (d *Discoverer) Discover() ([]*CameraInfo, error) {
 		if info != nil {
 			// Skip non-primary video devices (video1, video3, etc.)
 			// V4L2 creates multiple nodes per camera; we want the primary one
-			if isPrimaryVideoDevice(info.ID) {
+			// Check using device label which contains the video-index pattern
+			if isPrimaryVideoDevice(dm.Label) {
 				d.cameras[info.ID] = info
 				cameras = append(cameras, info)
 			} else {
-				log.Debug().Str("device_id", info.ID).Msg("Skipping non-primary video device")
+				log.Debug().Str("device_id", info.ID).Str("label", dm.Label).Msg("Skipping non-primary video device")
 			}
 		}
 	}
@@ -100,14 +101,37 @@ func deviceToCameraInfo(dm mediadevices.MediaDeviceInfo) (*CameraInfo, error) {
 		return nil, fmt.Errorf("device has no label")
 	}
 
-	// For V4L2, extract actual device path from pion's device ID
-	// pion returns: "usb-046d_HD_Webcam_C615_C574F460-video-index0"
-	// We need: "/dev/video0" as the ID for API calls
-	cameraID := dm.DeviceID
+	// For V4L2, extract actual device path from pion's device ID or label
+	// pion DeviceID might be UUID, Label contains actual path
+	// Label format: "usb-046d_HD_Webcam_C615_C574F460-video-index0" or "...;video4"
+	cameraID := dm.DeviceID // Use UUID/DeviceID as unique identifier
 	devicePath := dm.DeviceID
 	if runtime.GOOS == "linux" {
+		// Try DeviceID first (some pion versions return device path in ID)
 		devicePath = extractV4L2Path(dm.DeviceID)
-		cameraID = devicePath // Use /dev/video0 as the primary ID
+		log.Debug().
+			Str("device_id", dm.DeviceID).
+			Str("label", dm.Label).
+			Bool("contains_video_keyword", containsVideoKeyword(dm.Label)).
+			Str("path_after_device_id_extract", devicePath).
+			Msg("Camera path extraction step 1")
+
+		// If DeviceID didn't contain video pattern, try Label
+		// But only if Label looks like it contains device info (has "video" keyword)
+		if devicePath == dm.DeviceID && containsVideoKeyword(dm.Label) {
+			devicePath = extractV4L2Path(dm.Label)
+			log.Debug().
+				Str("device_id", dm.DeviceID).
+				Str("label", dm.Label).
+				Str("path_after_label_extract", devicePath).
+				Msg("Camera path extraction step 2")
+		}
+		// Keep cameraID as DeviceID (UUID), store device path in Path field
+		log.Info().
+			Str("camera_id", cameraID).
+			Str("label", dm.Label).
+			Str("final_path", devicePath).
+			Msg("Camera registered with path")
 	}
 
 	info := &CameraInfo{
@@ -132,6 +156,11 @@ func deviceToCameraInfo(dm mediadevices.MediaDeviceInfo) (*CameraInfo, error) {
 	return info, nil
 }
 
+// containsVideoKeyword checks if a string looks like it contains V4L2 device info
+func containsVideoKeyword(s string) bool {
+	return strings.Contains(s, "video") || strings.Contains(s, "-video-index")
+}
+
 // isPrimaryVideoDevice checks if the device ID represents the primary video device
 // V4L2 creates multiple nodes per camera (video0=primary, video1=metadata, etc.)
 // We want only the primary device (even-indexed video devices)
@@ -151,11 +180,22 @@ func isPrimaryVideoDevice(deviceID string) bool {
 }
 
 // extractV4L2Path converts a pion device ID to a V4L2 device path
-// Input: "usb-046d_HD_Webcam_C615_C574F460-video-index0"
-// Output: "/dev/video0"
+// Input: "usb-046d_HD_Webcam_C615_C574F460-video-index0" or "...;video4"
+// Output: "/dev/video0" or "/dev/video4"
+// Priority: ";videoN" suffix (actual device) > "-video-indexN" (pion internal index)
 func extractV4L2Path(deviceID string) string {
-	// Extract the video index from the device ID
-	// Format: ...-video-indexN
+	// First priority: extract from ";videoN" suffix (e.g. "usb-...-video-index0;video4")
+	// This is the actual V4L2 device number
+	// ";video" is 6 characters, so we start slicing from position+6 to get the number
+	if semicolonIdx := strings.LastIndex(deviceID, ";video"); semicolonIdx != -1 && semicolonIdx+6 < len(deviceID) {
+		numStr := deviceID[semicolonIdx+6:] // Everything after ";video"
+		var videoNum int
+		if _, err := fmt.Sscanf(numStr, "%d", &videoNum); err == nil {
+			return fmt.Sprintf("/dev/video%d", videoNum)
+		}
+	}
+
+	// Second try: extract from "-video-indexN" pattern
 	idx := strings.LastIndex(deviceID, "-video-index")
 	if idx != -1 && idx+12 < len(deviceID) {
 		numStr := deviceID[idx+12:]
@@ -164,7 +204,8 @@ func extractV4L2Path(deviceID string) string {
 			return fmt.Sprintf("/dev/video%d", videoNum)
 		}
 	}
-	// Fallback: try to find any number in the string
+
+	// Fallback: return original deviceID
 	return deviceID
 }
 

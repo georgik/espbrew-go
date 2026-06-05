@@ -329,6 +329,7 @@ func (p *PeerNode) discoverCameras() {
 		protoCam := &protocol.CameraInfo{
 			ID:      cam.ID,
 			Name:    cam.Name,
+			Path:    cam.Path,
 			Backend: string(cam.Backend),
 			NodeID:  p.id,
 			Status:  "available",

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -57,9 +58,11 @@ func (s *Store) GenerateFilename(cameraID, format string) (string, error) {
 	}
 
 	// Create a shorter camera ID for filename
-	shortID := cameraID
-	if len(shortID) > 8 {
-		shortID = shortID[:8]
+	// Sanitize: replace slashes and invalid chars with dashes
+	shortID := strings.ReplaceAll(cameraID, "/", "-")
+	shortID = strings.ReplaceAll(shortID, "\\", "-")
+	if len(shortID) > 12 {
+		shortID = shortID[:12]
 	}
 
 	timestamp := time.Now().Format("20060102-150405")

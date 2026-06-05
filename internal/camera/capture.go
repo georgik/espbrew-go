@@ -22,6 +22,7 @@ type CaptureRequest struct {
 	Format   string        // Output format: "jpg" (default)
 	Quality  int           // JPEG quality 1-100 (default: 85)
 	Timeout  time.Duration // Capture timeout (default: 5s)
+	Preview  bool          // If true, don't save to gallery (return image data only)
 }
 
 // CaptureResult contains the captured image data
@@ -104,14 +105,7 @@ func (c *Capturer) Capture(ctx context.Context, req *CaptureRequest) (*CaptureRe
 		return nil, fmt.Errorf("capture: %w", err)
 	}
 
-	// Save to storage
-	path, err := c.store.Save(cameraID, req.Format, data)
-	if err != nil {
-		return nil, fmt.Errorf("save image: %w", err)
-	}
-
 	result := &CaptureResult{
-		Path:      path,
 		Data:      data,
 		Format:    req.Format,
 		Width:     width,
@@ -119,6 +113,23 @@ func (c *Capturer) Capture(ctx context.Context, req *CaptureRequest) (*CaptureRe
 		Size:      len(data),
 		Timestamp: time.Now(),
 	}
+
+	// For preview requests, skip saving to storage
+	if req.Preview {
+		log.Debug().
+			Int("width", result.Width).
+			Int("height", result.Height).
+			Int("size", result.Size).
+			Msg("Preview capture completed (not saved)")
+		return result, nil
+	}
+
+	// Save to storage
+	path, err := c.store.Save(cameraID, req.Format, data)
+	if err != nil {
+		return nil, fmt.Errorf("save image: %w", err)
+	}
+	result.Path = path
 
 	log.Info().
 		Str("path", path).
@@ -151,8 +162,8 @@ func (c *Capturer) captureMacOS(ctx context.Context, cameraID string, width, hei
 		return nil, 0, 0, fmt.Errorf("imagesnap not found: install with 'brew install imagesnap'")
 	}
 
-	// Create temp file for capture
-	tmpFile := "/tmp/espbrew-capture.jpg"
+	// Create temp file for capture with unique name
+	tmpFile := fmt.Sprintf("/tmp/espbrew-capture-%d.jpg", time.Now().UnixNano())
 
 	// Build command - imagesnap uses default camera when no device specified
 	cmd := exec.CommandContext(ctx, "imagesnap", tmpFile)
@@ -185,8 +196,8 @@ func (c *Capturer) captureLinux(ctx context.Context, cameraID string, width, hei
 		return nil, 0, 0, fmt.Errorf("fswebcam not found: install with 'sudo apt install fswebcam'")
 	}
 
-	// Create temp file for capture
-	tmpFile := "/tmp/espbrew-capture.jpg"
+	// Create temp file for capture with unique name
+	tmpFile := fmt.Sprintf("/tmp/espbrew-capture-%d.jpg", time.Now().UnixNano())
 
 	// Build command - specify device if provided
 	args := []string{
@@ -198,7 +209,9 @@ func (c *Capturer) captureLinux(ctx context.Context, cameraID string, width, hei
 
 	// Add device argument if cameraID is specified and not "default"
 	if cameraID != "" && cameraID != "default" {
-		args = append([]string{"-d", cameraID}, args...)
+		// Convert pion camera ID to V4L2 path if needed
+		v4l2Path := extractV4L2Path(cameraID)
+		args = append([]string{"-d", v4l2Path}, args...)
 	}
 	args = append(args, tmpFile)
 

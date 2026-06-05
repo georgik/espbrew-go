@@ -465,6 +465,77 @@ Response:
 }
 ```
 
+### List Boards
+
+```
+GET /api/v1/boards
+```
+
+Returns a grouped view of connected ESP boards. Multiple ports belonging to the same physical board (identified by MAC address) are grouped together. This endpoint is useful for:
+
+- Identifying boards with multiple connection options (UART + USB Serial/JTAG)
+- Determining the recommended port for flashing and monitoring
+- Automation tools that need to understand port relationships
+
+Response:
+```json
+{
+  "targets": [
+    {
+      "target": "ESP32-C5",
+      "mac": "30:ed:a0:e4:6a:d0",
+      "uart": [
+        {
+          "type": "usb_serial_jtag",
+          "port": "/dev/cu.usbmodem1201"
+        },
+        {
+          "type": "uart",
+          "port": "/dev/cu.usbserial-110"
+        }
+      ],
+      "jtag": [],
+      "recommended": {
+        "flash_port": "/dev/cu.usbmodem1201",
+        "monitor_port": "/dev/cu.usbmodem1201",
+        "reason": "first_identified_port"
+      }
+    },
+    {
+      "target": "ESP32",
+      "mac": "84:0d:8e:18:8a:d0",
+      "uart": [
+        {
+          "type": "uart",
+          "port": "/dev/ttyUSB0"
+        }
+      ],
+      "jtag": [],
+      "recommended": {
+        "flash_port": "/dev/ttyUSB0",
+        "monitor_port": "/dev/ttyUSB0",
+        "reason": "only_identified_port"
+      }
+    }
+  ],
+  "unidentified_ports": [],
+  "metadata": {
+    "platform": "linux",
+    "scan_time": "2026-06-04T15:30:00Z"
+  }
+}
+```
+
+Port types:
+- `uart` - External UART bridge (CP2102, FT2232, etc.)
+- `usb_serial_jtag` - Native USB Serial/JTAG interface
+
+Recommendation reasons:
+- `usb_serial_jtag_preferred` - USB Serial/JTAG port selected for reliability
+- `only_identified_port` - Single port available
+- `first_identified_port` - First port that successfully identified the chip
+- `fallback_first_port` - No identified ports, using first available
+
 ### List Jobs
 
 ```
@@ -899,16 +970,25 @@ Response:
 {
   "cameras": [
     {
-      "id": "cam-abc123",
-      "name": "FaceTime HD Camera",
-      "backend": "darwin",
-      "node_id": "node-1",
+      "id": "61beb4c3-142a-4de5-bfa6-b55f3cb63577",
+      "name": "usb-046d_Brio_100_2437APG0Y788-video-index0;video4",
+      "path": "/dev/video4",
+      "backend": "v4l2",
+      "node_id": "themerin",
       "status": "available"
     }
   ],
   "count": 1
 }
 ```
+
+Camera fields:
+- `id` - Unique camera identifier (UUID from pion mediadevices)
+- `name` - Device label from system
+- `path` - Platform-specific device path (e.g. /dev/video4 on Linux)
+- `backend` - Platform backend: v4l2, avfoundation, directshow
+- `node_id` - Cluster node where camera is attached
+- `status` - Camera status: available, busy, offline
 
 ### Capture Image
 
@@ -920,7 +1000,7 @@ Content-Type: application/json
 Request:
 ```json
 {
-  "camera_id": "cam-abc123",
+  "camera_id": "61beb4c3-142a-4de5-bfa6-b55f3cb63577",
   "width": 1280,
   "height": 720,
   "format": "jpg",
@@ -934,11 +1014,13 @@ Response:
 ```json
 {
   "status": "success",
-  "camera_id": "cam-abc123",
-  "path": "/captures/2026-05-27/cam-abc123-20260527-123456.jpg",
+  "camera_id": "61beb4c3-142a-4de5-bfa6-b55f3cb63577",
+  "path": "/captures/2026-06-05/cam-61beb4c3-20260605-120000.jpg",
   "timestamp": 1716816246
 }
 ```
+
+Filename format: `cam-{camera_id_short}-{timestamp}.{ext}` where `camera_id_short` is the first 12 characters of the camera ID with slashes replaced by dashes (e.g. `/dev/video0` becomes `-dev-video0`).
 
 ### List Captures
 
@@ -951,10 +1033,10 @@ Response:
 {
   "captures": [
     {
-      "path": "/captures/2026-05-27/cam-abc123-001.jpg",
-      "filename": "cam-abc123-001.jpg",
-      "camera_id": "cam-abc123",
-      "camera_name": "FaceTime HD Camera",
+      "path": "/captures/2026-06-05/cam-61beb4c3-20260605-120000.jpg",
+      "filename": "cam-61beb4c3-20260605-120000.jpg",
+      "camera_id": "61beb4c3-142a-4de5-bfa6-b55f3cb63577",
+      "camera_name": "usb-046d_Brio_100_2437APG0Y788-video-index0;video4",
       "timestamp": 1716816246,
       "size": 183500
     }
@@ -994,6 +1076,51 @@ Response:
 Error responses:
 - `400 Bad Request` - Invalid or unsafe path
 - `404 Not Found` - File doesn't exist
+
+### Get Device Captures
+
+```
+GET /api/v1/captures/{captureId}/devices
+```
+
+Returns device-specific subimages extracted from a full capture. When device bounding box mappings exist for a camera, the system automatically extracts individual device views from each capture.
+
+Path format: `YYYY-MM-DD/cam-{id}-{timestamp}.jpg`
+
+Example: `GET /api/v1/captures/2026-06-05/cam-abc123-20260605-120000.jpg/devices`
+
+Response:
+```json
+{
+  "capture_id": "2026-06-05/cam-abc123-20260605-120000.jpg",
+  "device_captures": [
+    {
+      "device_id": "esp-aa:bb:cc:dd:ee:ff",
+      "bounds": {
+        "x": 100,
+        "y": 50,
+        "width": 320,
+        "height": 240
+      },
+      "subimage_path": "2026-06-05/cam-abc123-20260605-120000/device-esp-aabbccddeeff.jpg",
+      "adjustment": {
+        "rotation": 0,
+        "mirror_x": false,
+        "mirror_y": false
+      },
+      "generated_at": "2026-06-05T12:00:01Z"
+    }
+  ],
+  "count": 1
+}
+```
+
+Device capture fields:
+- `device_id` - Device identifier from mapping
+- `bounds` - Bounding box coordinates used for extraction
+- `subimage_path` - Relative path to device subimage (serve via /captures/)
+- `adjustment` - Image adjustments applied during extraction
+- `generated_at` - Timestamp when subimage was created
 
 ### Check Flash Hash
 

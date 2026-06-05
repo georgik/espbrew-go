@@ -22,6 +22,10 @@ type DeviceInfo struct {
 	VID          uint16
 	PID          uint16
 	SerialNumber string
+	Product      string
+	Manufacturer string
+	Location     string
+	PortType     PortType
 }
 
 const (
@@ -30,6 +34,7 @@ const (
 	ESP_PID_S3 = 0x0028
 	ESP_PID_C3 = 0x0029
 	ESP_PID_C6 = 0x002a
+	ESP_PID_H2 = 0x002b
 )
 
 func IsESPDevice(vid, pid uint16) bool {
