@@ -1409,7 +1409,7 @@
                         <div>${cap.camera_name || cap.camera_id}</div>
                         <div>${new Date(cap.timestamp * 1000).toLocaleString()}</div>
                         <div style="display: flex; gap: 8px; margin-top: 8px;">
-                            <button class="btn btn-secondary" onclick="openMappingEditor(event, '${cap.path}', '${cap.camera_id}', '${cap.camera_name || ''}')" style="padding: 4px 12px; font-size: 12px;">Map Devices</button>
+                            <button class="btn btn-secondary" data-action="map-devices" data-path="${cap.path}" data-camera-id="${escapeHtml(cap.camera_id)}" data-camera-name="${escapeHtml(cap.camera_name || '')}" style="padding: 4px 12px; font-size: 12px;">Map Devices</button>
                             <button class="btn btn-danger" onclick="deleteCapture(event, '${cap.path}')" style="padding: 4px 12px; font-size: 12px;">Delete</button>
                         </div>
                     </div>
@@ -1462,6 +1462,13 @@
 
         function escapeForId(str) {
             return str.replace(/[^a-zA-Z0-9-_]/g, '_');
+        }
+
+        function escapeHtml(str) {
+            if (!str) return '';
+            const div = document.createElement('div');
+            div.textContent = str;
+            return div.innerHTML;
         }
 
         function openModal(imagePath) {
@@ -1922,7 +1929,7 @@
                             </div>
                         </div>
                         <div style="display: flex; gap: 8px;">
-                            <button class="btn btn-secondary" style="padding: 4px 8px; font-size: 11px;" onclick="editMappingForDevice('${mapping.id}', '${mapping.camera_id}', '${mapping.camera_name || ''}')">Edit</button>
+                            <button class="btn btn-secondary" style="padding: 4px 8px; font-size: 11px;" data-action="edit-device-mapping" data-mapping-id="${escapeHtml(mapping.id)}" data-camera-id="${escapeHtml(mapping.camera_id)}" data-camera-name="${escapeHtml(mapping.camera_name || '')}">Edit</button>
                             <button class="btn btn-danger" style="padding: 4px 8px; font-size: 11px;" onclick="deleteMappingForDevice('${mapping.id}')">Delete</button>
                         </div>
                     </div>
@@ -1965,6 +1972,21 @@
 
         // Edit mapping for current device
         async function editMappingForDevice(mappingId, cameraId, cameraName) {
+            // Support data attribute call
+            if (typeof mappingId === 'object' && mappingId.target) {
+                const evt = mappingId;
+                const btn = evt.target.closest('[data-action="edit-device-mapping"]');
+                if (btn) {
+                    mappingId = btn.dataset.mappingId;
+                    cameraId = btn.dataset.cameraId;
+                    cameraName = btn.dataset.cameraName;
+                } else {
+                    mappingId = null;
+                }
+            }
+
+            if (!mappingId) return;
+
             closeDeviceModal();
 
             // Load a recent capture from this camera to use as reference
@@ -2537,6 +2559,16 @@
         async function openMappingEditor(evt, imagePath, cameraId, cameraName) {
             if (evt) evt.stopPropagation();
 
+            // Support both direct call and data attribute call
+            if (evt && evt.target && evt.target.dataset) {
+                const btn = evt.target.closest('[data-action="map-devices"]');
+                if (btn) {
+                    imagePath = btn.dataset.path;
+                    cameraId = btn.dataset.cameraId;
+                    cameraName = btn.dataset.cameraName;
+                }
+            }
+
             mappingState.currentCameraId = cameraId;
             mappingState.currentCameraName = cameraName || '';
             mappingState.currentImage = imagePath;
@@ -3072,7 +3104,7 @@
                                             <div class="mapping-coords">x:${mapping.bounds.x.toFixed(2)} y:${mapping.bounds.y.toFixed(2)} w:${mapping.bounds.width.toFixed(2)} h:${mapping.bounds.height.toFixed(2)}</div>
                                         </div>
                                         <div class="mapping-actions">
-                                            <button class="btn btn-danger" onclick="deleteMapping('${mapping.id}', '${cameraId}')">Delete</button>
+                                            <button class="btn btn-danger" data-action="delete-mapping" data-mapping-id="${escapeHtml(mapping.id)}" data-camera-id="${escapeHtml(cameraId)}">Delete</button>
                                         </div>
                                     </div>
                                 `).join('')}
@@ -3088,6 +3120,18 @@
 
         // Delete mapping
         async function deleteMapping(mappingId, cameraId) {
+            // Support data attribute call
+            if (typeof mappingId === 'object' && mappingId.target) {
+                const evt = mappingId;
+                const btn = evt.target.closest('[data-action="delete-mapping"]');
+                if (btn) {
+                    mappingId = btn.dataset.mappingId;
+                    cameraId = btn.dataset.cameraId;
+                } else {
+                    return;
+                }
+            }
+
             if (!confirm('Delete this mapping?')) return;
 
             try {
@@ -3706,6 +3750,26 @@
                 alert('Failed to delete camera profile: ' + error.message);
             }
         }
+
+        // Event delegation for data-action buttons
+        document.addEventListener('click', function(e) {
+            const btn = e.target.closest('[data-action]');
+            if (!btn) return;
+
+            const action = btn.dataset.action;
+
+            switch (action) {
+                case 'map-devices':
+                    openMappingEditor(e);
+                    break;
+                case 'edit-device-mapping':
+                    editMappingForDevice(e);
+                    break;
+                case 'delete-mapping':
+                    deleteMapping(e);
+                    break;
+            }
+        });
 
         connect();
         refreshData();

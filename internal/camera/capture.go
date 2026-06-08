@@ -16,13 +16,14 @@ import (
 
 // CaptureRequest specifies capture parameters
 type CaptureRequest struct {
-	CameraID string        // Camera ID (empty for first available)
-	Width    uint32        // Desired width (0 for camera default)
-	Height   uint32        // Desired height (0 for camera default)
-	Format   string        // Output format: "jpg" (default)
-	Quality  int           // JPEG quality 1-100 (default: 85)
-	Timeout  time.Duration // Capture timeout (default: 5s)
-	Preview  bool          // If true, don't save to gallery (return image data only)
+	CameraID   string        // Camera ID (UUID for storage, empty for first available)
+	DevicePath string        // Device path for actual capture (e.g., /dev/video0)
+	Width      uint32        // Desired width (0 for camera default)
+	Height     uint32        // Desired height (0 for camera default)
+	Format     string        // Output format: "jpg" (default)
+	Quality    int           // JPEG quality 1-100 (default: 85)
+	Timeout    time.Duration // Capture timeout (default: 5s)
+	Preview    bool          // If true, don't save to gallery (return image data only)
 }
 
 // CaptureResult contains the captured image data
@@ -76,31 +77,36 @@ func (c *Capturer) Capture(ctx context.Context, req *CaptureRequest) (*CaptureRe
 	ctx, cancel = context.WithTimeout(ctx, req.Timeout)
 	defer cancel()
 
-	// Find camera ID
-	var cameraID string
-	if req.CameraID != "" {
-		cameraID = req.CameraID
-	} else {
+	// Determine camera ID for storage (UUID preferred)
+	storageID := req.CameraID
+	if storageID == "" {
 		// Try to discover cameras first
 		cameras, err := c.discoverer.Discover()
 		if err == nil && len(cameras) > 0 {
-			cameraID = cameras[0].ID
+			storageID = cameras[0].ID
 			log.Info().Str("camera", cameras[0].Name).Msg("Using discovered camera")
 		} else {
 			// Fallback: use default camera ID for platform tool
-			cameraID = "default"
+			storageID = "default"
 			log.Debug().Msg("No cameras discovered, using platform default")
 		}
 	}
 
+	// Determine device ID for capture (path preferred, fallback to storage ID)
+	captureID := req.DevicePath
+	if captureID == "" {
+		captureID = storageID
+	}
+
 	log.Info().
-		Str("camera", cameraID).
+		Str("camera_id", storageID).
+		Str("device_path", captureID).
 		Uint32("width", req.Width).
 		Uint32("height", req.Height).
 		Msg("Capturing image")
 
 	// Capture using platform-specific tool
-	data, width, height, err := c.capturePlatformSpecific(ctx, cameraID, req.Width, req.Height, req.Quality)
+	data, width, height, err := c.capturePlatformSpecific(ctx, captureID, req.Width, req.Height, req.Quality)
 	if err != nil {
 		return nil, fmt.Errorf("capture: %w", err)
 	}
@@ -124,8 +130,8 @@ func (c *Capturer) Capture(ctx context.Context, req *CaptureRequest) (*CaptureRe
 		return result, nil
 	}
 
-	// Save to storage
-	path, err := c.store.Save(cameraID, req.Format, data)
+	// Save to storage using UUID
+	path, err := c.store.Save(storageID, req.Format, data)
 	if err != nil {
 		return nil, fmt.Errorf("save image: %w", err)
 	}

@@ -603,12 +603,13 @@ func (h *APIHandler) handleCameraCapture(w http.ResponseWriter, r *http.Request)
 	capturer := camera.NewCapturer(store)
 
 	captureReq := &camera.CaptureRequest{
-		CameraID: targetCam.Path,
-		Width:    req.Width,
-		Height:   req.Height,
-		Format:   "jpg",
-		Quality:  req.Quality,
-		Preview:  req.Preview, // Pass through preview flag
+		CameraID:   targetCam.ID,   // UUID for storage/API consistency
+		DevicePath: targetCam.Path, // Device path for actual capture
+		Width:      req.Width,
+		Height:     req.Height,
+		Format:     "jpg",
+		Quality:    req.Quality,
+		Preview:    req.Preview, // Pass through preview flag
 	}
 
 	log.Debug().Str("camera_id", targetCam.ID).Str("camera_path", targetCam.Path).Bool("preview", req.Preview).Msg("Capture request using camera path")
