@@ -1,5 +1,7 @@
 /espbrew
 /espbrew.exe
+*.wasm
+dist/
 
 # Test coverage
 *.out

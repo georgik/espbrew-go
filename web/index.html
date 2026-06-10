@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ESPBrew V2 - WASM Interface</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div id="app">
+        <div class="loading-screen">
+            <div class="spinner"></div>
+            <p>Loading ESPBrew V2...</p>
+        </div>
+    </div>
+
+    <script src="wasm_exec.js"></script>
+    <script>
+        var wasmFinished = false;
+        var wasmTimeout;
+
+        function showLoadingError(message) {
+            document.getElementById('app').innerHTML =
+                '<div style="color: #e74c3c; padding: 20px; text-align: center;">' +
+                '<h2>Failed to load WASM UI</h2>' +
+                '<p>' + message + '</p>' +
+                '<p><a href="/">Use legacy HTML interface instead</a></p>' +
+                '</div>';
+        }
+
+        function clearLoadingTimeout() {
+            if (wasmTimeout) {
+                clearTimeout(wasmTimeout);
+                wasmTimeout = null;
+            }
+        }
+
+        // Set a timeout for WASM loading
+        wasmTimeout = setTimeout(function() {
+            if (!wasmFinished) {
+                clearLoadingTimeout();
+                showLoadingError('WASM loading timed out. Please refresh the page.');
+            }
+        }, 10000); // 10 second timeout
+
+        const go = new Go();
+
+        WebAssembly.instantiateStreaming(fetch('main.wasm'), go.importObject)
+            .then(function(result) {
+                wasmFinished = true;
+                clearLoadingTimeout();
+                console.log('WASM module loaded successfully');
+                go.run(result.instance);
+            })
+            .catch(function(err) {
+                wasmFinished = true;
+                clearLoadingTimeout();
+                console.error('Failed to load WASM:', err);
+                showLoadingError(String(err));
+            });
+    </script>
+</body>
+</html>

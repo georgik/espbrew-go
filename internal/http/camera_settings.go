@@ -10,30 +10,15 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
-// getCameraPathByID looks up a camera's device path by its ID
+// getCameraPathByID looks up a camera's device path by its ID from registry
 // Returns the path (e.g. /dev/video0) or empty string if not found
 func getCameraPathByID(cameraID string) string {
-	discoverer := camera.NewDiscoverer()
-	cameras, err := discoverer.Discover()
-	if err != nil {
-		log.Error().Err(err).Str("camera_id", cameraID).Msg("Failed to discover cameras for path lookup")
-		return ""
+	registry := camera.GetRegistry()
+	if cam, ok := registry.GetByID(cameraID); ok && cam.Path != "" {
+		log.Debug().Str("camera_id", cameraID).Str("path", cam.Path).Msg("Found camera path in registry")
+		return cam.Path
 	}
-
-	log.Debug().Str("camera_id", cameraID).Int("found_cameras", len(cameras)).Msg("Looking up camera path")
-
-	for _, cam := range cameras {
-		log.Debug().
-			Str("looking_for", cameraID).
-			Str("found_id", cam.ID).
-			Str("found_path", cam.Path).
-			Msg("Camera comparison")
-		if cam.ID == cameraID && cam.Path != "" {
-			log.Info().Str("camera_id", cameraID).Str("path", cam.Path).Msg("Found camera path")
-			return cam.Path
-		}
-	}
-	log.Warn().Str("camera_id", cameraID).Msg("Camera not found in discovery")
+	log.Warn().Str("camera_id", cameraID).Msg("Camera not found in registry")
 	return ""
 }
 
@@ -340,18 +325,13 @@ func (h *CameraSettingsHandler) handleApplyCameraSettings(w http.ResponseWriter,
 
 // handleDiscoverCameras lists available cameras on the system
 func (h *CameraSettingsHandler) handleDiscoverCameras(w http.ResponseWriter, r *http.Request) {
-	discoverer := camera.NewDiscoverer()
-	cameras, err := discoverer.Discover()
-	if err != nil {
-		log.Error().Err(err).Msg("Failed to discover cameras")
-		respondError(w, http.StatusInternalServerError, "Failed to discover cameras")
-		return
-	}
+	registry := camera.GetRegistry()
+	cameras := registry.List()
 
 	// Check which cameras have stored settings
 	for i := range cameras {
 		settings, _ := h.store.GetCameraSettings(cameras[i].ID)
-		if settings != nil {
+		if settings != nil && settings.Name != "" {
 			cameras[i].Name = settings.Name
 		}
 	}

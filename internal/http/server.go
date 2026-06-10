@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -116,6 +117,9 @@ func (s *Server) setupRoutes(store *persistence.Store) {
 	// Favicon
 	s.router.HandleFunc("/favicon.ico", s.handleFavicon).Methods("GET")
 
+	// WASM UI (v2)
+	s.router.PathPrefix("/v2/").Handler(s.handleWasmUI())
+
 	// Static files (dashboard)
 	s.router.PathPrefix("/").Handler(s.handleStatic())
 }
@@ -196,6 +200,51 @@ func (s *Server) handleStatic() http.Handler {
 			return
 		}
 		http.FileServer(dashboard.StaticFS()).ServeHTTP(w, r)
+	})
+}
+
+func (s *Server) handleWasmUI() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Strip /v2/ prefix
+		path := r.URL.Path[4:] // Remove "/v2"
+		if path == "" || path == "/" {
+			path = "index.html"
+		}
+
+		// Determine full file path
+		fullPath := "web/" + path
+
+		// Open the file
+		f, err := os.Open(fullPath)
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+		defer f.Close()
+
+		// Get file info for Content-Type
+		info, err := f.Stat()
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+
+		// Set proper content types before serving
+		switch {
+		case strings.HasSuffix(path, ".html"):
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		case strings.HasSuffix(path, ".css"):
+			w.Header().Set("Content-Type", "text/css; charset=utf-8")
+		case strings.HasSuffix(path, ".js"):
+			w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
+		case strings.HasSuffix(path, ".wasm"):
+			w.Header().Set("Content-Type", "application/wasm")
+		default:
+			// Let http.ServeContent detect the type
+		}
+
+		// Serve the file with proper content type handling
+		http.ServeContent(w, r, path, info.ModTime(), f)
 	})
 }
 

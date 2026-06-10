@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"codeberg.org/georgik/espbrew-go/internal/camera"
@@ -17,6 +18,8 @@ import (
 
 type CameraHandler struct {
 	capturesDir string
+	cameras     []*camera.CameraInfo
+	camerasMu   sync.RWMutex
 }
 
 type CaptureInfo struct {
@@ -48,7 +51,6 @@ func NewCameraHandler() *CameraHandler {
 func (h *CameraHandler) RegisterRoutes(r *mux.Router) {
 	r.HandleFunc("/api/v1/captures", h.handleListCaptures).Methods("GET")
 	r.HandleFunc("/api/v1/captures/{captureId:.*}/devices", h.handleListDeviceCaptures).Methods("GET")
-	r.HandleFunc("/api/v1/devices/{deviceId}/captures", h.handleDeviceCaptures).Methods("GET")
 	r.HandleFunc("/captures/{path:.*}", h.handleServeCapture).Methods("GET")
 	r.HandleFunc("/captures/{path:.*}", h.handleDeleteCapture).Methods("DELETE")
 }
@@ -95,6 +97,16 @@ func (h *CameraHandler) handleServeCapture(w http.ResponseWriter, r *http.Reques
 	}
 
 	http.ServeFile(w, r, fullPath)
+}
+
+// getCameraNameByID looks up camera name by ID from registry
+func getCameraNameByID(cameraID string) string {
+	if cameraID == "" || cameraID == "unknown" {
+		return "Unknown Camera"
+	}
+	// Use global camera registry
+	registry := camera.GetRegistry()
+	return registry.GetNameByID(cameraID)
 }
 
 func (h *CameraHandler) scanCaptures() ([]*CaptureInfo, error) {
@@ -156,6 +168,11 @@ func (h *CameraHandler) scanCaptures() ([]*CaptureInfo, error) {
 			}
 		}
 
+		// Look up camera name from camera ID if found
+		if cameraID != "unknown" {
+			cameraName = getCameraNameByID(cameraID)
+		}
+
 		captures = append(captures, &CaptureInfo{
 			Path:       urlPath,
 			Filename:   filepath.Base(path),
@@ -206,31 +223,26 @@ func (h *CameraHandler) handleDeleteCapture(w http.ResponseWriter, r *http.Reque
 	vars := mux.Vars(r)
 	path := vars["path"]
 	if path == "" {
-		respondError(w, http.StatusBadRequest, "Path required")
+		respondError(w, http.StatusBadRequest, "Path is required")
 		return
 	}
 
-	fullPath, ok := h.sanitizePath(path)
-	if !ok {
-		log.Warn().Str("path", path).Msg("Rejecting unsafe delete request")
+	// Validate path
+	fullPath, valid := h.sanitizePath(path)
+	if !valid {
 		respondError(w, http.StatusBadRequest, "Invalid path")
 		return
 	}
 
-	// Verify file exists and is within captures dir
-	if _, err := os.Stat(fullPath); os.IsNotExist(err) {
-		respondError(w, http.StatusNotFound, "File not found")
-		return
-	}
-
-	// Delete the file
+	// Delete file
 	if err := os.Remove(fullPath); err != nil {
-		log.Error().Err(err).Str("path", fullPath).Msg("Failed to delete capture")
-		respondError(w, http.StatusInternalServerError, "Failed to delete file")
+		if os.IsNotExist(err) {
+			respondError(w, http.StatusNotFound, "File not found")
+		} else {
+			respondError(w, http.StatusInternalServerError, "Failed to delete file")
+		}
 		return
 	}
-
-	log.Info().Str("path", fullPath).Msg("Capture deleted")
 
 	respondJSON(w, map[string]interface{}{
 		"status": "deleted",
@@ -238,122 +250,62 @@ func (h *CameraHandler) handleDeleteCapture(w http.ResponseWriter, r *http.Reque
 	})
 }
 
-// handleListDeviceCaptures lists device-specific captures for a given full capture
 func (h *CameraHandler) handleListDeviceCaptures(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
-	captureId := vars["captureId"]
-	if captureId == "" {
-		respondError(w, http.StatusBadRequest, "capture ID required")
+	captureID := vars["captureId"]
+	if captureID == "" {
+		respondError(w, http.StatusBadRequest, "Capture ID is required")
 		return
 	}
 
-	// Build full path to capture
-	fullPath := filepath.Join(h.capturesDir, captureId)
-
-	// Verify file exists
-	if _, err := os.Stat(fullPath); os.IsNotExist(err) {
-		respondError(w, http.StatusNotFound, "Capture not found")
-		return
-	}
-
-	// Check if it's an image file
-	ext := strings.ToLower(filepath.Ext(fullPath))
-	if ext != ".jpg" && ext != ".jpeg" && ext != ".png" {
-		respondError(w, http.StatusBadRequest, "Not an image file")
-		return
-	}
-
-	// Load device captures metadata
-	store, err := camera.NewStore(h.capturesDir)
+	// Get capture path
+	captures, err := h.scanCaptures()
 	if err != nil {
-		log.Error().Err(err).Msg("Failed to create store")
-		respondError(w, http.StatusInternalServerError, "Failed to access storage")
-		return
-	}
-
-	deviceCaptures, err := store.LoadDeviceCaptures(fullPath)
-	if err != nil {
-		log.Error().Err(err).Str("capture", captureId).Msg("Failed to load device captures")
-		respondError(w, http.StatusInternalServerError, "Failed to load device captures")
-		return
-	}
-
-	respondJSON(w, map[string]interface{}{
-		"capture_id":      captureId,
-		"device_captures": deviceCaptures,
-		"count":           len(deviceCaptures),
-	})
-}
-
-// handleDeviceCaptures lists all captures for a specific device across all cameras
-func (h *CameraHandler) handleDeviceCaptures(w http.ResponseWriter, r *http.Request) {
-	vars := mux.Vars(r)
-	deviceId := vars["deviceId"]
-	if deviceId == "" {
-		respondError(w, http.StatusBadRequest, "device ID required")
-		return
-	}
-
-	// Scan all captures to find device-specific ones
-	var deviceCaptures []map[string]interface{}
-
-	err := filepath.Walk(h.capturesDir, func(path string, info fs.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-		if info.IsDir() {
-			return nil
-		}
-
-		// Check for device capture metadata files
-		ext := strings.ToLower(filepath.Ext(path))
-		if ext != ".json" {
-			return nil
-		}
-
-		// Check if this is a device capture metadata file (ends with .json but not metadata.json)
-		if filepath.Base(path) == "metadata.json" {
-			return nil
-		}
-
-		// Read device capture metadata
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return nil
-		}
-
-		var captures []camera.DeviceCaptureInfo
-		if err := json.Unmarshal(data, &captures); err != nil {
-			return nil
-		}
-
-		// Find captures for the requested device
-		for _, cap := range captures {
-			if cap.DeviceID == deviceId {
-				relPath, _ := filepath.Rel(h.capturesDir, path)
-				deviceCaptures = append(deviceCaptures, map[string]interface{}{
-					"device_id":     cap.DeviceID,
-					"bounds":        cap.Bounds,
-					"subimage":      "/captures/" + cap.Subimage,
-					"adjustment":    cap.Adjustment,
-					"generated_at":  cap.GeneratedAt.Format(time.RFC3339),
-					"metadata_path": "/captures/" + relPath,
-				})
-			}
-		}
-
-		return nil
-	})
-
-	if err != nil && !os.IsNotExist(err) {
-		log.Error().Err(err).Msg("Failed to scan captures")
 		respondError(w, http.StatusInternalServerError, "Failed to scan captures")
 		return
 	}
 
+	var capture *CaptureInfo
+	for _, c := range captures {
+		if strings.HasPrefix(c.Path, "/captures/"+captureID) {
+			capture = c
+			break
+		}
+	}
+
+	if capture == nil {
+		respondError(w, http.StatusNotFound, "Capture not found")
+		return
+	}
+
+	// Load metadata for device captures
+	metadataPath := filepath.Join(h.capturesDir, captureID, "metadata.json")
+	var deviceCaptures []map[string]interface{}
+
+	if metadataData, err := os.ReadFile(metadataPath); err == nil {
+		var metadata map[string]interface{}
+		if json.Unmarshal(metadataData, &metadata) == nil {
+			// Extract device capture info
+			for camID, camData := range metadata {
+				if camMap, ok := camData.(map[string]interface{}); ok {
+					if captures, ok := camMap["captures"].([]interface{}); ok {
+						for _, cap := range captures {
+							if capMap, ok := cap.(map[string]interface{}); ok {
+								deviceCaptures = append(deviceCaptures, map[string]interface{}{
+									"camera_id": camID,
+									"filename":  capMap["filename"],
+									"timestamp": capMap["timestamp"],
+								})
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
 	respondJSON(w, map[string]interface{}{
-		"device_id":       deviceId,
+		"capture":         capture,
 		"device_captures": deviceCaptures,
-		"count":           len(deviceCaptures),
 	})
 }

@@ -5,9 +5,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"image"
+	"io/fs"
 	"net/http"
+	"os"
+	"path/filepath"
 	"runtime"
 	"sort"
+	"strings"
 	"time"
 
 	"codeberg.org/georgik/espbrew-go/internal/camera"
@@ -51,6 +55,7 @@ func (h *APIHandler) RegisterRoutes(r *mux.Router) {
 	api.HandleFunc("/devices/{id}", h.handleDeviceDetail).Methods("GET")
 	api.HandleFunc("/devices/{id}", h.handleUpdateDevice).Methods("PUT", "PATCH")
 	api.HandleFunc("/devices/{id}", h.handleDeleteDevice).Methods("DELETE")
+	api.HandleFunc("/devices/{id}/captures", h.handleDeviceCaptures).Methods("GET")
 	api.HandleFunc("/cameras", h.handleCameras).Methods("GET")
 	api.HandleFunc("/boards", h.handleBoards).Methods("GET")
 
@@ -1227,4 +1232,121 @@ var runtimeGOOSVar = runtimeGOOSValue()
 
 func runtimeGOOSValue() string {
 	return runtime.GOOS
+}
+
+func (h *APIHandler) handleDeviceCaptures(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	deviceID := vars["id"]
+	if deviceID == "" {
+		respondError(w, http.StatusBadRequest, "Device ID is required")
+		return
+	}
+
+	// Get device aliases from store
+	storeDevices, err := h.store.ListDevices()
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "Failed to get device info")
+		return
+	}
+
+	var deviceAliases []string
+	var primaryAlias string
+	for _, dev := range storeDevices {
+		if dev.DeviceID == deviceID {
+			deviceAliases = dev.Aliases
+			if len(dev.Aliases) > 0 {
+				primaryAlias = dev.Aliases[0]
+			}
+			break
+		}
+	}
+
+	// Get captures directory and scan
+	homeDir, _ := os.UserHomeDir()
+	capturesDir := filepath.Join(homeDir, ".espbrew", "captures")
+
+	captures, err := scanCapturesFromDir(capturesDir)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "Failed to scan captures")
+		return
+	}
+
+	// Filter captures by device ID or aliases
+	var deviceCaptures []*CaptureInfo
+	for _, capture := range captures {
+		if isCaptureForDevice(capture, deviceID, primaryAlias, deviceAliases) {
+			deviceCaptures = append(deviceCaptures, capture)
+		}
+	}
+
+	respondJSON(w, map[string]interface{}{
+		"device_id": deviceID,
+		"captures":  deviceCaptures,
+		"count":     len(deviceCaptures),
+	})
+}
+
+// isCaptureForDevice checks if a capture belongs to a device
+func isCaptureForDevice(capture *CaptureInfo, deviceID, primaryAlias string, aliases []string) bool {
+	// Check if filename contains device ID
+	if strings.Contains(capture.Filename, deviceID) {
+		return true
+	}
+
+	// Check if filename contains primary alias
+	if primaryAlias != "" && strings.Contains(capture.Filename, primaryAlias) {
+		return true
+	}
+
+	// Check if filename contains any other alias
+	for _, alias := range aliases {
+		if alias != primaryAlias && strings.Contains(capture.Filename, alias) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// scanCapturesFromDir scans captures directory and returns capture info
+func scanCapturesFromDir(capturesDir string) ([]*CaptureInfo, error) {
+	var captures []*CaptureInfo
+
+	filepath.Walk(capturesDir, func(path string, info fs.FileInfo, err error) error {
+		if err != nil {
+			return nil
+		}
+		if info.IsDir() {
+			return nil
+		}
+
+		ext := strings.ToLower(filepath.Ext(path))
+		if ext != ".jpg" && ext != ".jpeg" && ext != ".png" {
+			return nil
+		}
+
+		relPath, _ := filepath.Rel(capturesDir, path)
+		urlPath := "/captures/" + relPath
+
+		stat, _ := os.Stat(path)
+		size := stat.Size()
+		modTime := stat.ModTime().Unix()
+
+		captures = append(captures, &CaptureInfo{
+			Path:       urlPath,
+			Filename:   filepath.Base(path),
+			CameraID:   "unknown",
+			CameraName: "Unknown Camera",
+			Timestamp:  modTime,
+			Size:       size,
+		})
+
+		return nil
+	})
+
+	sort.Slice(captures, func(i, j int) bool {
+		return captures[i].Timestamp > captures[j].Timestamp
+	})
+
+	return captures, nil
 }

@@ -99,6 +99,12 @@ func (l *LeaderNode) Start(ctx context.Context) error {
 		go l.runMaintenanceLoop()
 	}
 
+	// Start camera registry (handles discovery and watching)
+	camera.GetRegistry().Start()
+
+	// Wait for initial camera scan to complete
+	time.Sleep(500 * time.Millisecond)
+
 	// Discover cameras on startup
 	l.discoverCameras()
 
@@ -755,12 +761,8 @@ func (l *LeaderNode) cleanupOrphanedDevices() {
 
 // discoverCameras scans for available cameras and registers them
 func (l *LeaderNode) discoverCameras() {
-	discoverer := camera.NewDiscoverer()
-	cameras, err := discoverer.Discover()
-	if err != nil {
-		log.Warn().Err(err).Msg("Camera discovery failed")
-		return
-	}
+	registry := camera.GetRegistry()
+	cameras := registry.List()
 
 	// Filter to keep only index0 (primary interface) per physical camera
 	// Most USB cameras expose video-index0 (main) and video-index1 (metadata)
