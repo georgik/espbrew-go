@@ -129,6 +129,80 @@ The serial monitor interface automatically handles Windows COM port paths withou
 - [Hash-Based Flash](docs/HASH_BASED_FLASH.md) - Optimized flashing with hash detection
 - [Image Mapping](docs/IMAGE_MAPPING.md) - Device mapping and automated screenshot extraction
 
+## Web Interface
+
+ESPBrew provides two web interfaces:
+
+### V1 HTML Interface
+
+The legacy HTML interface at `/` provides full functionality with server-rendered pages.
+
+### V2 WASM Interface
+
+A modern WebAssembly-based interface at `/v2/` built entirely in Go with no external JavaScript dependencies.
+
+**Access:**
+```
+http://localhost:8080/v2/
+```
+
+**Features:**
+
+- **Dashboard**: System overview with device counts, camera status, and recent captures
+- **Capture**: Camera selection, image capture, and preview gallery
+- **Gallery**: Browse all captures with device-specific filtering and modal viewer
+- **Devices**: View connected devices, edit device attributes, manage protection status
+- **Monitor**: Serial terminal with bidirectional communication, baud rate selection, reset options
+- **Mapping**: Device-to-camera region mapping for automated screenshot extraction
+- **Flash**: Web-based firmware flashing with progress tracking
+- **Settings**: Connection and display configuration
+
+**Building WASM:**
+
+```bash
+# Using the helper command
+go run cmd/wasm-compiler
+
+# Or manually
+GOOS=js GOARCH=wasm go build -o web/main.wasm ./cmd/wasm
+```
+
+**WASM Runtime:**
+
+The WASM interface requires `wasm_exec.js` from the Go SDK:
+
+```bash
+cp $(go env GOROOT)/misc/wasm/wasm_exec.js web/
+```
+
+**Technical Implementation:**
+
+The V2 interface is built with pure Go using `syscall/js`:
+
+- `internal/ui/dom` - DOM manipulation helpers
+- `internal/ui/components` - Reusable UI components (Button, Card, Modal, etc.)
+- `internal/ui/layout` - Layout components (App, TabBar, Sidebar)
+- `internal/ui/pages` - Page implementations (Dashboard, Capture, Gallery, etc.)
+- `internal/ui/api` - REST and WebSocket API client
+
+**No npm, no JavaScript frameworks, no build tools** - just Go.
+
+**Serial Monitor Features:**
+
+The WASM monitor page provides terminal-style serial communication:
+
+- Bidirectional data transfer via WebSocket
+- Baud rate selection (9600 to 921600)
+- Reset on connect option
+- Device reset button
+- Real-time output with auto-scroll
+- Pattern-based exit conditions
+
+**WebSocket API:**
+```
+ws://host/api/v1/monitor/{port}?baud=115200&reset=1&exit_on=pattern
+```
+
 ## CLI Quick Reference
 
 Note: Windows users should use `espbrew.exe` instead of `./espbrew` in the examples below.

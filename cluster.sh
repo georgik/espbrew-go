@@ -1,3 +1,4 @@
 #!/bin/bash
 
-go build -o espbrew ./cmd/espbrew && ./espbrew cluster --role leader --port 8080
+# Build everything (WASM UI + server) and start cluster
+make build && ./espbrew cluster --role leader --port 8080
