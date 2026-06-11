@@ -384,7 +384,7 @@ func capturePreview(cameraID string) {
 			if previewImage != nil {
 				previewImage.SetStyle("display", "none")
 			}
-			showSettingsError("Failed to capture preview")
+			showSettingsError("Failed to capture preview: " + err.Error())
 			return
 		}
 
