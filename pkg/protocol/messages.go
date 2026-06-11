@@ -1,10 +1,117 @@
 package protocol
 
 import (
+	"context"
+	"errors"
+	"strings"
 	"time"
 
 	"codeberg.org/georgik/espbrew-go/internal/flashhash"
 )
+
+// BackendType defines the type of backend used for device operations
+type BackendType string
+
+const (
+	BackendPhysical BackendType = "physical" // Real hardware via serial port
+	BackendWokwi    BackendType = "wokwi"    // Wokwi simulator
+	BackendQEMU     BackendType = "qemu"     // QEMU emulator (future)
+)
+
+// BackendConfig defines the interface for simulator-specific configuration
+type BackendConfig interface {
+	GetType() BackendType
+	Validate() error
+}
+
+// WokwiConfig contains Wokwi simulator configuration
+type WokwiConfig struct {
+	ChipType    string `json:"chip_type"`           // ESP32, ESP32-S3, ESP32-C3, etc.
+	DiagramJSON string `json:"diagram_json"`        // diagram.json content
+	APIToken    string `json:"api_token,omitempty"` // Wokwi API token (uses API if set, otherwise CLI)
+}
+
+// GetType returns the backend type
+func (w *WokwiConfig) GetType() BackendType { return BackendWokwi }
+
+// Validate validates the Wokwi configuration
+func (w *WokwiConfig) Validate() error {
+	if w.ChipType == "" {
+		return errors.New("chip_type is required")
+	}
+	if w.DiagramJSON == "" {
+		return errors.New("diagram_json is required")
+	}
+	return nil
+}
+
+// QEMUConfig contains QEMU emulator configuration (future)
+type QEMUConfig struct {
+	MachineType string `json:"machine_type"` // esp32, esp32s3, etc.
+	MemorySize  int    `json:"memory_size"`  // MB
+}
+
+// GetType returns the backend type
+func (q *QEMUConfig) GetType() BackendType { return BackendQEMU }
+
+// Validate validates the QEMU configuration
+func (q *QEMUConfig) Validate() error {
+	if q.MachineType == "" {
+		return errors.New("machine_type is required")
+	}
+	if q.MemorySize <= 0 {
+		return errors.New("memory_size must be positive")
+	}
+	return nil
+}
+
+// BackendTypeFromPath determines the backend type from a device path.
+// Physical devices use paths like "/dev/ttyUSB0" or "COM5"
+// Virtual devices use URI-style paths like "wokwi:esp32s3" or "qemu:esp32"
+func BackendTypeFromPath(path string) BackendType {
+	if strings.HasPrefix(path, "wokwi:") {
+		return BackendWokwi
+	}
+	if strings.HasPrefix(path, "qemu:") {
+		return BackendQEMU
+	}
+	// Default to physical for /dev/*, COM*, or other paths
+	return BackendPhysical
+}
+
+// Monitor defines the interface for monitoring device output
+type Monitor interface {
+	// Start begins monitoring device output
+	Start(ctx context.Context) error
+
+	// Stop stops monitoring
+	Stop() error
+
+	// Output returns a channel for reading log entries
+	Output() <-chan LogEntry
+
+	// Send sends data to the device (for simulators that support input)
+	Send(data []byte) error
+
+	// Reset resets the device (if supported)
+	Reset() error
+}
+
+// Flasher defines the interface for flashing firmware to devices
+type Flasher interface {
+	// Flash writes firmware to the device
+	Flash(ctx context.Context, firmwarePath string, progress chan<- int) error
+
+	// ReadFlash reads flash memory from the device
+	ReadFlash(ctx context.Context, address, size uint32) ([]byte, error)
+}
+
+// LogEntry represents a single log entry from device output
+type LogEntry struct {
+	Timestamp int64  `json:"timestamp"`
+	Data      string `json:"data"`
+	IsError   bool   `json:"is_error,omitempty"`
+}
 
 type MessageType string
 
@@ -55,7 +162,9 @@ type DeviceInfo struct {
 	ProtectedReason string             `json:"protected_reason,omitempty"`
 	ProtectedBy     string             `json:"protected_by,omitempty"`
 	ProtectedAt     time.Time          `json:"protected_at,omitempty"`
-	FlashHashes     *DeviceFlashHashes `json:"flash_hashes,omitempty"` // Latest flash hash data for this device
+	FlashHashes     *DeviceFlashHashes `json:"flash_hashes,omitempty"`   // Latest flash hash data for this device
+	Backend         BackendType        `json:"backend"`                  // Backend type: physical, wokwi, qemu
+	BackendConfig   BackendConfig      `json:"backend_config,omitempty"` // Backend-specific configuration
 }
 
 // CameraInfo represents a camera device attached to a node

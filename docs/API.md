@@ -536,6 +536,139 @@ Recommendation reasons:
 - `first_identified_port` - First port that successfully identified the chip
 - `fallback_first_port` - No identified ports, using first available
 
+### Backend Configuration
+
+#### Get Device Backend Config
+
+```
+GET /api/v1/devices/{id}/backend
+```
+
+Retrieves the backend configuration for a device.
+
+Response:
+```json
+{
+  "backend": "wokwi",
+  "device_id": "esp-aa:bb:cc:dd:ee:ff",
+  "backend_config": {
+    "chip_type": "ESP32",
+    "diagram_json": "{\"version\":1,\"parts\":[{\"type\":\"esp32-devkitC\",\"id\":\"chip\"}]}"
+  }
+}
+```
+
+Backend types:
+- `physical` - Real hardware via serial port
+- `wokwi` - Wokwi simulator
+- `qemu` - QEMU emulator (future)
+
+#### Set Device Backend Config
+
+```
+PUT /api/v1/devices/{id}/backend
+PATCH /api/v1/devices/{id}/backend
+Content-Type: application/json
+```
+
+Sets the backend configuration for a device.
+
+Request:
+```json
+{
+  "backend": "wokwi",
+  "backend_config": {
+    "chip_type": "ESP32",
+    "diagram_json": "{\"version\":1,\"parts\":[{\"type\":\"esp32-devkitC\",\"id\":\"chip\"}]}"
+  }
+}
+```
+
+Wokwi backend config:
+- `chip_type` - ESP32 chip variant (ESP32, ESP32-S2, ESP32-S3, ESP32-C3, ESP32-C6)
+- `diagram_json` - Wokwi diagram.json content
+- `api_token` - Wokwi API token (optional). If set, uses Wokwi WebSocket API instead of wokwi-cli
+
+QEMU backend config (future):
+- `machine_type` - Machine type (esp32, esp32s3, etc.)
+- `memory_size` - Memory size in MB
+
+Physical backend has no additional config.
+
+#### Create Virtual Device
+
+```
+POST /api/v1/devices/virtual
+Content-Type: application/json
+```
+
+Creates a new virtual device (simulator).
+
+Request:
+```json
+{
+  "device_id": "wokwi-esp32-test",
+  "chip_type": "ESP32",
+  "description": "Test Wokwi device",
+  "backend": "wokwi",
+  "backend_config": {
+    "diagram_json": "{\"version\":1,\"parts\":[{\"type\":\"esp32-devkitC\",\"id\":\"chip\"}]}"
+  }
+}
+```
+
+If `diagram_json` is not provided, a default diagram will be generated based on the chip type.
+
+Response:
+```json
+{
+  "device_id": "wokwi-esp32-test",
+  "chip_type": "ESP32",
+  "backend": "wokwi",
+  "backend_config": {
+    "wokwi": {
+      "chip_type": "ESP32",
+      "diagram_json": "{\"version\":1,\"parts\":[{\"type\":\"esp32-devkitC\",\"id\":\"chip\"}]}"
+    }
+  }
+}
+```
+
+#### List Virtual Devices
+
+```
+GET /api/v1/devices/virtual
+```
+
+Lists all virtual devices (simulators).
+
+Response:
+```json
+[
+  {
+    "device_id": "wokwi-esp32-test",
+    "chip_type": "ESP32",
+    "backend": "wokwi",
+    "backend_config": {
+      "wokwi": {
+        "chip_type": "ESP32",
+        "diagram_json": "{\"version\":1,\"parts\":[{\"type\":\"esp32-devkitC\",\"id\":\"chip\"}]}"
+      }
+    }
+  }
+]
+```
+
+#### Delete Virtual Device
+
+```
+DELETE /api/v1/devices/virtual/{id}
+```
+
+Deletes a virtual device. Only virtual devices (wokwi, qemu) can be deleted through this endpoint.
+
+Response: `204 No Content`
+
 ### List Jobs
 
 ```
@@ -1536,6 +1669,62 @@ Response:
   }
 }
 ```
+
+## Wokwi Simulator Integration
+
+ESPBrew supports running firmware on Wokwi simulator as an alternative to physical hardware. This is useful for testing and development without requiring actual devices.
+
+### Device Paths
+
+Virtual Wokwi devices use URI-style paths:
+- `wokwi:esp32-s3` - ESP32-S3 simulator
+- `wokwi:esp32-c3` - ESP32-C3 simulator
+
+### Backend Configuration
+
+Wokwi devices can be configured in two modes:
+
+#### CLI Mode (default)
+Uses `wokwi-cli` subprocess for simulation:
+```json
+{
+  "device_id": "wokwi:esp32-s3",
+  "backend": "wokwi",
+  "backend_config": {
+    "chip_type": "ESP32-S3",
+    "diagram_json": "{...}"
+  }
+}
+```
+
+#### API Mode
+Uses Wokwi WebSocket API for better performance and features:
+```json
+{
+  "device_id": "wokwi:esp32-s3",
+  "backend": "wokwi",
+  "backend_config": {
+    "chip_type": "ESP32-S3",
+    "diagram_json": "{...}",
+    "api_token": "your-wokwi-api-token"
+  }
+}
+```
+
+Get your API token from https://wokwi.com/dashboard/ci
+
+### API Mode Benefits
+
+- Faster startup (no subprocess spawning)
+- Real-time serial output via WebSocket events
+- Structured error responses
+- Future support for GPIO, display capture, logic analyzer
+
+### Default Virtual Devices
+
+ESPBrew automatically creates these Wokwi devices on startup:
+- `wokwi:esp32-s3` - ESP32-S3 with default board
+- `wokwi:esp32-c3` - ESP32-C3 with default board
 
 ## Error Responses
 

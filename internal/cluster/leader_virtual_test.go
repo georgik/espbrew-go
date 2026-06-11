@@ -38,12 +38,12 @@ func TestVirtualDevicesRegistered(t *testing.T) {
 
 	state := leader.State()
 
-	// Check that virtual devices are registered
+	// Check that virtual devices are registered (new URI-style format)
 	expectedVirtual := []string{
-		"wokwi-esp32s3",
-		"wokwi-esp32",
-		"wokwi-esp32c3",
-		"wokwi-esp32c6",
+		"wokwi:esp32-s3",
+		"wokwi:esp32",
+		"wokwi:esp32-c3",
+		"wokwi:esp32-c6",
 	}
 
 	for _, path := range expectedVirtual {
@@ -94,13 +94,13 @@ func TestVirtualDeviceFlashJob(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 
 	// Try to enqueue a job for virtual device
-	job, err := leader.EnqueueJob("test-firmware.bin", "wokwi-esp32s3")
+	job, err := leader.EnqueueJob("test-firmware.bin", "wokwi:esp32-s3")
 	if err != nil {
 		t.Fatalf("Failed to enqueue job: %v", err)
 	}
 
-	if job.DevicePath != "wokwi-esp32s3" {
-		t.Errorf("Job device path = %q, want 'wokwi-esp32s3'", job.DevicePath)
+	if job.DevicePath != "wokwi:esp32-s3" {
+		t.Errorf("Job device path = %q, want 'wokwi:esp32-s3'", job.DevicePath)
 	}
 
 	t.Logf("Job %s enqueued for virtual device", job.ID)

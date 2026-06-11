@@ -54,12 +54,12 @@ func TestHandleDevicesIncludesVirtual(t *testing.T) {
 		t.Fatalf("Failed to decode response: %v", err)
 	}
 
-	// Should include virtual devices
+	// Should include virtual devices (new URI-style format)
 	virtualFound := map[string]bool{
-		"wokwi-esp32s3": false,
-		"wokwi-esp32":   false,
-		"wokwi-esp32c3": false,
-		"wokwi-esp32c6": false,
+		"wokwi:esp32-s3": false,
+		"wokwi:esp32":    false,
+		"wokwi:esp32-c3": false,
+		"wokwi:esp32-c6": false,
 	}
 
 	for _, dev := range devices {

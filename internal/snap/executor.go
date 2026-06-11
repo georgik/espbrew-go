@@ -8,8 +8,10 @@ import (
 	"sync"
 	"time"
 
+	"codeberg.org/georgik/espbrew-go/internal/backend/wokwi"
 	"codeberg.org/georgik/espbrew-go/internal/camera"
 	"codeberg.org/georgik/espbrew-go/internal/monitor"
+	"codeberg.org/georgik/espbrew-go/pkg/protocol"
 	"github.com/google/uuid"
 	"github.com/rs/zerolog/log"
 )
@@ -19,7 +21,9 @@ import (
 // a snapshot of the device state. Flashing is not performed.
 type Executor struct {
 	// Device configuration
-	device string // Serial port path
+	device     string               // Serial port path or device ID
+	deviceInfo *protocol.DeviceInfo // Device info from cluster (optional)
+	backend    protocol.Monitor     // Backend monitor instance
 
 	// Snapshot options
 	duration time.Duration // How long to monitor serial output
@@ -60,6 +64,47 @@ func NewExecutor(device string, duration time.Duration) *Executor {
 		imageCh:   make(chan []byte, 1),
 		result:    &SnapResult{},
 	}
+}
+
+// NewExecutorWithDevice creates a new snapshot executor with device info.
+//
+// Parameters:
+//   - deviceInfo: Device information from cluster
+//   - duration: How long to monitor serial output
+//
+// Returns a configured Executor ready to run with backend routing.
+func NewExecutorWithDevice(deviceInfo *protocol.DeviceInfo, duration time.Duration) *Executor {
+	device := deviceInfo.Path
+	if deviceInfo.Backend != protocol.BackendPhysical && deviceInfo.Backend != "" {
+		// For simulators, use device ID as identifier
+		device = deviceInfo.DeviceID
+	}
+
+	return &Executor{
+		device:     device,
+		deviceInfo: deviceInfo,
+		duration:   duration,
+		baudRate:   115200, // Default baud rate
+		skipFlash:  true,   // Flashing is not supported
+		logChan:    make(chan SerialLogEntry, 1000),
+		imageCh:    make(chan []byte, 1),
+		result:     &SnapResult{},
+	}
+}
+
+// SetBackendMonitor sets a custom backend monitor (for testing or advanced usage)
+func (e *Executor) SetBackendMonitor(monitor protocol.Monitor) {
+	e.backend = monitor
+}
+
+// GetDevice returns the device identifier
+func (e *Executor) GetDevice() string {
+	return e.device
+}
+
+// GetDeviceInfo returns the device info (may be nil for physical devices)
+func (e *Executor) GetDeviceInfo() *protocol.DeviceInfo {
+	return e.deviceInfo
 }
 
 // Run executes the snapshot workflow.
@@ -163,11 +208,87 @@ func (e *Executor) monitorSerial(ctx context.Context) error {
 	e.result.Metadata.MonitorBaudRate = e.baudRate
 	e.mu.Unlock()
 
+	// Check if backend monitor is set (for simulators)
+	if e.backend != nil {
+		return e.monitorWithBackend(ctx)
+	}
+
+	// Check if device info is available with wokwi backend
+	if e.deviceInfo != nil && e.deviceInfo.Backend == protocol.BackendWokwi {
+		return e.monitorWokwi(ctx)
+	}
+
+	// Default to physical device monitoring
+	return e.monitorPhysical(ctx)
+}
+
+// monitorWithBackend uses the configured backend monitor
+func (e *Executor) monitorWithBackend(ctx context.Context) error {
+	log.Debug().
+		Str("device", e.device).
+		Dur("duration", e.duration).
+		Msg("Starting backend monitor")
+
+	if err := e.backend.Start(ctx); err != nil {
+		return fmt.Errorf("start backend monitor: %w", err)
+	}
+	defer e.backend.Stop()
+
+	// Create context with timeout
+	monitorCtx, cancel := context.WithTimeout(ctx, e.duration)
+	defer cancel()
+
+	entryCount := 0
+
+	// Read log entries from backend
+	for {
+		select {
+		case <-monitorCtx.Done():
+			log.Debug().Int("entries", entryCount).Msg("Backend monitoring completed")
+			return nil
+
+		case entry, ok := <-e.backend.Output():
+			if !ok {
+				// Channel closed
+				return nil
+			}
+			e.addLogEntry(entry.Data)
+			entryCount++
+
+		case <-time.After(100 * time.Millisecond):
+			// Keep select alive
+		}
+	}
+}
+
+// monitorWokwi handles Wokwi simulator monitoring
+func (e *Executor) monitorWokwi(ctx context.Context) error {
+	log.Debug().
+		Str("device", e.device).
+		Dur("duration", e.duration).
+		Msg("Starting Wokwi simulator monitor")
+
+	// Create Wokwi monitor
+	wokwiMonitor, err := wokwi.NewMonitor(e.deviceInfo)
+	if err != nil {
+		return fmt.Errorf("create wokwi monitor: %w", err)
+	}
+
+	// For now, we need to set the ELF path
+	// This will be passed via flash operation or stored separately
+	// TODO: Integrate with firmware storage
+
+	e.backend = wokwiMonitor
+	return e.monitorWithBackend(ctx)
+}
+
+// monitorPhysical handles physical device monitoring
+func (e *Executor) monitorPhysical(ctx context.Context) error {
 	log.Debug().
 		Str("device", e.device).
 		Int("baud", e.baudRate).
 		Dur("duration", e.duration).
-		Msg("Starting serial monitor")
+		Msg("Starting physical serial monitor")
 
 	// Create monitor session
 	sessionID := uuid.New().String()

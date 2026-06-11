@@ -26,7 +26,7 @@ func TestVirtualFlasherELF(t *testing.T) {
 	// Flash to virtual device
 	flasher := NewFlasher(nil)
 	req := &FlashRequest{
-		Port:     "wokwi-esp32s3",
+		Port:     "wokwi:esp32-s3",
 		Firmware: data,
 		Chip:     chips.ChipESP32S3,
 	}

@@ -51,15 +51,27 @@ func parseDevice(v js.Value) Device {
 		}
 	}
 
+	// Parse backend config
+	var backendConfig map[string]interface{}
+	if backendConfigVal := v.Get("backend_config"); !backendConfigVal.IsUndefined() && !backendConfigVal.IsNull() {
+		backendConfig = make(map[string]interface{})
+		// Use ParseJSONValue to parse the nested object
+		if err := ParseJSONValue(backendConfigVal, &backendConfig); err != nil {
+			// If parsing fails, leave backendConfig empty
+		}
+	}
+
 	return Device{
-		DeviceID:   ValueToString(v.Get("device_id")),
-		Path:       ValueToString(v.Get("path")),
-		ChipType:   ValueToString(v.Get("chip_type")),
-		Status:     ValueToString(v.Get("status")),
-		Aliases:    aliases,
-		MACAddress: ValueToString(v.Get("mac_address")),
-		NodeID:     ValueToString(v.Get("node_id")),
-		Protected:  ValueToBool(v.Get("protected")),
+		DeviceID:      ValueToString(v.Get("device_id")),
+		Path:          ValueToString(v.Get("path")),
+		ChipType:      ValueToString(v.Get("chip_type")),
+		Status:        ValueToString(v.Get("status")),
+		Aliases:       aliases,
+		MACAddress:    ValueToString(v.Get("mac_address")),
+		NodeID:        ValueToString(v.Get("node_id")),
+		Protected:     ValueToBool(v.Get("protected")),
+		Backend:       ValueToString(v.Get("backend")),
+		BackendConfig: backendConfig,
 	}
 }
 
@@ -95,6 +107,18 @@ func UnprotectDevice(deviceID string, callback func(error)) {
 	})
 }
 
+// DeleteDevice deletes a device
+func DeleteDevice(deviceID string, callback func(bool, error)) {
+	DefaultAsyncClient.Delete("/devices/"+deviceID, func(result js.Value, err error) {
+		if err != nil {
+			callback(false, err)
+			return
+		}
+		// Delete returns 204 No Content on success
+		callback(true, nil)
+	})
+}
+
 // DisableDevice disables a device
 func DisableDevice(deviceID string, callback func(error)) {
 	DefaultAsyncClient.Post("/devices/"+deviceID+"/disable", nil, func(result js.Value, err error) {
@@ -121,6 +145,30 @@ func UpdateDevice(deviceID string, attrs map[string]interface{}, callback func(b
 		if !result.IsUndefined() && !result.IsNull() {
 			status := ValueToString(result.Get("status"))
 			success := (status == "ok" || status == "updated")
+			callback(success, nil)
+			return
+		}
+
+		callback(false, nil)
+	})
+}
+
+// SetBackendConfig updates device backend configuration
+func SetBackendConfig(deviceID string, backend string, backendConfig map[string]interface{}, callback func(bool, error)) {
+	req := map[string]interface{}{
+		"backend":        backend,
+		"backend_config": backendConfig,
+	}
+	DefaultAsyncClient.Put("/devices/"+deviceID+"/backend", req, func(result js.Value, err error) {
+		if err != nil {
+			callback(false, err)
+			return
+		}
+
+		// Check for success status
+		if !result.IsUndefined() && !result.IsNull() {
+			deviceIDResult := ValueToString(result.Get("device_id"))
+			success := (deviceIDResult != "")
 			callback(success, nil)
 			return
 		}

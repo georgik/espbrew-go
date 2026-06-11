@@ -117,11 +117,14 @@ func (s *Server) setupRoutes(store *persistence.Store) {
 	// Favicon
 	s.router.HandleFunc("/favicon.ico", s.handleFavicon).Methods("GET")
 
+	// Redirect root to v2 (must be before PathPrefix handlers)
+	s.router.HandleFunc("/", s.handleRootRedirect).Methods("GET")
+
 	// WASM UI (v2)
 	s.router.PathPrefix("/v2/").Handler(s.handleWasmUI())
 
-	// Static files (dashboard)
-	s.router.PathPrefix("/").Handler(s.handleStatic())
+	// V1 HTML interface
+	s.router.PathPrefix("/v1/").Handler(s.handleV1Static())
 }
 
 func (s *Server) GetProgressCallback() func(string, int, string) {
@@ -172,6 +175,10 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (s *Server) handleRootRedirect(w http.ResponseWriter, r *http.Request) {
+	http.Redirect(w, r, "/v2/", http.StatusMovedPermanently)
+}
+
 func (s *Server) handleMonitor(w http.ResponseWriter, r *http.Request) {
 	if dashboard.HasMonitor() {
 		w.Header().Set("Content-Type", "text/html")
@@ -190,6 +197,32 @@ func (s *Server) handleFavicon(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleStatic() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/" {
+			if dashboard.HasDashboard() {
+				w.Header().Set("Content-Type", "text/html")
+				w.Write(dashboard.IndexHTML())
+			} else {
+				w.Header().Set("Content-Type", "text/html")
+				w.Write([]byte(fallbackDashboard))
+			}
+			return
+		}
+		http.FileServer(dashboard.StaticFS()).ServeHTTP(w, r)
+	})
+}
+
+func (s *Server) handleV1Static() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Strip /v1/ prefix
+		path := r.URL.Path[4:] // Remove "/v1"
+		if path == "" || path == "/" {
+			path = "/"
+		}
+
+		// Create a new request with the modified path
+		r = r.Clone(r.Context())
+		r.URL.Path = path
+
+		if path == "/" {
 			if dashboard.HasDashboard() {
 				w.Header().Set("Content-Type", "text/html")
 				w.Write(dashboard.IndexHTML())

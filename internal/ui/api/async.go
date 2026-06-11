@@ -5,6 +5,7 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"syscall/js"
 )
 
@@ -135,9 +136,9 @@ type HTTPError struct {
 
 func (e *HTTPError) Error() string {
 	if e.Message != "" {
-		return "HTTP error " + string(rune(e.Status)) + ": " + e.Message
+		return fmt.Sprintf("HTTP error %d: %s", e.Status, e.Message)
 	}
-	return "HTTP error: " + string(rune(e.Status))
+	return fmt.Sprintf("HTTP error %d", e.Status)
 }
 
 // NetworkError represents a network error

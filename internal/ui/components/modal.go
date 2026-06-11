@@ -4,6 +4,8 @@
 package components
 
 import (
+	"syscall/js"
+
 	"codeberg.org/georgik/espbrew-go/internal/ui/dom"
 )
 
@@ -71,6 +73,14 @@ func NewModal(config ModalConfig) *Modal {
 				modal.Close()
 			}
 		})
+
+		// Close on ESC key
+		js.Global().Get("document").Call("addEventListener", "keydown", js.FuncOf(func(this js.Value, args []js.Value) interface{} {
+			if args[0].Get("key").String() == "Escape" {
+				modal.Close()
+			}
+			return js.Undefined()
+		}))
 	}
 
 	return modal

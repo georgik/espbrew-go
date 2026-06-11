@@ -41,6 +41,7 @@ func TestAPI_MultipleDevicesUpdate(t *testing.T) {
 		DisablemDNS:        true,
 		DisableWatcher:     true,
 		DisableMaintenance: true,
+		DisableVirtual:     true,
 	}, store)
 
 	ctx := context.Background()
@@ -113,6 +114,7 @@ func TestAPI_DeviceDelete(t *testing.T) {
 		DisablemDNS:        true,
 		DisableWatcher:     true,
 		DisableMaintenance: true,
+		DisableVirtual:     true,
 	}, store)
 
 	ctx := context.Background()

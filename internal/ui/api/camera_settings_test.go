@@ -9,7 +9,7 @@ import (
 
 func TestCameraControlsResponse(t *testing.T) {
 	resp := &CameraControlsResponse{
-		Current:      make(map[string]int32),
+		Current:       make(map[string]int32),
 		DisplayPreset: make(map[string]int32),
 		FocusPresets:  make(map[string]int32),
 		Ranges:        make(map[string]ControlRange),

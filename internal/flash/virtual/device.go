@@ -13,6 +13,34 @@ const (
 	VirtualFlashSize = 16 * 1024 * 1024 // 16MB default flash size
 )
 
+// NormalizeVirtualPath converts old-style virtual paths to URI-style format
+// wokwi-esp32s3 -> wokwi:esp32-s3
+// wokwi-esp32c3 -> wokwi:esp32-c3
+// wokwi-esp32 -> wokwi:esp32
+func NormalizeVirtualPath(port string) string {
+	if len(port) > 6 && port[:6] == "wokwi-" {
+		chip := port[6:]
+		// Convert chip name to proper format with hyphens
+		switch chip {
+		case "esp32s3":
+			return "wokwi:esp32-s3"
+		case "esp32c3":
+			return "wokwi:esp32-c3"
+		case "esp32c6":
+			return "wokwi:esp32-c6"
+		case "esp32":
+			return "wokwi:esp32"
+		default:
+			// For unknown chips, try to add hyphen after esp32
+			if len(chip) > 5 && chip[:5] == "esp32" {
+				return "wokwi:esp32-" + chip[5:]
+			}
+			return "wokwi:" + chip
+		}
+	}
+	return port
+}
+
 // Device represents a virtual flash device backed by a file
 type Device struct {
 	mu     sync.Mutex
@@ -24,13 +52,37 @@ type Device struct {
 
 // IsVirtualPath checks if a device path is a virtual device
 func IsVirtualPath(port string) bool {
-	return port == ":virtual:" || len(port) > 6 && port[:6] == "wokwi-"
+	normalized := NormalizeVirtualPath(port)
+	return normalized == ":virtual:" || (len(normalized) > 6 && normalized[:6] == "wokwi:")
 }
 
-// ChipFromVirtualPath extracts chip type from virtual path (e.g., "wokwi-esp32s3" -> "esp32s3")
+// ChipFromVirtualPath extracts chip type from virtual path
+// Supports both old format (wokwi-esp32s3) and new format (wokwi:esp32-s3)
 func ChipFromVirtualPath(port string) string {
-	if len(port) > 6 && port[:6] == "wokwi-" {
-		return port[6:]
+	normalized := NormalizeVirtualPath(port)
+	if len(normalized) > 6 && normalized[:6] == "wokwi:" {
+		// Convert wokwi:esp32-s3 back to esp32s3 format
+		chip := normalized[6:]
+		// Remove hyphens and convert to lowercase
+		switch chip {
+		case "esp32-s3":
+			return "esp32s3"
+		case "esp32-c3":
+			return "esp32c3"
+		case "esp32-c6":
+			return "esp32c6"
+		case "esp32":
+			return "esp32"
+		default:
+			// Remove hyphens for other chips
+			result := make([]byte, 0, len(chip))
+			for i := 0; i < len(chip); i++ {
+				if chip[i] != '-' {
+					result = append(result, chip[i])
+				}
+			}
+			return string(result)
+		}
 	}
 	return "esp32s3" // default
 }
@@ -42,7 +94,9 @@ func OpenDevice(id string) (*Device, error) {
 		return nil, fmt.Errorf("create virtual directory: %w", err)
 	}
 
-	path := filepath.Join(dir, id+".bin")
+	// Normalize virtual path for consistent file naming
+	normalizedID := NormalizeVirtualPath(id)
+	path := filepath.Join(dir, normalizedID+".bin")
 
 	data, err := os.ReadFile(path)
 	if err != nil {

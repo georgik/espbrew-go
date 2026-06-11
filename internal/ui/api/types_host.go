@@ -3,6 +3,8 @@
 
 package api
 
+import "fmt"
+
 // ImageAdjustment represents image adjustments for a region
 type ImageAdjustment struct {
 	Brightness int `json:"brightness,omitempty"`
@@ -23,9 +25,9 @@ type HTTPError struct {
 
 func (e *HTTPError) Error() string {
 	if e.Message != "" {
-		return "HTTP error: " + e.Message
+		return fmt.Sprintf("HTTP error %d: %s", e.Status, e.Message)
 	}
-	return "HTTP error"
+	return fmt.Sprintf("HTTP error %d", e.Status)
 }
 
 // NetworkError represents a network error

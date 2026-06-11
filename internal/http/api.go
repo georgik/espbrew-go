@@ -52,6 +52,8 @@ func (h *APIHandler) RegisterRoutes(r *mux.Router) {
 	api.HandleFunc("/devices", h.handleDevices).Methods("GET")
 	api.HandleFunc("/devices", h.handleAddDevice).Methods("POST")
 	api.HandleFunc("/devices/probe", h.handleProbeDevice).Methods("POST")
+	// Register specific device routes BEFORE generic /devices/{id} to ensure they match first
+	h.RegisterBackendRoutes(r)
 	api.HandleFunc("/devices/{id}", h.handleDeviceDetail).Methods("GET")
 	api.HandleFunc("/devices/{id}", h.handleUpdateDevice).Methods("PUT", "PATCH")
 	api.HandleFunc("/devices/{id}", h.handleDeleteDevice).Methods("DELETE")
@@ -233,6 +235,24 @@ func (h *APIHandler) handleDevices(w http.ResponseWriter, r *http.Request) {
 			devMap["protected_by"] = dev.ProtectedBy
 			if !dev.ProtectedAt.IsZero() {
 				devMap["protected_at"] = dev.ProtectedAt.Format(time.RFC3339)
+			}
+		}
+
+		// Add backend information
+		if dev.Backend != "" {
+			devMap["backend"] = dev.Backend
+		}
+		if dev.BackendConfig != nil {
+			if dev.Backend == "wokwi" && dev.BackendConfig.Wokwi != nil {
+				devMap["backend_config"] = map[string]interface{}{
+					"chip_type":    dev.BackendConfig.Wokwi.ChipType,
+					"diagram_json": dev.BackendConfig.Wokwi.DiagramJSON,
+				}
+			} else if dev.Backend == "qemu" && dev.BackendConfig.QEMU != nil {
+				devMap["backend_config"] = map[string]interface{}{
+					"machine_type": dev.BackendConfig.QEMU.MachineType,
+					"memory_size":  dev.BackendConfig.QEMU.MemorySize,
+				}
 			}
 		}
 

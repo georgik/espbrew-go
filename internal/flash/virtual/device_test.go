@@ -128,9 +128,17 @@ func TestIsVirtualPath(t *testing.T) {
 		expected bool
 	}{
 		{":virtual:", true},
+		// Old format (backward compatibility)
 		{"wokwi-esp32s3", true},
 		{"wokwi-esp32", true},
 		{"wokwi-esp32c3", true},
+		{"wokwi-esp32c6", true},
+		// New URI-style format
+		{"wokwi:esp32-s3", true},
+		{"wokwi:esp32", true},
+		{"wokwi:esp32-c3", true},
+		{"wokwi:esp32-c6", true},
+		// Physical devices
 		{"/dev/ttyUSB0", false},
 		{"/dev/cu.usbserial", false},
 		{"COM1", false},
@@ -150,9 +158,16 @@ func TestChipFromVirtualPath(t *testing.T) {
 		path     string
 		expected string
 	}{
+		// Old format (backward compatibility)
 		{"wokwi-esp32s3", "esp32s3"},
 		{"wokwi-esp32", "esp32"},
 		{"wokwi-esp32c3", "esp32c3"},
+		{"wokwi-esp32c6", "esp32c6"},
+		// New URI-style format
+		{"wokwi:esp32-s3", "esp32s3"},
+		{"wokwi:esp32", "esp32"},
+		{"wokwi:esp32-c3", "esp32c3"},
+		{"wokwi:esp32-c6", "esp32c6"},
 		{":virtual:", "esp32s3"}, // default
 	}
 
@@ -160,6 +175,33 @@ func TestChipFromVirtualPath(t *testing.T) {
 		t.Run(tt.path, func(t *testing.T) {
 			if got := ChipFromVirtualPath(tt.path); got != tt.expected {
 				t.Errorf("ChipFromVirtualPath(%q) = %q, want %q", tt.path, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestNormalizeVirtualPath(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		// Old format conversions
+		{"wokwi-esp32s3", "wokwi:esp32-s3"},
+		{"wokwi-esp32c3", "wokwi:esp32-c3"},
+		{"wokwi-esp32c6", "wokwi:esp32-c6"},
+		{"wokwi-esp32", "wokwi:esp32"},
+		// New format (unchanged)
+		{"wokwi:esp32-s3", "wokwi:esp32-s3"},
+		{"wokwi:esp32", "wokwi:esp32"},
+		// Non-wokwi paths (unchanged)
+		{"/dev/ttyUSB0", "/dev/ttyUSB0"},
+		{":virtual:", ":virtual:"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			if got := NormalizeVirtualPath(tt.input); got != tt.expected {
+				t.Errorf("NormalizeVirtualPath(%q) = %q, want %q", tt.input, got, tt.expected)
 			}
 		})
 	}

@@ -6,32 +6,54 @@ import (
 	"time"
 
 	bolt "go.etcd.io/bbolt"
+
+	"codeberg.org/georgik/espbrew-go/pkg/protocol"
 )
 
+// BackendConfigData wraps backend-specific configuration for JSON storage
+type BackendConfigData struct {
+	Wokwi *WokwiConfigData `json:"wokwi,omitempty"`
+	QEMU  *QEMUConfigData  `json:"qemu,omitempty"`
+}
+
+// WokwiConfigData contains Wokwi simulator configuration for storage
+type WokwiConfigData struct {
+	ChipType    string `json:"chip_type"`
+	DiagramJSON string `json:"diagram_json"`
+}
+
+// QEMUConfigData contains QEMU emulator configuration for storage (future)
+type QEMUConfigData struct {
+	MachineType string `json:"machine_type"`
+	MemorySize  int    `json:"memory_size"`
+}
+
 type DeviceRecord struct {
-	DeviceID        string    `json:"device_id"`
-	MACAddress      string    `json:"mac_address"`
-	ChipType        string    `json:"chip_type"`
-	ChipRev         string    `json:"chip_rev"`
-	FlashSize       uint32    `json:"flash_size"`
-	PSRAMSize       uint32    `json:"psram_size"`
-	PSRAMType       string    `json:"psram_type"`
-	BoardModel      string    `json:"board_model"`
-	Description     string    `json:"description"`
-	Aliases         []string  `json:"aliases"`
-	Tags            []string  `json:"tags"`
-	FirstSeen       time.Time `json:"first_seen"`
-	LastSeen        time.Time `json:"last_seen"`
-	LastPath        string    `json:"last_path"`
-	NodeID          string    `json:"node_id"`
-	Disabled        bool      `json:"disabled"`
-	DisabledReason  string    `json:"disabled_reason,omitempty"`
-	DisabledBy      string    `json:"disabled_by,omitempty"`
-	DisabledAt      time.Time `json:"disabled_at,omitempty"`
-	Protected       bool      `json:"protected"`
-	ProtectedReason string    `json:"protected_reason,omitempty"`
-	ProtectedBy     string    `json:"protected_by,omitempty"`
-	ProtectedAt     time.Time `json:"protected_at,omitempty"`
+	DeviceID        string             `json:"device_id"`
+	MACAddress      string             `json:"mac_address"`
+	ChipType        string             `json:"chip_type"`
+	ChipRev         string             `json:"chip_rev"`
+	FlashSize       uint32             `json:"flash_size"`
+	PSRAMSize       uint32             `json:"psram_size"`
+	PSRAMType       string             `json:"psram_type"`
+	BoardModel      string             `json:"board_model"`
+	Description     string             `json:"description"`
+	Aliases         []string           `json:"aliases"`
+	Tags            []string           `json:"tags"`
+	FirstSeen       time.Time          `json:"first_seen"`
+	LastSeen        time.Time          `json:"last_seen"`
+	LastPath        string             `json:"last_path"`
+	NodeID          string             `json:"node_id"`
+	Disabled        bool               `json:"disabled"`
+	DisabledReason  string             `json:"disabled_reason,omitempty"`
+	DisabledBy      string             `json:"disabled_by,omitempty"`
+	DisabledAt      time.Time          `json:"disabled_at,omitempty"`
+	Protected       bool               `json:"protected"`
+	ProtectedReason string             `json:"protected_reason,omitempty"`
+	ProtectedBy     string             `json:"protected_by,omitempty"`
+	ProtectedAt     time.Time          `json:"protected_at,omitempty"`
+	Backend         string             `json:"backend,omitempty"`        // Backend type: physical, wokwi, qemu
+	BackendConfig   *BackendConfigData `json:"backend_config,omitempty"` // Backend-specific configuration
 }
 
 func (s *Store) SaveDevice(dev *DeviceRecord) error {
@@ -382,4 +404,56 @@ func (s *Store) GetDeviceByPath(path string) (*DeviceRecord, error) {
 	}
 
 	return nil, fmt.Errorf("device not found with path: %s", path)
+}
+
+// ToDeviceInfo converts a DeviceRecord to protocol.DeviceInfo
+func (d *DeviceRecord) ToDeviceInfo() *protocol.DeviceInfo {
+	info := &protocol.DeviceInfo{
+		Path:            d.LastPath,
+		DeviceID:        d.DeviceID,
+		ChipType:        d.ChipType,
+		NodeID:          d.NodeID,
+		Status:          "available",
+		Disabled:        d.Disabled,
+		DisabledReason:  d.DisabledReason,
+		DisabledBy:      d.DisabledBy,
+		DisabledAt:      d.DisabledAt,
+		Protected:       d.Protected,
+		ProtectedReason: d.ProtectedReason,
+		ProtectedBy:     d.ProtectedBy,
+		ProtectedAt:     d.ProtectedAt,
+		Backend:         protocol.BackendType(d.Backend),
+	}
+
+	// Convert backend config
+	if d.BackendConfig != nil {
+		switch d.Backend {
+		case "wokwi":
+			if d.BackendConfig.Wokwi != nil {
+				info.BackendConfig = &protocol.WokwiConfig{
+					ChipType:    d.BackendConfig.Wokwi.ChipType,
+					DiagramJSON: d.BackendConfig.Wokwi.DiagramJSON,
+				}
+			}
+		case "qemu":
+			if d.BackendConfig.QEMU != nil {
+				info.BackendConfig = &protocol.QEMUConfig{
+					MachineType: d.BackendConfig.QEMU.MachineType,
+					MemorySize:  d.BackendConfig.QEMU.MemorySize,
+				}
+			}
+		}
+	}
+
+	// Set disabled status
+	if d.Disabled {
+		info.Status = "disabled"
+	}
+
+	// Set protected status
+	if d.Protected {
+		info.Status = "protected"
+	}
+
+	return info
 }

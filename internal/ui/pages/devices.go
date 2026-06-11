@@ -5,6 +5,7 @@ package pages
 
 import (
 	"sort"
+	"strings"
 	"syscall/js"
 
 	"codeberg.org/georgik/espbrew-go/internal/ui/api"
@@ -185,7 +186,7 @@ func createDeviceRow(dev api.Device) *dom.Element {
 	// Edit button
 	editBtn := components.NewButton(components.ButtonConfig{
 		Text:    "Edit",
-		Class:   "btn-sm",
+		Class:   "btn-sm btn-secondary",
 		OnClick: func(_ *dom.Event) { editDevice(dev) },
 	})
 	actionsDiv.Append(editBtn.Element)
@@ -266,6 +267,71 @@ func editDevice(dev api.Device) {
 
 	content.Append(protectedRow)
 
+	// Backend configuration for virtual devices
+	if dev.Backend != "" || strings.HasPrefix(dev.Path, "wokwi:") || strings.HasPrefix(dev.Path, "qemu:") {
+		backendSection := doc.CreateElement("div")
+		backendSection.SetStyle("margin-top", "12px")
+		backendSection.SetStyle("padding-top", "12px")
+		backendSection.SetStyle("border-top", "1px solid rgba(255,255,255,0.1)")
+
+		backendHeader := doc.CreateElement("div")
+		backendHeader.SetStyle("font-weight", "500")
+		backendHeader.SetStyle("font-size", "13px")
+		backendHeader.SetStyle("margin-bottom", "8px")
+		backendHeader.SetTextContent("Backend Configuration")
+		backendSection.Append(backendHeader)
+
+		// Backend type
+		backendType := dev.Backend
+		if backendType == "" && strings.HasPrefix(dev.Path, "wokwi:") {
+			backendType = "wokwi"
+		} else if backendType == "" && strings.HasPrefix(dev.Path, "qemu:") {
+			backendType = "qemu"
+		}
+
+		backendTypeRow := createFormField("Backend Type", backendType, true)
+		backendSection.Append(backendTypeRow)
+
+		// Diagram JSON for Wokwi
+		if backendType == "wokwi" {
+			diagramJSON := ""
+			if dev.BackendConfig != nil {
+				if dj, ok := dev.BackendConfig["diagram_json"].(string); ok {
+					diagramJSON = dj
+				}
+			}
+
+			diagramRow := doc.CreateElement("div")
+			diagramRow.SetStyle("display", "flex")
+			diagramRow.SetStyle("flex-direction", "column")
+			diagramRow.SetStyle("gap", "4px")
+
+			diagramLabel := doc.CreateElement("label")
+			diagramLabel.SetTextContent("Diagram JSON")
+			diagramLabel.SetStyle("font-size", "12px")
+			diagramLabel.SetStyle("color", "#aaa")
+			diagramRow.Append(diagramLabel)
+
+			diagramTextarea := doc.CreateElement("textarea")
+			diagramTextarea.SetAttribute("id", "device-diagram-json")
+			diagramTextarea.SetTextContent(diagramJSON)
+			diagramTextarea.SetStyle("background-color", "rgba(0,0,0,0.3)")
+			diagramTextarea.SetStyle("border", "1px solid rgba(255,255,255,0.1)")
+			diagramTextarea.SetStyle("border-radius", "4px")
+			diagramTextarea.SetStyle("padding", "8px")
+			diagramTextarea.SetStyle("color", "#fff")
+			diagramTextarea.SetStyle("font-family", "monospace")
+			diagramTextarea.SetStyle("font-size", "11px")
+			diagramTextarea.SetStyle("min-height", "80px")
+			diagramTextarea.SetStyle("width", "100%")
+			diagramRow.Append(diagramTextarea)
+
+			backendSection.Append(diagramRow)
+		}
+
+		content.Append(backendSection)
+	}
+
 	// Actions
 	actions := doc.CreateElement("div")
 	actions.SetStyle("display", "flex")
@@ -281,6 +347,30 @@ func editDevice(dev api.Device) {
 		},
 	})
 	actions.Append(cancelBtn.Element)
+
+	// Add delete button for virtual devices or manual devices
+	if dev.Backend == "wokwi" || dev.Backend == "qemu" || strings.HasPrefix(dev.DeviceID, "manual-") {
+		deleteBtn := components.NewButton(components.ButtonConfig{
+			Text:  "Delete",
+			Class: "btn-danger",
+			OnClick: func(_ *dom.Event) {
+				// Confirm deletion using JavaScript confirm
+				result := js.Global().Get("window").Call("confirm", "Are you sure you want to delete device "+dev.DeviceID+"?")
+				if result.Bool() {
+					api.DeleteDevice(dev.DeviceID, func(success bool, err error) {
+						if err != nil || !success {
+							showError("Failed to delete device")
+						} else {
+							showSuccess("Device deleted successfully")
+							modal.Close()
+							loadDevices() // Refresh the list
+						}
+					})
+				}
+			},
+		})
+		actions.Append(deleteBtn.Element)
+	}
 
 	saveBtn := components.NewButton(components.ButtonConfig{
 		Text:  "Save",
@@ -342,6 +432,7 @@ func saveDeviceAttributes(deviceID string) {
 	doc := dom.GlobalDocument()
 	aliasesInput := doc.QuerySelector("#device-aliases-input")
 	protectedToggle := doc.QuerySelector("#device-protected")
+	diagramTextarea := doc.QuerySelector("#device-diagram-json")
 
 	if aliasesInput == nil || protectedToggle == nil {
 		showError("Failed to read form values")
@@ -356,13 +447,34 @@ func saveDeviceAttributes(deviceID string) {
 
 	protected := protectedToggle.GetChecked()
 
-	// Update request
+	// Update request for basic device attributes
 	req := map[string]interface{}{
 		"aliases":   aliases,
 		"protected": protected,
 	}
 
-	// Call update API
+	// Check if this is a wokwi device with diagram config
+	if diagramTextarea != nil {
+		diagramJSON := diagramTextarea.GetValue()
+		if diagramJSON != "" {
+			chipType := extractChipType(deviceID, diagramJSON)
+
+			backendConfig := map[string]interface{}{
+				"chip_type":    chipType,
+				"diagram_json": diagramJSON,
+			}
+
+			api.SetBackendConfig(deviceID, "wokwi", backendConfig, func(success bool, err error) {
+				if err != nil {
+					showError("Failed to save diagram: " + err.Error())
+				} else if !success {
+					showError("Failed to save diagram")
+				}
+			})
+		}
+	}
+
+	// Call update API for basic attributes
 	api.UpdateDevice(deviceID, req, func(success bool, err error) {
 		if err != nil || !success {
 			showError("Failed to update device: " + err.Error())
@@ -379,6 +491,70 @@ func showError(message string) {
 
 func showSuccess(message string) {
 	showToast(message, "success")
+}
+
+// extractChipType determines chip type from deviceID or diagram content
+// Returns chip type in ESP32-S3 format (uppercase with hyphen)
+func extractChipType(deviceID, diagramJSON string) string {
+	// First try to extract from deviceID (wokwi:esp32-s3 -> ESP32-S3)
+	if strings.HasPrefix(deviceID, "wokwi:") {
+		chip := strings.ToUpper(deviceID[6:]) // Remove "wokwi:" and uppercase
+		// If already in hyphenated format (ESP32-S3), return as is
+		if strings.Contains(chip, "-") {
+			return chip
+		}
+		// Normalize old format without hyphens
+		switch chip {
+		case "ESP32S3":
+			return "ESP32-S3"
+		case "ESP32C3":
+			return "ESP32-C3"
+		case "ESP32C6":
+			return "ESP32-C6"
+		case "ESP32":
+			return "ESP32"
+		default:
+			// For unknown chips, insert hyphen after ESP32
+			if len(chip) > 5 && chip[:5] == "ESP32" {
+				return "ESP32-" + chip[5:]
+			}
+			return chip
+		}
+	}
+
+	// Also handle old format (wokwi-esp32s3 -> ESP32-S3)
+	if strings.HasPrefix(deviceID, "wokwi-") {
+		chip := strings.ToUpper(deviceID[6:]) // Remove "wokwi-" and uppercase
+		switch chip {
+		case "ESP32S3":
+			return "ESP32-S3"
+		case "ESP32C3":
+			return "ESP32-C3"
+		case "ESP32C6":
+			return "ESP32-C6"
+		case "ESP32":
+			return "ESP32"
+		default:
+			return chip
+		}
+	}
+
+	// Fall back to diagram content detection
+	lowerDiagram := strings.ToLower(diagramJSON)
+	switch {
+	case strings.Contains(lowerDiagram, "esp32-c3") || strings.Contains(diagramJSON, "ESP32-C3"):
+		return "ESP32-C3"
+	case strings.Contains(lowerDiagram, "esp32-c6") || strings.Contains(diagramJSON, "ESP32-C6"):
+		return "ESP32-C6"
+	case strings.Contains(lowerDiagram, "esp32-s3") || strings.Contains(diagramJSON, "ESP32-S3"):
+		return "ESP32-S3"
+	case strings.Contains(lowerDiagram, "esp32-s2") || strings.Contains(diagramJSON, "ESP32-S2"):
+		return "ESP32-S2"
+	case strings.Contains(lowerDiagram, "esp32") || strings.Contains(diagramJSON, "ESP32"):
+		return "ESP32"
+	default:
+		return "ESP32-S3" // Default
+	}
 }
 
 func showToast(message, toastType string) {

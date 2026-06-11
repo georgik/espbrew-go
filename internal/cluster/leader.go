@@ -2,6 +2,7 @@ package cluster
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -17,19 +18,6 @@ import (
 	"codeberg.org/georgik/espbrew-go/pkg/protocol"
 	"github.com/rs/zerolog/log"
 )
-
-// Virtual device definitions
-var virtualDevices = []struct {
-	path      string
-	chip      string
-	flashSize string
-	label     string
-}{
-	{path: "wokwi-esp32s3", chip: "esp32s3", flashSize: "16MB", label: "Wokwi ESP32-S3"},
-	{path: "wokwi-esp32", chip: "esp32", flashSize: "4MB", label: "Wokwi ESP32"},
-	{path: "wokwi-esp32c3", chip: "esp32c3", flashSize: "4MB", label: "Wokwi ESP32-C3"},
-	{path: "wokwi-esp32c6", chip: "esp32c6", flashSize: "8MB", label: "Wokwi ESP32-C6"},
-}
 
 // LeaderNode coordinates the cluster, discovers local devices, and aggregates state from peers.
 type LeaderNode struct {
@@ -55,6 +43,7 @@ type LeaderConfig struct {
 	DisablemDNS        bool // For testing
 	DisableWatcher     bool // For testing
 	DisableMaintenance bool // For testing - skips maintenance loop
+	DisableVirtual     bool // For testing - skips virtual device registration
 }
 
 func NewLeaderNode(id string, cfg *LeaderConfig, store *persistence.Store) *LeaderNode {
@@ -251,9 +240,27 @@ func (l *LeaderNode) RegisterDevice(device *protocol.DeviceInfo) {
 	defer l.mu.Unlock()
 
 	device.NodeID = l.id
-	l.state.Devices[device.Path] = device
-	l.devices.Register(device.Path)
-	log.Info().Str("path", device.Path).Msg("Device registered on leader")
+
+	// Auto-detect backend type from path if not set
+	if device.Backend == "" {
+		device.Backend = protocol.BackendTypeFromPath(device.Path)
+	}
+
+	// Use DeviceID for virtual devices, Path for physical
+	key := device.Path
+	if device.Backend == protocol.BackendWokwi || device.Backend == protocol.BackendQEMU {
+		key = device.DeviceID
+	}
+
+	l.state.Devices[key] = device
+	l.devices.Register(key)
+
+	log.Info().
+		Str("device_id", device.DeviceID).
+		Str("path", device.Path).
+		Str("backend", string(device.Backend)).
+		Str("key", key).
+		Msg("Device registered on leader")
 }
 
 // RegisterCamera registers a camera on the leader node
@@ -582,19 +589,148 @@ func (l *LeaderNode) ProbeDevice(path string) (*protocol.DeviceInfo, error) {
 }
 
 func (l *LeaderNode) registerVirtualDevices() {
-	l.mu.Lock()
-	defer l.mu.Unlock()
+	if l.config.DisableVirtual {
+		return
+	}
+	if l.store == nil {
+		return
+	}
 
-	for _, vdev := range virtualDevices {
-		dev := &protocol.DeviceInfo{
-			Path:   vdev.path,
-			NodeID: l.id,
-			Status: "available",
+	// Create default virtual devices if they don't exist
+	l.createDefaultVirtualDevices()
+
+	devices, err := l.store.ListDevices()
+	if err != nil {
+		log.Error().Err(err).Msg("Failed to list devices for virtual device registration")
+		return
+	}
+
+	for _, dev := range devices {
+		// Only register virtual devices (wokwi, qemu)
+		if dev.Backend != "wokwi" && dev.Backend != "qemu" {
+			continue
 		}
-		l.state.Devices[vdev.path] = dev
-		l.devices.Register(vdev.path)
-		log.Info().Str("path", vdev.path).Str("chip", vdev.chip).Str("label", vdev.label).
+
+		deviceInfo := dev.ToDeviceInfo()
+		deviceInfo.NodeID = l.id
+
+		// Use DeviceID as key for virtual devices
+		key := deviceInfo.DeviceID
+
+		l.mu.Lock()
+		l.state.Devices[key] = deviceInfo
+		l.devices.Register(key)
+		l.mu.Unlock()
+
+		log.Info().
+			Str("device_id", deviceInfo.DeviceID).
+			Str("backend", dev.Backend).
+			Str("chip", dev.ChipType).
 			Msg("Virtual device registered")
+	}
+}
+
+// createDefaultVirtualDevices creates default virtual devices if they don't exist
+func (l *LeaderNode) createDefaultVirtualDevices() {
+	// Default wokwi devices to create
+	defaultDevices := []struct {
+		deviceID string
+		chipType string
+		desc     string
+	}{
+		{"wokwi:esp32-s3", "ESP32-S3", "Wokwi ESP32-S3 simulator"},
+		{"wokwi:esp32-c3", "ESP32-C3", "Wokwi ESP32-C3 simulator"},
+		{"wokwi:esp32-c6", "ESP32-C6", "Wokwi ESP32-C6 simulator"},
+		{"wokwi:esp32", "ESP32", "Wokwi ESP32 simulator"},
+	}
+
+	for _, def := range defaultDevices {
+		// Check if device already exists
+		existing, err := l.store.GetDevice(def.deviceID)
+		needsUpdate := false
+
+		if err != nil {
+			// Device doesn't exist, create new
+			needsUpdate = true
+			existing = &persistence.DeviceRecord{
+				DeviceID: def.deviceID,
+				ChipType: def.chipType,
+			}
+		} else {
+			// Device exists, check if it needs updating
+			if existing.Backend == "" || existing.LastPath == "" {
+				needsUpdate = true
+			}
+		}
+
+		if !needsUpdate {
+			continue
+		}
+
+		// Update/create device with proper backend config
+		existing.ChipType = def.chipType
+		existing.Description = def.desc
+		existing.LastPath = def.deviceID
+		existing.Backend = "wokwi"
+
+		if existing.BackendConfig == nil {
+			existing.BackendConfig = &persistence.BackendConfigData{}
+		}
+
+		if existing.BackendConfig.Wokwi == nil {
+			existing.BackendConfig.Wokwi = &persistence.WokwiConfigData{
+				ChipType:    def.chipType,
+				DiagramJSON: generateDefaultWokwiDiagram(def.chipType),
+			}
+		}
+
+		if err := l.store.SaveDevice(existing); err != nil {
+			log.Error().Err(err).Str("device_id", def.deviceID).Msg("Failed to save default virtual device")
+			continue
+		}
+
+		log.Info().
+			Str("device_id", def.deviceID).
+			Str("chip", def.chipType).
+			Str("path", existing.LastPath).
+			Msg("Created/updated default virtual device")
+	}
+}
+
+// generateDefaultWokwiDiagram generates a default Wokwi diagram for a chip type
+func generateDefaultWokwiDiagram(chipType string) string {
+	boardType := boardTypeForChip(chipType)
+
+	diagram := map[string]interface{}{
+		"version": 1,
+		"parts": []map[string]interface{}{
+			{
+				"type":     boardType,
+				"id":       "chip",
+				"position": map[string]float64{"x": 0, "y": 0},
+			},
+		},
+	}
+
+	data, _ := json.Marshal(diagram)
+	return string(data)
+}
+
+// boardTypeForChip maps chip type to Wokwi board type
+func boardTypeForChip(chipType string) string {
+	switch chipType {
+	case "ESP32":
+		return "esp32-devkitC"
+	case "ESP32-S2":
+		return "esp32-s2-kaluga-1"
+	case "ESP32-S3":
+		return "esp32-s3-devkitc-1"
+	case "ESP32-C3":
+		return "esp32-c3-devkitm-1"
+	case "ESP32-C6":
+		return "esp32-c6-devkitc-1"
+	default:
+		return "esp32-devkitC"
 	}
 }
 

@@ -15,22 +15,24 @@ type Camera struct {
 
 // Device represents a device
 type Device struct {
-	DeviceID     string   `json:"device_id"`
-	Path         string   `json:"path"`
-	ChipType     string   `json:"chip_type"`
-	ChipRev      string   `json:"chip_rev,omitempty"`
-	FlashSize    uint32   `json:"flash_size,omitempty"`
-	PSRAMSize    uint32   `json:"psram_size,omitempty"`
-	PSRAMType    string   `json:"psram_type,omitempty"`
-	BoardModel   string   `json:"board_model,omitempty"`
-	Description  string   `json:"description,omitempty"`
-	Status       string   `json:"status"`
-	Aliases      []string `json:"aliases,omitempty"`
-	Tags         []string `json:"tags,omitempty"`
-	MACAddress   string   `json:"mac_address,omitempty"`
-	NodeID       string   `json:"node_id,omitempty"`
-	Protected    bool     `json:"protected,omitempty"`
-	Disabled     bool     `json:"disabled,omitempty"`
+	DeviceID      string                 `json:"device_id"`
+	Path          string                 `json:"path"`
+	ChipType      string                 `json:"chip_type"`
+	ChipRev       string                 `json:"chip_rev,omitempty"`
+	FlashSize     uint32                 `json:"flash_size,omitempty"`
+	PSRAMSize     uint32                 `json:"psram_size,omitempty"`
+	PSRAMType     string                 `json:"psram_type,omitempty"`
+	BoardModel    string                 `json:"board_model,omitempty"`
+	Description   string                 `json:"description,omitempty"`
+	Status        string                 `json:"status"`
+	Aliases       []string               `json:"aliases,omitempty"`
+	Tags          []string               `json:"tags,omitempty"`
+	MACAddress    string                 `json:"mac_address,omitempty"`
+	NodeID        string                 `json:"node_id,omitempty"`
+	Protected     bool                   `json:"protected,omitempty"`
+	Disabled      bool                   `json:"disabled,omitempty"`
+	Backend       string                 `json:"backend,omitempty"`
+	BackendConfig map[string]interface{} `json:"backend_config,omitempty"`
 }
 
 // Capture represents a saved capture
