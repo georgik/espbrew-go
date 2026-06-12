@@ -464,6 +464,15 @@ func (l *LeaderNode) probeDeviceQuickAsync(dev *protocol.DeviceInfo) {
 	identity, err := inventory.ProbeFromBootLog(dev.Path)
 	if err != nil {
 		log.Debug().Str("path", dev.Path).Err(err).Msg("Boot log probe failed (device may not be ESP or not responding)")
+
+		// Check for permission/access errors
+		errStr := err.Error()
+		if isAccessError(errStr) {
+			l.mu.Lock()
+			dev.AccessError = "Permission denied: cannot access device. Check user permissions."
+			l.mu.Unlock()
+			log.Warn().Str("path", dev.Path).Msg("Device access denied (permission issue)")
+		}
 		return
 	}
 
@@ -516,6 +525,26 @@ func (l *LeaderNode) probeDeviceQuickAsync(dev *protocol.DeviceInfo) {
 		Str("device_id", deviceID).
 		Str("chip", identity.Chip).
 		Msg("Device identified from boot log")
+}
+
+// isAccessError checks if an error string indicates a permission/access issue
+func isAccessError(errStr string) bool {
+	lower := strings.ToLower(errStr)
+	accessKeywords := []string{
+		"permission denied",
+		"access denied",
+		"cannot access",
+		"failed to open",
+		"no such file",
+		"i/o error",
+		"operation not permitted",
+	}
+	for _, keyword := range accessKeywords {
+		if strings.Contains(lower, keyword) {
+			return true
+		}
+	}
+	return false
 }
 
 // ProbeDevice manually probes a device using boot log monitoring

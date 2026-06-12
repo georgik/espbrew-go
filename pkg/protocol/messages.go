@@ -162,6 +162,7 @@ type DeviceInfo struct {
 	ProtectedReason string             `json:"protected_reason,omitempty"`
 	ProtectedBy     string             `json:"protected_by,omitempty"`
 	ProtectedAt     time.Time          `json:"protected_at,omitempty"`
+	AccessError     string             `json:"access_error,omitempty"`   // Error when device cannot be accessed (e.g., permission denied)
 	FlashHashes     *DeviceFlashHashes `json:"flash_hashes,omitempty"`   // Latest flash hash data for this device
 	Backend         BackendType        `json:"backend"`                  // Backend type: physical, wokwi, qemu
 	BackendConfig   BackendConfig      `json:"backend_config,omitempty"` // Backend-specific configuration

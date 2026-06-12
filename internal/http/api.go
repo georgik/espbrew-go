@@ -161,6 +161,7 @@ func (h *APIHandler) handleDevices(w http.ResponseWriter, r *http.Request) {
 		serial := dev.MACAddress
 
 		// Check if currently connected
+		accessError := ""
 		if dev.MACAddress != "" {
 			if conn, ok := state.Devices[dev.LastPath]; ok && (conn.DeviceID == dev.DeviceID || conn.SerialNumber == dev.MACAddress) {
 				status = conn.Status
@@ -170,6 +171,7 @@ func (h *APIHandler) handleDevices(w http.ResponseWriter, r *http.Request) {
 				if conn.SerialNumber != "" {
 					serial = conn.SerialNumber
 				}
+				accessError = conn.AccessError
 			}
 		}
 		if dev.DeviceID != "" {
@@ -237,6 +239,9 @@ func (h *APIHandler) handleDevices(w http.ResponseWriter, r *http.Request) {
 				devMap["protected_at"] = dev.ProtectedAt.Format(time.RFC3339)
 			}
 		}
+		if accessError != "" {
+			devMap["access_error"] = accessError
+		}
 
 		// Add backend information
 		if dev.Backend != "" {
@@ -293,6 +298,9 @@ func (h *APIHandler) handleDevices(w http.ResponseWriter, r *http.Request) {
 			}
 			if conn.SerialNumber != "" {
 				devMap["serial"] = conn.SerialNumber
+			}
+			if conn.AccessError != "" {
+				devMap["access_error"] = conn.AccessError
 			}
 			if conn.Disabled {
 				devMap["disabled"] = true

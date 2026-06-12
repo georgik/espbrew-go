@@ -146,6 +146,13 @@ func createDeviceRow(dev api.Device) *dom.Element {
 	row.SetStyle("font-size", "13px")
 	row.SetAttribute("data-device-id", dev.DeviceID)
 
+	// Add visual warning for access error
+	if dev.AccessError != "" {
+		row.SetStyle("border", "1px solid rgba(255, 71, 87, 0.5)")
+		row.SetStyle("background-color", "rgba(255, 71, 87, 0.05)")
+		row.SetAttribute("title", dev.AccessError)
+	}
+
 	// Device path
 	pathDiv := doc.CreateElement("div")
 	pathDiv.SetStyle("font-family", "monospace")
@@ -154,10 +161,18 @@ func createDeviceRow(dev api.Device) *dom.Element {
 
 	// Chip type
 	chipDiv := doc.CreateElement("div")
-	chipDiv.SetTextContent(dev.ChipType)
+	if dev.ChipType != "" {
+		chipDiv.SetTextContent(dev.ChipType)
+	} else if dev.AccessError != "" {
+		chipDiv.SetTextContent("N/A")
+		chipDiv.SetStyle("color", "#ff4757")
+		chipDiv.SetStyle("font-style", "italic")
+	} else {
+		chipDiv.SetTextContent("Unknown")
+	}
 	row.Append(chipDiv)
 
-	// Status badge
+	// Status badge (or access error warning)
 	statusDiv := doc.CreateElement("div")
 	statusDiv.SetStyle("display", "inline-block")
 	statusDiv.SetStyle("padding", "2px 8px")
@@ -183,13 +198,23 @@ func createDeviceRow(dev api.Device) *dom.Element {
 	actionsDiv.SetStyle("display", "flex")
 	actionsDiv.SetStyle("gap", "6px")
 
-	// Edit button
-	editBtn := components.NewButton(components.ButtonConfig{
-		Text:    "Edit",
-		Class:   "btn-sm btn-secondary",
-		OnClick: func(_ *dom.Event) { editDevice(dev) },
-	})
-	actionsDiv.Append(editBtn.Element)
+	// Disable edit if device has access error
+	if dev.AccessError != "" {
+		// Show warning icon for access error
+		warningSpan := doc.CreateElement("span")
+		warningSpan.SetTextContent("⚠️")
+		warningSpan.SetStyle("cursor", "help")
+		warningSpan.SetAttribute("title", dev.AccessError)
+		actionsDiv.Append(warningSpan)
+	} else {
+		// Edit button
+		editBtn := components.NewButton(components.ButtonConfig{
+			Text:    "Edit",
+			Class:   "btn-sm btn-secondary",
+			OnClick: func(_ *dom.Event) { editDevice(dev) },
+		})
+		actionsDiv.Append(editBtn.Element)
+	}
 
 	row.Append(actionsDiv)
 

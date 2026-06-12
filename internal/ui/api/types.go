@@ -31,6 +31,7 @@ type Device struct {
 	NodeID        string                 `json:"node_id,omitempty"`
 	Protected     bool                   `json:"protected,omitempty"`
 	Disabled      bool                   `json:"disabled,omitempty"`
+	AccessError   string                 `json:"access_error,omitempty"`
 	Backend       string                 `json:"backend,omitempty"`
 	BackendConfig map[string]interface{} `json:"backend_config,omitempty"`
 }
