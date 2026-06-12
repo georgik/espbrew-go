@@ -231,8 +231,8 @@ func editDevice(dev api.Device) {
 	pathRow := createFormField("Path", dev.Path, true)
 	content.Append(pathRow)
 
-	// Chip Type
-	chipRow := createFormField("Chip Type", dev.ChipType, true)
+	// Chip Type - editable selector
+	chipRow := createChipTypeSelector(dev.ChipType)
 	content.Append(chipRow)
 
 	// Aliases
@@ -428,11 +428,112 @@ func createFormFieldWithID(label, id, value string, readonly bool) *dom.Element 
 	return row
 }
 
+// Chip type options for selector
+var chipTypeOptions = []string{
+	"ESP32",
+	"ESP32-S2",
+	"ESP32-S3",
+	"ESP32-C3",
+	"ESP32-C6",
+	"ESP32-H2",
+	"Custom",
+}
+
+func createChipTypeSelector(currentChipType string) *dom.Element {
+	doc := dom.GlobalDocument()
+	row := doc.CreateElement("div")
+	row.SetStyle("display", "flex")
+	row.SetStyle("flex-direction", "column")
+	row.SetStyle("gap", "4px")
+
+	labelElem := doc.CreateElement("label")
+	labelElem.SetTextContent("Chip Type")
+	labelElem.SetStyle("font-size", "12px")
+	labelElem.SetStyle("color", "#aaa")
+	row.Append(labelElem)
+
+	selectElem := doc.CreateElement("select")
+	selectElem.SetAttribute("id", "device-chip-type")
+	selectElem.SetStyle("padding", "6px 8px")
+	selectElem.SetStyle("border-radius", "4px")
+	selectElem.SetStyle("background-color", "#161634")
+	selectElem.SetStyle("border", "1px solid rgba(255,255,255,0.1)")
+	selectElem.SetStyle("color", "#eee")
+
+	// Add default option
+	defaultOption := doc.CreateElement("option")
+	defaultOption.SetAttribute("value", "")
+	defaultOption.SetTextContent("Select chip...")
+	selectElem.Append(defaultOption)
+
+	// Check if current chip is a custom value (not in predefined list)
+	isCustom := true
+	for _, chip := range chipTypeOptions {
+		if chip == "Custom" {
+			continue
+		}
+		if chip == currentChipType {
+			isCustom = false
+			break
+		}
+	}
+
+	// Add chip type options
+	for _, chip := range chipTypeOptions {
+		option := doc.CreateElement("option")
+		option.SetAttribute("value", chip)
+		option.SetTextContent(chip)
+		if chip == currentChipType || (chip == "Custom" && isCustom && currentChipType != "") {
+			option.SetAttribute("selected", "selected")
+		}
+		selectElem.Append(option)
+	}
+
+	// Add custom chip type input (hidden by default)
+	customInput := doc.CreateElement("input")
+	customInput.SetAttribute("id", "device-chip-type-custom")
+	customInput.SetAttribute("type", "text")
+	customInput.SetAttribute("placeholder", "Enter custom chip type...")
+	customInput.SetStyle("padding", "6px 8px")
+	customInput.SetStyle("border-radius", "4px")
+	customInput.SetStyle("background-color", "#161634")
+	customInput.SetStyle("border", "1px solid rgba(255,255,255,0.1)")
+	customInput.SetStyle("color", "#eee")
+	customInput.SetStyle("margin-top", "4px")
+	customInput.SetStyle("display", "none")
+
+	// If current chip is custom, show input and set value
+	if isCustom && currentChipType != "" {
+		customInput.SetStyle("display", "block")
+		customInput.SetValue(currentChipType)
+	}
+
+	// Append elements to row
+	row.Append(selectElem)
+	row.Append(customInput)
+
+	// Add event listener to show/hide custom input when selection changes
+	selectElem.AddEventListener(dom.EventChange, func(e *dom.Event) {
+		selectedValue := selectElem.GetValue()
+		customElem := doc.GetElementByID("device-chip-type-custom")
+		if customElem != nil {
+			if selectedValue == "Custom" {
+				customElem.SetStyle("display", "block")
+			} else {
+				customElem.SetStyle("display", "none")
+			}
+		}
+	})
+
+	return row
+}
+
 func saveDeviceAttributes(deviceID string) {
 	doc := dom.GlobalDocument()
 	aliasesInput := doc.QuerySelector("#device-aliases-input")
 	protectedToggle := doc.QuerySelector("#device-protected")
 	diagramTextarea := doc.QuerySelector("#device-diagram-json")
+	chipTypeSelect := doc.QuerySelector("#device-chip-type")
 
 	if aliasesInput == nil || protectedToggle == nil {
 		showError("Failed to read form values")
@@ -451,6 +552,22 @@ func saveDeviceAttributes(deviceID string) {
 	req := map[string]interface{}{
 		"aliases":   aliases,
 		"protected": protected,
+	}
+
+	// Add chip type if changed
+	if chipTypeSelect != nil {
+		chipType := chipTypeSelect.GetValue()
+		if chipType == "Custom" {
+			customInput := doc.QuerySelector("#device-chip-type-custom")
+			if customInput != nil {
+				customValue := customInput.GetValue()
+				if customValue != "" {
+					req["chip_type"] = customValue
+				}
+			}
+		} else if chipType != "" {
+			req["chip_type"] = chipType
+		}
 	}
 
 	// Check if this is a wokwi device with diagram config
