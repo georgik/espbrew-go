@@ -165,10 +165,11 @@ type FlashStatus struct {
 
 // CreateMappingRequest is a request to create a device mapping
 type CreateMappingRequest struct {
-	DeviceID string                 `json:"device_id"`
-	CameraID string                 `json:"camera_id"`
-	Bounds   BoundingBox            `json:"bounds"`
-	Options  map[string]interface{} `json:"options,omitempty"`
+	DeviceID   string                 `json:"device_id"`
+	CameraID   string                 `json:"camera_id"`
+	CameraName string                 `json:"camera_name,omitempty"` // Stable camera identifier
+	Bounds     BoundingBox            `json:"bounds"`
+	Options    map[string]interface{} `json:"options,omitempty"`
 }
 
 // CreateMappingResponse is the response from creating a mapping

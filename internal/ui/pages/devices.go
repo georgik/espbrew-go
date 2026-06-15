@@ -198,11 +198,31 @@ func createDeviceRow(dev api.Device) *dom.Element {
 	actionsDiv.SetStyle("display", "flex")
 	actionsDiv.SetStyle("gap", "6px")
 
-	// Disable edit if device has access error
-	if dev.AccessError != "" {
+	// Handle different device states
+	if dev.DeviceID == "" {
+		// Device without ID - show Probe and Forget buttons
+		probeBtn := components.NewButton(components.ButtonConfig{
+			Text:    "Probe",
+			Class:   "btn-sm btn-primary",
+			OnClick: func(_ *dom.Event) { probeDevice(dev.Path) },
+		})
+		actionsDiv.Append(probeBtn.Element)
+
+		forgetBtn := components.NewButton(components.ButtonConfig{
+			Text:  "Forget",
+			Class: "btn-sm btn-danger",
+			OnClick: func(_ *dom.Event) {
+				result := js.Global().Get("window").Call("confirm", "Remove device "+dev.Path+" from list?")
+				if result.Bool() {
+					forgetDevice(dev.Path)
+				}
+			},
+		})
+		actionsDiv.Append(forgetBtn.Element)
+	} else if dev.AccessError != "" {
 		// Show warning icon for access error
 		warningSpan := doc.CreateElement("span")
-		warningSpan.SetTextContent("⚠️")
+		warningSpan.SetTextContent("!")
 		warningSpan.SetStyle("cursor", "help")
 		warningSpan.SetAttribute("title", dev.AccessError)
 		actionsDiv.Append(warningSpan)
@@ -395,6 +415,22 @@ func editDevice(dev api.Device) {
 			},
 		})
 		actions.Append(deleteBtn.Element)
+	}
+
+	// Add Forget button for physical devices (removes from list but doesn't delete from persistence)
+	if dev.Backend != "wokwi" && dev.Backend != "qemu" {
+		forgetBtn := components.NewButton(components.ButtonConfig{
+			Text:  "Forget",
+			Class: "btn-warning",
+			OnClick: func(_ *dom.Event) {
+				result := js.Global().Get("window").Call("confirm", "Remove device "+dev.Path+" from list? (Device remains in database)")
+				if result.Bool() {
+					forgetDevice(dev.Path)
+					modal.Close()
+				}
+			},
+		})
+		actions.Append(forgetBtn.Element)
 	}
 
 	saveBtn := components.NewButton(components.ButtonConfig{
@@ -714,6 +750,8 @@ func showToast(message, toastType string) {
 
 	if toastType == "error" {
 		toast.SetStyle("background-color", "rgba(255, 71, 87, 0.9)")
+	} else if toastType == "info" {
+		toast.SetStyle("background-color", "rgba(9, 132, 227, 0.9)")
 	} else {
 		toast.SetStyle("background-color", "rgba(76, 209, 135, 0.9)")
 	}
@@ -772,4 +810,37 @@ func splitString(s, sep string) []string {
 // Initialize devices page
 func initDevicesPage() {
 	loadDevices()
+}
+
+// probeDevice attempts to identify an unidentified device
+func probeDevice(path string) {
+	showToast("Probing device...", "info")
+	api.ProbeDevice(path, func(success bool, deviceID, chipType string, err error) {
+		if err != nil {
+			showError("Probe failed: " + err.Error())
+			return
+		}
+		if !success {
+			showError("Probe failed - device may not be an ESP32 or is in use")
+			return
+		}
+		showSuccess("Device identified: " + chipType)
+		loadDevices() // Refresh the list
+	})
+}
+
+// forgetDevice removes an unidentified device from the list
+func forgetDevice(path string) {
+	api.ForgetDevice(path, func(success bool, err error) {
+		if err != nil {
+			showError("Failed to forget device: " + err.Error())
+			return
+		}
+		if !success {
+			showError("Failed to forget device")
+			return
+		}
+		showSuccess("Device removed from list")
+		loadDevices() // Refresh the list
+	})
 }

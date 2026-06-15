@@ -113,9 +113,8 @@ func (h *CameraSettingsHandler) handleGetCameraSettings(w http.ResponseWriter, r
 
 	settings, err := h.store.GetCameraSettings(cameraID)
 	if err != nil {
-		log.Error().Err(err).Str("camera_id", cameraID).Msg("Failed to get camera settings")
-		respondError(w, http.StatusNotFound, "Camera settings not found")
-		return
+		// Return empty settings instead of 404 - no custom settings is valid state
+		settings = &persistence.CameraSettings{CameraID: cameraID}
 	}
 
 	// Check if camera controls are available on this platform
@@ -139,12 +138,11 @@ func (h *CameraSettingsHandler) handleUpdateCameraSettings(w http.ResponseWriter
 		return
 	}
 
-	// Get existing settings
+	// Get existing settings, or create new if not found (upsert)
 	existing, err := h.store.GetCameraSettings(cameraID)
 	if err != nil {
-		log.Error().Err(err).Str("camera_id", cameraID).Msg("Failed to get existing camera settings")
-		respondError(w, http.StatusNotFound, "Camera settings not found")
-		return
+		// Create new settings with camera ID
+		existing = &persistence.CameraSettings{CameraID: cameraID}
 	}
 
 	// Decode update request

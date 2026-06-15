@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
 
 func TestClient_ListDevices(t *testing.T) {
@@ -48,6 +49,7 @@ func TestClient_ListDevices_Error(t *testing.T) {
 	defer server.Close()
 
 	client := NewClient(server.URL)
+	client.SetRetryPolicy(2, 10*time.Millisecond) // Reduce delay for test
 	_, err := client.ListDevices()
 	if err == nil {
 		t.Fatal("expected error, got nil")
@@ -93,6 +95,7 @@ func TestClient_GetStatus_Error(t *testing.T) {
 	defer server.Close()
 
 	client := NewClient(server.URL)
+	client.SetRetryPolicy(2, 10*time.Millisecond) // Reduce delay for test
 	_, err := client.GetStatus()
 	if err == nil {
 		t.Fatal("expected error, got nil")

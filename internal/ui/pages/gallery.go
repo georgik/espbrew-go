@@ -15,6 +15,12 @@ import (
 var (
 	currentGalleryCapture *api.Capture
 	currentDeviceCaptures []api.DeviceCaptureInfo
+	selectedCapturePaths  map[string]bool // Track selected captures for bulk operations
+	selectionModeEnabled  bool
+	currentGalleryPage    int = 1
+	totalGalleryPages     int = 1
+	totalGalleryCaptures  int = 0
+	galleryPageSize       int = 40
 )
 
 // Gallery renders the capture gallery page
@@ -45,6 +51,10 @@ func renderGalleryContent() *dom.Element {
 	galleryGrid.SetStyle("gap", "16px")
 	galleryGrid.SetStyle("margin-top", "16px")
 	container.Append(galleryGrid)
+
+	// Pagination controls
+	pagination := createPaginationControls()
+	container.Append(pagination)
 
 	// Loading state
 	loading := doc.CreateElement("div")
@@ -131,6 +141,77 @@ func createGalleryFilters() *dom.Element {
 	refreshBtn.Element.SetStyle("font-size", "13px")
 	content.Append(refreshBtn.Element)
 
+	// Selection mode toggle
+	selectModeBtn := components.NewButton(components.ButtonConfig{
+		Text:    "Select",
+		Class:   "btn-secondary",
+		OnClick: func(_ *dom.Event) { toggleSelectionMode() },
+	})
+	selectModeBtn.Element.SetID("gallery-select-mode-btn")
+	selectModeBtn.Element.SetStyle("font-size", "13px")
+	content.Append(selectModeBtn.Element)
+
+	// Selection actions (initially hidden)
+	selectionActions := doc.CreateElement("div")
+	selectionActions.SetID("gallery-selection-actions")
+	selectionActions.SetStyle("display", "none")
+	selectionActions.SetStyle("gap", "8px")
+	selectionActions.SetStyle("align-items", "center")
+
+	// Select All checkbox
+	selectAllLabel := doc.CreateElement("label")
+	selectAllLabel.SetStyle("font-size", "13px")
+	selectAllLabel.SetStyle("cursor", "pointer")
+	selectAllLabel.SetStyle("display", "flex")
+	selectAllLabel.SetStyle("align-items", "center")
+	selectAllLabel.SetStyle("gap", "6px")
+
+	selectAllCheckbox := doc.CreateElement("input")
+	selectAllCheckbox.SetAttribute("type", "checkbox")
+	selectAllCheckbox.SetID("gallery-select-all")
+	selectAllCheckbox.SetStyle("cursor", "pointer")
+	selectAllCheckbox.SetStyle("width", "16px")
+	selectAllCheckbox.SetStyle("height", "16px")
+	selectAllCheckbox.AddEventListener("change", func(_ *dom.Event) {
+		toggleSelectAll()
+	})
+	selectAllLabel.Append(selectAllCheckbox)
+
+	selectAllText := doc.CreateElement("span")
+	selectAllText.SetTextContent("Select All")
+	selectAllLabel.Append(selectAllText)
+
+	selectionActions.Append(selectAllLabel)
+
+	// Selected count
+	selectedCount := doc.CreateElement("span")
+	selectedCount.SetID("gallery-selected-count")
+	selectedCount.SetStyle("font-size", "13px")
+	selectedCount.SetStyle("color", "#aaa")
+	selectedCount.SetTextContent("0 selected")
+	selectionActions.Append(selectedCount)
+
+	// Delete button
+	deleteBtn := components.NewButton(components.ButtonConfig{
+		Text:    "Delete",
+		Class:   "btn-danger",
+		OnClick: func(_ *dom.Event) { deleteSelectedCaptures() },
+	})
+	deleteBtn.Element.SetID("gallery-delete-btn")
+	deleteBtn.Element.SetStyle("font-size", "13px")
+	selectionActions.Append(deleteBtn.Element)
+
+	// Cancel selection button
+	cancelBtn := components.NewButton(components.ButtonConfig{
+		Text:    "Cancel",
+		Class:   "btn-secondary",
+		OnClick: func(_ *dom.Event) { toggleSelectionMode() },
+	})
+	cancelBtn.Element.SetStyle("font-size", "13px")
+	selectionActions.Append(cancelBtn.Element)
+
+	content.Append(selectionActions)
+
 	card.SetContent(content)
 	return card.Element
 }
@@ -151,7 +232,7 @@ func loadGalleryCaptures() {
 		galleryGrid.SetStyle("display", "none")
 	}
 
-	api.GetCaptures(func(captures []api.Capture, err error) {
+	api.GetCapturesMeta(currentGalleryPage, galleryPageSize, func(captures []api.Capture, total int, totalPages int, err error) {
 		if loading != nil {
 			loading.SetStyle("display", "none")
 		}
@@ -168,12 +249,20 @@ func loadGalleryCaptures() {
 		galleryGrid.RemoveChildren()
 		galleryGrid.SetStyle("display", "grid")
 
-		if len(captures) == 0 {
+		if len(captures) == 0 && currentGalleryPage == 1 {
 			if emptyState != nil {
 				emptyState.SetStyle("display", "block")
 			}
+			totalGalleryPages = totalPages
+			totalGalleryCaptures = total
+			updatePaginationControls()
 			return
 		}
+
+		// Update pagination state
+		totalGalleryPages = totalPages
+		totalGalleryCaptures = total
+		updatePaginationControls()
 
 		// Populate device selector if we have devices
 		populateDeviceSelector()
@@ -222,13 +311,45 @@ func populateDeviceSelector() {
 func createCaptureCard(capture api.Capture) *dom.Element {
 	doc := dom.GlobalDocument()
 	card := doc.CreateElement("div")
+	card.SetAttribute("data-path", capture.Path)
 	card.SetStyle("background-color", "#161634")
 	card.SetStyle("border-radius", "8px")
 	card.SetStyle("overflow", "hidden")
 	card.SetStyle("border", "1px solid rgba(255,255,255,0.1)")
 	card.SetStyle("cursor", "pointer")
+	card.SetStyle("position", "relative")
+
+	// Selection checkbox container (initially hidden)
+	checkboxContainer := doc.CreateElement("div")
+	checkboxContainer.SetID("capture-checkbox-" + escapePathID(capture.Path))
+	checkboxContainer.SetStyle("position", "absolute")
+	checkboxContainer.SetStyle("top", "8px")
+	checkboxContainer.SetStyle("left", "8px")
+	checkboxContainer.SetStyle("z-index", "10")
+	checkboxContainer.SetStyle("display", "none")
+
+	checkbox := doc.CreateElement("input")
+	checkbox.SetAttribute("type", "checkbox")
+	checkbox.SetAttribute("data-capture-path", capture.Path)
+	checkbox.SetStyle("width", "20px")
+	checkbox.SetStyle("height", "20px")
+	checkbox.SetStyle("cursor", "pointer")
+	checkbox.SetStyle("accent-color", "#6c5ce7")
+	checkbox.AddEventListener("change", func(_ *dom.Event) {
+		updateCaptureSelection(capture.Path, checkbox.GetChecked())
+	})
+	checkboxContainer.Append(checkbox)
+	card.Append(checkboxContainer)
+
+	// Click handler - only open detail if not in selection mode
 	card.AddEventListener("click", func(_ *dom.Event) {
-		showCaptureDetail(capture)
+		if selectionModeEnabled {
+			// Toggle checkbox instead
+			checkbox.SetChecked(!checkbox.GetChecked())
+			updateCaptureSelection(capture.Path, checkbox.GetChecked())
+		} else {
+			showCaptureDetail(capture)
+		}
 	})
 
 	// Thumbnail
@@ -493,20 +614,24 @@ func setGalleryView(view string) {
 
 	if view == "device" {
 		if allBtn != nil {
-			allBtn.SetAttribute("class", "btn-secondary")
+			allBtn.RemoveClass("btn-primary")
+			allBtn.AddClass("btn-secondary")
 		}
 		if deviceBtn != nil {
-			deviceBtn.SetAttribute("class", "btn-primary")
+			deviceBtn.RemoveClass("btn-secondary")
+			deviceBtn.AddClass("btn-primary")
 		}
 		if deviceSelect != nil {
 			deviceSelect.SetStyle("display", "inline-block")
 		}
 	} else {
 		if allBtn != nil {
-			allBtn.SetAttribute("class", "btn-primary")
+			allBtn.RemoveClass("btn-secondary")
+			allBtn.AddClass("btn-primary")
 		}
 		if deviceBtn != nil {
-			deviceBtn.SetAttribute("class", "btn-secondary")
+			deviceBtn.RemoveClass("btn-primary")
+			deviceBtn.AddClass("btn-secondary")
 		}
 		if deviceSelect != nil {
 			deviceSelect.SetStyle("display", "none")
@@ -598,4 +723,292 @@ func showGalleryError(message string) {
 // initGalleryPage initializes the gallery page (called on first load)
 func initGalleryPage() {
 	// Gallery is self-loading on render, no additional init needed
+	// Initialize selection state
+	selectedCapturePaths = make(map[string]bool)
+}
+
+// toggleSelectionMode toggles selection mode on/off
+func toggleSelectionMode() {
+	doc := dom.GlobalDocument()
+	selectionModeEnabled = !selectionModeEnabled
+
+	selectModeBtn := doc.GetElementByID("gallery-select-mode-btn")
+	selectionActions := doc.GetElementByID("gallery-selection-actions")
+
+	if selectionModeEnabled {
+		// Show selection UI
+		if selectModeBtn != nil {
+			selectModeBtn.SetTextContent("Cancel")
+			selectModeBtn.RemoveClass("btn-secondary")
+			selectModeBtn.AddClass("btn-primary")
+		}
+		if selectionActions != nil {
+			selectionActions.SetStyle("display", "flex")
+		}
+		// Show checkboxes
+		showCheckboxes(true)
+	} else {
+		// Hide selection UI and clear selection
+		if selectModeBtn != nil {
+			selectModeBtn.SetTextContent("Select")
+			selectModeBtn.RemoveClass("btn-primary")
+			selectModeBtn.AddClass("btn-secondary")
+		}
+		if selectionActions != nil {
+			selectionActions.SetStyle("display", "none")
+		}
+		// Hide checkboxes and clear selection
+		showCheckboxes(false)
+		clearSelection()
+	}
+}
+
+// showCheckboxes shows or hides capture checkboxes
+func showCheckboxes(show bool) {
+	doc := dom.GlobalDocument()
+	galleryGrid := doc.GetElementByID("gallery-grid")
+	if galleryGrid == nil {
+		return
+	}
+
+	// Find all checkbox containers
+	checkboxes := galleryGrid.QuerySelectorAll("div[id^='capture-checkbox-']")
+	for _, checkbox := range checkboxes {
+		if show {
+			checkbox.SetStyle("display", "block")
+		} else {
+			checkbox.SetStyle("display", "none")
+			// Also uncheck
+			input := checkbox.QuerySelector("input[type='checkbox']")
+			if input != nil {
+				input.SetChecked(false)
+			}
+		}
+	}
+}
+
+// updateCaptureSelection updates the selection state for a capture
+func updateCaptureSelection(path string, selected bool) {
+	if selected {
+		selectedCapturePaths[path] = true
+	} else {
+		delete(selectedCapturePaths, path)
+	}
+	updateSelectedCount()
+	updateSelectAllState()
+}
+
+// updateSelectedCount updates the selected count display
+func updateSelectedCount() {
+	doc := dom.GlobalDocument()
+	countEl := doc.GetElementByID("gallery-selected-count")
+	if countEl != nil {
+		count := len(selectedCapturePaths)
+		countEl.SetTextContent(formatInt(count) + " selected")
+	}
+}
+
+// updateSelectAllState updates the Select All checkbox state
+func updateSelectAllState() {
+	doc := dom.GlobalDocument()
+	selectAllCheckbox := doc.GetElementByID("gallery-select-all")
+	if selectAllCheckbox == nil {
+		return
+	}
+
+	galleryGrid := doc.GetElementByID("gallery-grid")
+	if galleryGrid == nil {
+		return
+	}
+
+	// Count total visible captures
+	totalCaptures := 0
+	checkedCaptures := 0
+
+	checkboxes := galleryGrid.QuerySelectorAll("input[data-capture-path]")
+	for _, checkbox := range checkboxes {
+		totalCaptures++
+		if checkbox.GetChecked() {
+			checkedCaptures++
+		}
+	}
+
+	if totalCaptures > 0 && checkedCaptures == totalCaptures {
+		selectAllCheckbox.SetChecked(true)
+	} else {
+		selectAllCheckbox.SetChecked(false)
+	}
+}
+
+// toggleSelectAll selects or deselects all captures
+func toggleSelectAll() {
+	doc := dom.GlobalDocument()
+	selectAllCheckbox := doc.GetElementByID("gallery-select-all")
+	if selectAllCheckbox == nil {
+		return
+	}
+
+	galleryGrid := doc.GetElementByID("gallery-grid")
+	if galleryGrid == nil {
+		return
+	}
+
+	checked := selectAllCheckbox.GetChecked()
+
+	checkboxes := galleryGrid.QuerySelectorAll("input[data-capture-path]")
+	for _, checkbox := range checkboxes {
+		checkbox.SetChecked(checked)
+		path := checkbox.GetAttribute("data-capture-path")
+		if checked {
+			selectedCapturePaths[path] = true
+		} else {
+			delete(selectedCapturePaths, path)
+		}
+	}
+
+	updateSelectedCount()
+}
+
+// clearSelection clears all selections
+func clearSelection() {
+	selectedCapturePaths = make(map[string]bool)
+	doc := dom.GlobalDocument()
+	selectAllCheckbox := doc.GetElementByID("gallery-select-all")
+	if selectAllCheckbox != nil {
+		selectAllCheckbox.SetChecked(false)
+	}
+	updateSelectedCount()
+}
+
+// deleteSelectedCaptures deletes all selected captures
+func deleteSelectedCaptures() {
+	if len(selectedCapturePaths) == 0 {
+		return
+	}
+
+	// Confirm deletion
+	confirmed := js.Global().Get("confirm").Invoke("Delete " + formatInt(len(selectedCapturePaths)) + " capture(s)? This action cannot be undone.")
+	if !confirmed.Truthy() {
+		return
+	}
+
+	// Delete each capture
+	paths := make([]string, 0, len(selectedCapturePaths))
+	for path := range selectedCapturePaths {
+		paths = append(paths, path)
+	}
+
+	deleteCount := 0
+	for _, path := range paths {
+		api.DeleteCapture(path, func(err error) {
+			if err != nil {
+				showGalleryError("Failed to delete " + path)
+				return
+			}
+			deleteCount++
+			// Reload gallery when all deletes complete
+			if deleteCount == len(paths) {
+				// Exit selection mode and reload
+				toggleSelectionMode()
+				loadGalleryCaptures()
+			}
+		})
+	}
+}
+
+// escapePathID escapes a path for use in HTML element ID
+func escapePathID(path string) string {
+	// Simple escape: replace special chars with underscores
+	result := ""
+	for _, c := range path {
+		switch {
+		case (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9'):
+			result += string(c)
+		default:
+			result += "_"
+		}
+	}
+	return result
+}
+
+// createPaginationControls creates the pagination UI with Previous/Next buttons and page info
+func createPaginationControls() *dom.Element {
+	doc := dom.GlobalDocument()
+	container := doc.CreateElement("div")
+	container.SetID("gallery-pagination")
+	container.SetStyle("display", "flex")
+	container.SetStyle("justify-content", "center")
+	container.SetStyle("align-items", "center")
+	container.SetStyle("gap", "12px")
+	container.SetStyle("margin-top", "20px")
+	container.SetStyle("padding", "12px")
+
+	// Previous button
+	prevBtn := components.NewButton(components.ButtonConfig{
+		Text:    "Previous",
+		Class:   "btn-secondary",
+		OnClick: handlePrevPage,
+	})
+	prevBtn.Element.SetID("gallery-prev-page")
+	prevBtn.SetDisabled(true)
+	container.Append(prevBtn.Element)
+
+	// Page info
+	pageInfo := doc.CreateElement("span")
+	pageInfo.SetID("gallery-page-info")
+	pageInfo.SetStyle("font-size", "14px")
+	pageInfo.SetStyle("color", "#bbb")
+	pageInfo.SetTextContent("Page 1 of 1")
+	container.Append(pageInfo)
+
+	// Next button
+	nextBtn := components.NewButton(components.ButtonConfig{
+		Text:    "Next",
+		Class:   "btn-secondary",
+		OnClick: handleNextPage,
+	})
+	nextBtn.Element.SetID("gallery-next-page")
+	container.Append(nextBtn.Element)
+
+	return container
+}
+
+// handlePrevPage decrements the current page and reloads the gallery
+func handlePrevPage(_ *dom.Event) {
+	if currentGalleryPage > 1 {
+		currentGalleryPage--
+		loadGalleryCaptures()
+	}
+}
+
+// handleNextPage increments the current page and reloads the gallery
+func handleNextPage(_ *dom.Event) {
+	if currentGalleryPage < totalGalleryPages {
+		currentGalleryPage++
+		loadGalleryCaptures()
+	}
+}
+
+// updatePaginationControls updates the pagination button states and page info display
+func updatePaginationControls() {
+	doc := dom.GlobalDocument()
+	pagination := doc.GetElementByID("gallery-pagination")
+	if pagination == nil {
+		return
+	}
+
+	pageInfo := doc.GetElementByID("gallery-page-info")
+	if pageInfo != nil {
+		pageInfo.SetTextContent(formatInt32(int32(currentGalleryPage)) + " of " + formatInt32(int32(totalGalleryPages)))
+	}
+
+	prevBtn := doc.GetElementByID("gallery-prev-page")
+	if prevBtn != nil {
+		prevBtn.SetDisabled(currentGalleryPage <= 1)
+	}
+
+	nextBtn := doc.GetElementByID("gallery-next-page")
+	if nextBtn != nil {
+		nextBtn.SetDisabled(currentGalleryPage >= totalGalleryPages)
+	}
 }

@@ -13,22 +13,23 @@ import (
 // BoundingBoxEditor is a canvas-based editor for defining device regions
 type BoundingBoxEditor struct {
 	*dom.Element
-	canvas        *dom.Element
-	ctx           js.Value
-	image         *dom.Element
-	boxes         []BoundingBox
-	selectedBox   *BoundingBox
-	mode          string // "draw", "select", "edit"
-	isDragging    bool
-	isResizing    bool
-	dragHandle    string
-	dragStart     struct{ x, y float64 }
-	lastPointer   struct{ x, y float64 }
-	cameraID      string
-	onBoxCreate   func(box *BoundingBox, boxID string)
-	devices       []api.Device
-	selectedDevice string // Currently selected device for auto-assignment
-	deviceSelector *dom.Element
+	canvas          *dom.Element
+	ctx             js.Value
+	image           *dom.Element
+	boxes           []BoundingBox
+	selectedBox     *BoundingBox
+	mode            string // "draw", "select", "edit"
+	isDragging      bool
+	isResizing      bool
+	dragHandle      string
+	dragStart       struct{ x, y float64 }
+	lastPointer     struct{ x, y float64 }
+	cameraID        string
+	onBoxCreate     func(box *BoundingBox, boxID string)
+	devices         []api.Device
+	selectedDevice  string // Currently selected device for auto-assignment
+	deviceSelector  *dom.Element
+	pendingMappings []api.DeviceMappingWithDevice // Mappings to load after image loads
 }
 
 // BoundingBox represents a device region
@@ -82,6 +83,11 @@ func NewBoundingBoxEditor(config EditorConfig) *BoundingBoxEditor {
 		js.Global().Get("setTimeout").Invoke(js.FuncOf(func(this js.Value, args []js.Value) interface{} {
 			editor.resizeCanvas()
 			editor.render()
+			// Load pending mappings now that canvas has correct dimensions
+			if len(editor.pendingMappings) > 0 {
+				editor.loadBoxes(editor.pendingMappings)
+				editor.pendingMappings = nil
+			}
 			return nil
 		}), 50)
 	})
@@ -104,7 +110,7 @@ func NewBoundingBoxEditor(config EditorConfig) *BoundingBoxEditor {
 	editor.canvas.SetStyle("pointer-events", "auto")
 	editor.canvas.SetStyle("z-index", "10")
 	editor.canvas.SetStyle("touch-action", "none") // Prevent default touch behaviors
-	editor.canvas.SetStyle("cursor", "crosshair") // Show crosshair cursor
+	editor.canvas.SetStyle("cursor", "crosshair")  // Show crosshair cursor
 	// Set initial size to avoid 0x0 before image loads
 	editor.canvas.Value().Set("width", 100)
 	editor.canvas.Value().Set("height", 100)
@@ -438,8 +444,8 @@ func (e *BoundingBoxEditor) updateDrawingBox(point struct{ x, y float64 }) {
 	startX := e.selectedBox.X
 	startY := e.selectedBox.Y
 
-	e.selectedBox.Width = absFloat(point.x-startX)
-	e.selectedBox.Height = absFloat(point.y-startY)
+	e.selectedBox.Width = absFloat(point.x - startX)
+	e.selectedBox.Height = absFloat(point.y - startY)
 	e.selectedBox.X = minFloat(point.x, startX)
 	e.selectedBox.Y = minFloat(point.y, startY)
 
@@ -553,7 +559,7 @@ func (e *BoundingBoxEditor) getHandleAtPoint(point struct{ x, y float64 }) strin
 
 	for _, handle := range handles {
 		distance := sqrt(
-			pow(point.x-handle.x, 2)+
+			pow(point.x-handle.x, 2) +
 				pow(point.y-handle.y, 2),
 		)
 		if distance <= hitRadius {
@@ -658,7 +664,15 @@ func (e *BoundingBoxEditor) loadBoxes(boxes []api.DeviceMappingWithDevice) {
 
 // LoadMappings is exported alias for loadBoxes
 func (e *BoundingBoxEditor) LoadMappings(boxes []api.DeviceMappingWithDevice) {
-	e.loadBoxes(boxes)
+	// Check if canvas has valid dimensions (image loaded)
+	canvasWidth := e.canvas.Value().Get("width").Int()
+	if canvasWidth <= 100 {
+		// Image not loaded yet, store as pending
+		e.pendingMappings = boxes
+	} else {
+		// Canvas ready, load immediately
+		e.loadBoxes(boxes)
+	}
 }
 
 // AssignDevice assigns a device to a box by ID
@@ -818,13 +832,20 @@ func pow(x, y float64) float64 {
 }
 
 func formatInt(n int) string {
-	if n < 10 {
-		return string(rune('0' + n))
+	// Proper integer to string conversion
+	if n < 0 {
+		return "0"
 	}
-	if n < 100 {
-		tens := n / 10
-		ones := n % 10
-		return string(rune('0'+tens)) + string(rune('0'+ones))
+	if n == 0 {
+		return "0"
 	}
-	return "100+"
+
+	// Convert integer to string
+	result := ""
+	for n > 0 {
+		digit := n % 10
+		result = string(rune('0'+digit)) + result
+		n = n / 10
+	}
+	return result
 }

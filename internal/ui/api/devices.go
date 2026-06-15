@@ -176,3 +176,44 @@ func SetBackendConfig(deviceID string, backend string, backendConfig map[string]
 		callback(false, nil)
 	})
 }
+
+// ProbeDevice probes a device by path to identify it
+func ProbeDevice(path string, callback func(bool, string, string, error)) {
+	req := map[string]interface{}{
+		"path": path,
+	}
+	DefaultAsyncClient.Post("/devices/probe", req, func(result js.Value, err error) {
+		if err != nil {
+			callback(false, "", "", err)
+			return
+		}
+
+		// Parse response
+		status := ValueToString(result.Get("status"))
+		deviceID := ValueToString(result.Get("device_id"))
+		chipType := ValueToString(result.Get("chip_type"))
+
+		success := (status == "probed" && deviceID != "")
+		callback(success, deviceID, chipType, nil)
+	})
+}
+
+// ForgetDevice removes an unidentified device from cluster state by path
+func ForgetDevice(path string, callback func(bool, error)) {
+	DefaultAsyncClient.Delete("/devices/forgot/"+path, func(result js.Value, err error) {
+		if err != nil {
+			callback(false, err)
+			return
+		}
+
+		// Check for success status
+		if !result.IsUndefined() && !result.IsNull() {
+			status := ValueToString(result.Get("status"))
+			success := (status == "forgotten")
+			callback(success, nil)
+			return
+		}
+
+		callback(false, nil)
+	})
+}

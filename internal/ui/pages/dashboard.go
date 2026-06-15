@@ -412,10 +412,22 @@ func renderCaptureItem(cap api.Capture) *dom.Element {
 
 // Helper functions
 func formatInt(n int) string {
-	if n < 10 {
-		return string(rune('0' + n))
+	// Proper integer to string conversion
+	if n < 0 {
+		return "0"
 	}
-	return "9+"
+	if n == 0 {
+		return "0"
+	}
+
+	// Convert integer to string
+	result := ""
+	for n > 0 {
+		digit := n % 10
+		result = string(rune('0'+digit)) + result
+		n = n / 10
+	}
+	return result
 }
 
 func formatTimestamp(ts int64) string {

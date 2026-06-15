@@ -37,13 +37,13 @@ func getRoutes() map[string]PageFunc {
 // getInitFuncs returns initialization functions for each page
 func getInitFuncs() map[string]PageInitFunc {
 	return map[string]PageInitFunc{
-		"capture":  initCapturePage,
-		"cameras":  initCameraPropertiesPage,
-		"devices":  initDevicesPage,
-		"monitor":  initMonitorPage,
-		"mapping":  initMappingPage,
-		"gallery":  initGalleryPage,
-		"flash":    initFlashPage,
+		"capture": initCapturePage,
+		"cameras": initCameraPropertiesPage,
+		"devices": initDevicesPage,
+		"monitor": initMonitorPage,
+		"mapping": initMappingPage,
+		"gallery": initGalleryPage,
+		"flash":   initFlashPage,
 	}
 }
 

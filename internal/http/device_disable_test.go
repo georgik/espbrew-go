@@ -46,15 +46,15 @@ func TestDeviceDisableHandler_DisableDevice(t *testing.T) {
 	err = store.SaveDevice(testDevice)
 	require.NoError(t, err)
 
-	// Add device to cluster state manually
-	master.State().Devices["/dev/ttyUSB0"] = &protocol.DeviceInfo{
+	// Add device to cluster state
+	master.SetDeviceInState("/dev/ttyUSB0", &protocol.DeviceInfo{
 		Path:         "/dev/ttyUSB0",
 		DeviceID:     "test-device-1",
 		ChipType:     "ESP32",
 		SerialNumber: "aa:bb:cc:dd:ee:ff",
 		NodeID:       "test",
 		Status:       "available",
-	}
+	})
 
 	handler := NewDeviceDisableHandler(master, store)
 	router := mux.NewRouter()
@@ -84,9 +84,8 @@ func TestDeviceDisableHandler_DisableDevice(t *testing.T) {
 		assert.Equal(t, "test-client", device.DisabledBy)
 
 		// Verify device is disabled in cluster state
-		state := master.State()
-		dev := state.Devices["/dev/ttyUSB0"]
-		assert.NotNil(t, dev)
+		dev, exists := master.GetDeviceFromState("/dev/ttyUSB0")
+		assert.True(t, exists)
 		assert.True(t, dev.Disabled)
 		assert.Equal(t, "disabled", dev.Status)
 	})
@@ -158,8 +157,8 @@ func TestDeviceDisableHandler_EnableDevice(t *testing.T) {
 	err = store.SaveDevice(testDevice)
 	require.NoError(t, err)
 
-	// Add disabled device to cluster state manually
-	master.State().Devices["/dev/ttyUSB1"] = &protocol.DeviceInfo{
+	// Add disabled device to cluster state
+	master.SetDeviceInState("/dev/ttyUSB1", &protocol.DeviceInfo{
 		Path:           "/dev/ttyUSB1",
 		DeviceID:       "test-device-2",
 		ChipType:       "ESP32-S3",
@@ -168,7 +167,7 @@ func TestDeviceDisableHandler_EnableDevice(t *testing.T) {
 		Status:         "disabled",
 		Disabled:       true,
 		DisabledReason: "broken",
-	}
+	})
 
 	handler := NewDeviceDisableHandler(master, store)
 	router := mux.NewRouter()
@@ -252,14 +251,14 @@ func TestDeviceDisableHandler_DisableByPath(t *testing.T) {
 	require.NoError(t, err)
 
 	// Manually add to cluster state
-	master.State().Devices["/dev/ttyUSB2"] = &protocol.DeviceInfo{
+	master.SetDeviceInState("/dev/ttyUSB2", &protocol.DeviceInfo{
 		Path:         "/dev/ttyUSB2",
 		DeviceID:     "test-device-3",
 		ChipType:     "ESP32-C3",
 		SerialNumber: "aa:aa:aa:aa:aa:aa",
 		NodeID:       "test",
 		Status:       "available",
-	}
+	})
 
 	handler := NewDeviceDisableHandler(master, store)
 	router := mux.NewRouter()
@@ -318,7 +317,7 @@ func TestFlashAPI_DisabledDeviceBlocked(t *testing.T) {
 	require.NoError(t, err)
 
 	// Manually add disabled device to cluster state
-	master.State().Devices["/dev/ttyUSB3"] = &protocol.DeviceInfo{
+	master.SetDeviceInState("/dev/ttyUSB3", &protocol.DeviceInfo{
 		Path:           "/dev/ttyUSB3",
 		DeviceID:       "test-device-4",
 		ChipType:       "ESP32",
@@ -327,7 +326,7 @@ func TestFlashAPI_DisabledDeviceBlocked(t *testing.T) {
 		Status:         "disabled",
 		Disabled:       true,
 		DisabledReason: "maintenance",
-	}
+	})
 
 	progress := NewProgressHandler(master, nil)
 	flashHandler := NewFlashHandler(master, t.TempDir(), progress)
@@ -395,19 +394,19 @@ func TestIsDeviceDisabled(t *testing.T) {
 	store.SaveDevice(dev2)
 
 	// Add to cluster state
-	master.State().Devices["/dev/ttyUSB0"] = &protocol.DeviceInfo{
+	master.SetDeviceInState("/dev/ttyUSB0", &protocol.DeviceInfo{
 		Path:     "/dev/ttyUSB0",
 		DeviceID: "dev-1",
 		Status:   "available",
 		Disabled: false,
-	}
-	master.State().Devices["/dev/ttyUSB1"] = &protocol.DeviceInfo{
+	})
+	master.SetDeviceInState("/dev/ttyUSB1", &protocol.DeviceInfo{
 		Path:           "/dev/ttyUSB1",
 		DeviceID:       "dev-2",
 		Status:         "disabled",
 		Disabled:       true,
 		DisabledReason: "test",
-	}
+	})
 
 	state := master.State()
 

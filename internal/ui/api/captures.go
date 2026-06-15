@@ -9,7 +9,15 @@ import (
 
 // GetCaptures retrieves the list of captures
 func GetCaptures(callback func([]Capture, error)) {
-	DefaultAsyncClient.Get("/captures", func(result js.Value, err error) {
+	GetCapturesPaginated(1, 40, callback)
+}
+
+// GetCapturesPaginated retrieves captures with pagination
+func GetCapturesPaginated(page, limit int, callback func([]Capture, error)) {
+	url := "/captures?page=" + js.Global().Get("encodeURIComponent").Invoke(js.ValueOf(page)).String()
+	url += "&limit=" + js.Global().Get("encodeURIComponent").Invoke(js.ValueOf(limit)).String()
+
+	DefaultAsyncClient.Get(url, func(result js.Value, err error) {
 		if err != nil {
 			callback(nil, err)
 			return
@@ -23,6 +31,31 @@ func GetCaptures(callback func([]Capture, error)) {
 
 		captures := parseCapturesArray(capturesArray)
 		callback(captures, nil)
+	})
+}
+
+// GetCapturesMeta retrieves captures with pagination metadata
+func GetCapturesMeta(page, limit int, callback func([]Capture, int, int, error)) {
+	url := "/captures?page=" + js.Global().Get("encodeURIComponent").Invoke(js.ValueOf(page)).String()
+	url += "&limit=" + js.Global().Get("encodeURIComponent").Invoke(js.ValueOf(limit)).String()
+
+	DefaultAsyncClient.Get(url, func(result js.Value, err error) {
+		if err != nil {
+			callback(nil, 0, 0, err)
+			return
+		}
+
+		capturesArray := result.Get("captures")
+		if capturesArray.IsUndefined() || capturesArray.IsNull() {
+			callback([]Capture{}, 0, 0, nil)
+			return
+		}
+
+		captures := parseCapturesArray(capturesArray)
+		total := int(result.Get("total").Int())
+		totalPages := int(result.Get("total_pages").Int())
+
+		callback(captures, total, totalPages, nil)
 	})
 }
 
@@ -51,10 +84,21 @@ func parseCapture(v js.Value) Capture {
 }
 
 // DeleteCapture deletes a capture
-// Note: The endpoint uses query parameter for path
+// The endpoint is DELETE /captures/{path} where path is the relative path within captures directory
+// Full paths like "/captures/2026-06-15/file.jpg" should have "/captures/" stripped first
 func DeleteCapture(path string, callback func(error)) {
-	// URL encode the path
-	DefaultAsyncClient.Delete("/captures?path="+path, func(result js.Value, err error) {
+	// Strip /captures/ prefix if present
+	strippedPath := path
+	if len(strippedPath) > 10 && strippedPath[:10] == "/captures/" {
+		strippedPath = strippedPath[10:]
+	}
+	// Strip leading slash if present (now relative path)
+	if len(strippedPath) > 0 && strippedPath[0] == '/' {
+		strippedPath = strippedPath[1:]
+	}
+	// URL encode the path for the route parameter
+	encodedPath := js.Global().Get("encodeURIComponent").Invoke(strippedPath).String()
+	DefaultAsyncClient.Delete("/captures/"+encodedPath, func(result js.Value, err error) {
 		callback(err)
 	})
 }

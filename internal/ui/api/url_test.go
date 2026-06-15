@@ -63,7 +63,7 @@ func TestImageAdjustmentIsZero(t *testing.T) {
 // TestHTTPError tests HTTP error
 func TestHTTPError(t *testing.T) {
 	err := &HTTPError{Status: 404, Message: "Not Found"}
-	assert.Equal(t, "HTTP error: Not Found", err.Error())
+	assert.Equal(t, "HTTP error 404: Not Found", err.Error())
 
 	errNoMsg := &HTTPError{Status: 500}
 	assert.Contains(t, errNoMsg.Error(), "HTTP error")

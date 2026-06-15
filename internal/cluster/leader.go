@@ -116,6 +116,7 @@ func (l *LeaderNode) Stop() error {
 	if l.mdns != nil {
 		l.mdns.Stop()
 	}
+	camera.GetRegistry().Stop()
 	l.wg.Wait()
 	return nil
 }
@@ -123,7 +124,90 @@ func (l *LeaderNode) Stop() error {
 func (l *LeaderNode) State() *ClusterState {
 	l.mu.RLock()
 	defer l.mu.RUnlock()
-	return l.state
+
+	// Return a deep copy to avoid data races
+	state := &ClusterState{
+		Nodes:   make(map[string]*protocol.NodeInfo),
+		Devices: make(map[string]*protocol.DeviceInfo),
+		Cameras: make(map[string]*protocol.CameraInfo),
+		Jobs:    make(map[string]*protocol.JobInfo),
+	}
+
+	// Copy nodes
+	for k, v := range l.state.Nodes {
+		state.Nodes[k] = v
+	}
+
+	// Copy devices
+	for k, v := range l.state.Devices {
+		state.Devices[k] = v
+	}
+
+	// Copy cameras
+	for k, v := range l.state.Cameras {
+		state.Cameras[k] = v
+	}
+
+	// Copy jobs
+	for k, v := range l.state.Jobs {
+		state.Jobs[k] = v
+	}
+
+	return state
+}
+
+// DeviceExists checks if a device exists in the cluster state (thread-safe)
+func (l *LeaderNode) DeviceExists(path string) bool {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	_, exists := l.state.Devices[path]
+	return exists
+}
+
+// DeviceExistsByID checks if a device with given ID exists (thread-safe)
+func (l *LeaderNode) DeviceExistsByID(deviceID string) bool {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	for _, dev := range l.state.Devices {
+		if dev.DeviceID == deviceID {
+			return true
+		}
+	}
+	return false
+}
+
+// SetDeviceInState sets or updates a device in the cluster state (thread-safe)
+// This is primarily used for testing
+func (l *LeaderNode) SetDeviceInState(path string, device *protocol.DeviceInfo) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.state.Devices[path] = device
+}
+
+// GetDeviceFromState retrieves a device from the cluster state by path (thread-safe)
+func (l *LeaderNode) GetDeviceFromState(path string) (*protocol.DeviceInfo, bool) {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	dev, exists := l.state.Devices[path]
+	return dev, exists
+}
+
+// IsDeviceDisabledInState checks if a device is disabled (thread-safe)
+func (l *LeaderNode) IsDeviceDisabledInState(path string) bool {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	dev, exists := l.state.Devices[path]
+	if !exists {
+		return false
+	}
+	return dev.Disabled
+}
+
+// DeleteDeviceFromState removes a device from the cluster state (thread-safe)
+func (l *LeaderNode) DeleteDeviceFromState(path string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	delete(l.state.Devices, path)
 }
 
 func (l *LeaderNode) ID() string {
@@ -244,6 +328,16 @@ func (l *LeaderNode) RegisterDevice(device *protocol.DeviceInfo) {
 	// Auto-detect backend type from path if not set
 	if device.Backend == "" {
 		device.Backend = protocol.BackendTypeFromPath(device.Path)
+	}
+
+	// Set FirstSeen for truly new devices (not in persistence)
+	if device.FirstSeen.IsZero() {
+		// Check if device exists in persistence by path
+		persisted, err := l.store.GetDeviceByPath(device.Path)
+		if err != nil || persisted == nil {
+			// New device - set FirstSeen to now
+			device.FirstSeen = time.Now()
+		}
 	}
 
 	// Use DeviceID for virtual devices, Path for physical
@@ -459,6 +553,11 @@ func (l *LeaderNode) handleDeviceEvent(event device.DeviceEvent) {
 // probeDeviceQuickAsync probes device using boot log (no bootloader entry required)
 func (l *LeaderNode) probeDeviceQuickAsync(dev *protocol.DeviceInfo) {
 	defer l.wg.Done()
+
+	// Update LastProbeAttempt before probing
+	l.mu.Lock()
+	dev.LastProbeAttempt = time.Now()
+	l.mu.Unlock()
 
 	// Use boot log monitoring (works even if device is running app)
 	identity, err := inventory.ProbeFromBootLog(dev.Path)
@@ -784,17 +883,37 @@ func (l *LeaderNode) cleanupStaleNodes() {
 	defer l.mu.Unlock()
 
 	now := time.Now()
+	// Collect stale node IDs first
+	var staleNodeIDs []string
 	for id, node := range l.state.Nodes {
 		if now.Sub(node.LastSeen) > l.config.NodeTimeout {
 			log.Warn().Str("node_id", id).Msg("Node timed out")
-			delete(l.state.Nodes, id)
+			staleNodeIDs = append(staleNodeIDs, id)
+		}
+	}
 
-			for path, dev := range l.state.Devices {
-				if dev.NodeID == id {
-					delete(l.state.Devices, path)
-				}
+	// Remove stale nodes
+	for _, id := range staleNodeIDs {
+		delete(l.state.Nodes, id)
+	}
+
+	// Remove devices belonging to stale nodes (collect paths first, then delete)
+	var pathsToDelete []string
+	for path, dev := range l.state.Devices {
+		stale := false
+		for _, id := range staleNodeIDs {
+			if dev.NodeID == id {
+				stale = true
+				break
 			}
 		}
+		if stale {
+			pathsToDelete = append(pathsToDelete, path)
+		}
+	}
+
+	for _, path := range pathsToDelete {
+		delete(l.state.Devices, path)
 	}
 }
 
@@ -888,10 +1007,14 @@ func (l *LeaderNode) performMaintenance() {
 	// Release devices for cancelled/timeout jobs
 	l.cleanupOrphanedDevices()
 
-	if staleReservations > 0 || oldJobs > 0 {
+	// Clean up unidentified devices that haven't been successfully probed
+	cleanupUnidentified := l.cleanupUnidentifiedDevices()
+
+	if staleReservations > 0 || oldJobs > 0 || cleanupUnidentified > 0 {
 		log.Info().
 			Int("stale_reservations", staleReservations).
 			Int("old_jobs", oldJobs).
+			Int("unidentified_cleaned", cleanupUnidentified).
 			Msg("Maintenance completed")
 	}
 }
@@ -924,6 +1047,45 @@ func (l *LeaderNode) cleanupOrphanedDevices() {
 	l.mu.Unlock()
 }
 
+// cleanupUnidentifiedDevices removes devices that have never been successfully identified
+// and have been in memory for too long (unidentified for more than 1 hour)
+func (l *LeaderNode) cleanupUnidentifiedDevices() int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	now := time.Now()
+	cleanupCount := 0
+
+	// Timeout for unidentified devices - devices without device_id for too long
+	const unidentifiedTimeout = 1 * time.Hour
+
+	for path, dev := range l.state.Devices {
+		// Only clean up unidentified devices (no device_id)
+		// Skip if device has been identified (has device_id) or is virtual
+		if dev.DeviceID != "" {
+			continue
+		}
+		if dev.Backend == protocol.BackendWokwi || dev.Backend == protocol.BackendQEMU {
+			continue
+		}
+
+		// Check if device has been unidentified for too long
+		if !dev.FirstSeen.IsZero() && now.Sub(dev.FirstSeen) > unidentifiedTimeout {
+			log.Info().
+				Str("path", path).
+				Time("first_seen", dev.FirstSeen).
+				Dur("age", now.Sub(dev.FirstSeen)).
+				Msg("Removing unidentified device (timeout)")
+
+			delete(l.state.Devices, path)
+			l.devices.Unregister(path)
+			cleanupCount++
+		}
+	}
+
+	return cleanupCount
+}
+
 // discoverCameras scans for available cameras and registers them
 func (l *LeaderNode) discoverCameras() {
 	registry := camera.GetRegistry()
@@ -937,9 +1099,18 @@ func (l *LeaderNode) discoverCameras() {
 	sortCamerasByName(cameras)
 
 	for _, cam := range cameras {
+		// Check if camera has custom settings in persistence
+		customName := cam.Name // Default to hardware name
+		if l.store != nil {
+			if settings, err := l.store.GetCameraSettings(cam.ID); err == nil && settings != nil && settings.Name != "" {
+				customName = settings.Name
+				log.Debug().Str("camera_id", cam.ID).Str("custom_name", customName).Msg("Loaded custom camera name from persistence")
+			}
+		}
+
 		protoCam := &protocol.CameraInfo{
 			ID:      cam.ID,
-			Name:    cam.Name,
+			Name:    customName,
 			Path:    cam.Path,
 			Backend: string(cam.Backend),
 			NodeID:  l.id,

@@ -52,6 +52,7 @@ func (h *APIHandler) RegisterRoutes(r *mux.Router) {
 	api.HandleFunc("/devices", h.handleDevices).Methods("GET")
 	api.HandleFunc("/devices", h.handleAddDevice).Methods("POST")
 	api.HandleFunc("/devices/probe", h.handleProbeDevice).Methods("POST")
+	api.HandleFunc("/devices/forgot/{path:.*}", h.handleForgetDevice).Methods("DELETE")
 	// Register specific device routes BEFORE generic /devices/{id} to ensure they match first
 	h.RegisterBackendRoutes(r)
 	api.HandleFunc("/devices/{id}", h.handleDeviceDetail).Methods("GET")
@@ -550,7 +551,19 @@ func (h *APIHandler) handleCameras(w http.ResponseWriter, r *http.Request) {
 
 	cameras := make([]interface{}, 0, len(state.Cameras))
 	for _, c := range state.Cameras {
-		cameras = append(cameras, c)
+		// Check if camera has custom name in settings
+		if h.store != nil {
+			if settings, err := h.store.GetCameraSettings(c.ID); err == nil && settings != nil && settings.Name != "" {
+				// Create a copy with custom name
+				customCamera := *c
+				customCamera.Name = settings.Name
+				cameras = append(cameras, customCamera)
+			} else {
+				cameras = append(cameras, c)
+			}
+		} else {
+			cameras = append(cameras, c)
+		}
 	}
 
 	respondJSON(w, map[string]interface{}{
@@ -996,7 +1009,7 @@ func (h *APIHandler) handleDeleteDevice(w http.ResponseWriter, r *http.Request) 
 				// Remove from state (need to access internal state through leader)
 				// This is a bit of a hack - we're directly manipulating the map
 				// In production, add a proper method to LeaderNode
-				delete(state.Devices, path)
+				h.leader.DeleteDeviceFromState(path)
 				log.Info().Str("path", path).Str("device_id", dev.DeviceID).
 					Msg("Device removed from cluster state via API")
 				break
@@ -1133,6 +1146,42 @@ func (h *APIHandler) handleProbeDevice(w http.ResponseWriter, r *http.Request) {
 		"device_id": devInfo.DeviceID,
 		"chip_type": devInfo.ChipType,
 		"path":      devInfo.Path,
+	})
+}
+
+// handleForgetDevice removes a device from cluster state by path (for unidentified devices)
+func (h *APIHandler) handleForgetDevice(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	path := vars["path"]
+
+	if path == "" {
+		respondError(w, http.StatusBadRequest, "path is required")
+		return
+	}
+
+	// Ensure path starts with /
+	if !strings.HasPrefix(path, "/") {
+		path = "/" + path
+	}
+
+	if h.leader == nil {
+		respondError(w, http.StatusNotImplemented, "Device management only available on leader")
+		return
+	}
+
+	// Remove from in-memory state
+	state := h.leader.State()
+	if _, exists := state.Devices[path]; !exists {
+		respondError(w, http.StatusNotFound, "Device not found in state")
+		return
+	}
+
+	h.leader.DeleteDeviceFromState(path)
+
+	respondJSON(w, map[string]interface{}{
+		"status":  "forgotten",
+		"path":    path,
+		"message": "Device removed from cluster state",
 	})
 }
 

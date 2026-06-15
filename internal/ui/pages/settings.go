@@ -202,4 +202,3 @@ func createCameraPropertiesCard() *dom.Element {
 	card.SetContent(content)
 	return card.Element
 }
-

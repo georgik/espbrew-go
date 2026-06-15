@@ -138,8 +138,7 @@ func TestAPI_DeviceDelete(t *testing.T) {
 	require.NoError(t, err, "Device should exist before delete")
 
 	// Verify in-memory
-	_, exists := leader.State().Devices["/dev/ttyUSB0"]
-	assert.True(t, exists, "Device should be in memory before delete")
+	assert.True(t, leader.DeviceExists("/dev/ttyUSB0"), "Device should be in memory before delete")
 
 	// Delete device
 	req := httptest.NewRequest("DELETE", "/api/v1/devices/esp-delete-test", nil)
@@ -153,6 +152,88 @@ func TestAPI_DeviceDelete(t *testing.T) {
 	assert.Error(t, err, "Device should be deleted from store")
 
 	// Verify deleted from memory
-	_, exists = leader.State().Devices["/dev/ttyUSB0"]
-	assert.False(t, exists, "Device should be removed from memory")
+	assert.False(t, leader.DeviceExists("/dev/ttyUSB0"), "Device should be removed from memory")
+}
+
+// TestAPI_DeviceForget tests forgetting an unidentified device by path
+func TestAPI_DeviceForget(t *testing.T) {
+	store, err := persistence.Open(persistence.DefaultConfig(t.TempDir() + "/test.db"))
+	require.NoError(t, err)
+	defer store.Close()
+
+	leader := cluster.NewLeaderNode("test-leader", &cluster.LeaderConfig{
+		HeartbeatInterval:  10 * time.Second,
+		NodeTimeout:        30 * time.Second,
+		HTTPPort:           8080,
+		DisablemDNS:        true,
+		DisableWatcher:     true,
+		DisableMaintenance: true,
+		DisableVirtual:     true,
+	}, store)
+
+	ctx := context.Background()
+	require.NoError(t, leader.Start(ctx))
+	defer leader.Stop()
+
+	handler := NewAPIHandler(leader, store)
+	router := mux.NewRouter()
+	api := router.PathPrefix("/api/v1").Subrouter()
+	api.HandleFunc("/devices/forgot/{path:.*}", handler.handleForgetDevice).Methods("DELETE")
+
+	// Register unidentified device (no device_id)
+	leader.RegisterDevice(&protocol.DeviceInfo{
+		Path:   "/dev/ttyACM0",
+		VID:    0x4348,
+		PID:    0x0028,
+		Status: "available",
+	})
+
+	// Verify device exists in memory
+	assert.True(t, leader.DeviceExists("/dev/ttyACM0"), "Device should be in memory before forget")
+
+	// Forget device
+	req := httptest.NewRequest("DELETE", "/api/v1/devices/forgot/dev/ttyACM0", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	// Verify removed from memory
+	assert.False(t, leader.DeviceExists("/dev/ttyACM0"), "Device should be removed from memory")
+
+	// Verify response contains status
+	assert.Contains(t, w.Body.String(), "forgotten")
+}
+
+// TestAPI_DeviceForget_NotFound tests forgetting a non-existent device
+func TestAPI_DeviceForget_NotFound(t *testing.T) {
+	store, err := persistence.Open(persistence.DefaultConfig(t.TempDir() + "/test.db"))
+	require.NoError(t, err)
+	defer store.Close()
+
+	leader := cluster.NewLeaderNode("test-leader", &cluster.LeaderConfig{
+		HeartbeatInterval:  10 * time.Second,
+		NodeTimeout:        30 * time.Second,
+		HTTPPort:           8080,
+		DisablemDNS:        true,
+		DisableWatcher:     true,
+		DisableMaintenance: true,
+		DisableVirtual:     true,
+	}, store)
+
+	ctx := context.Background()
+	require.NoError(t, leader.Start(ctx))
+	defer leader.Stop()
+
+	handler := NewAPIHandler(leader, store)
+	router := mux.NewRouter()
+	api := router.PathPrefix("/api/v1").Subrouter()
+	api.HandleFunc("/devices/forgot/{path:.*}", handler.handleForgetDevice).Methods("DELETE")
+
+	// Try to forget non-existent device
+	req := httptest.NewRequest("DELETE", "/api/v1/devices/forgot/dev/ttyUSB999", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusNotFound, w.Code)
 }

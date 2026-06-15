@@ -26,6 +26,7 @@ func TestAPIHandler_CameraPreviewFlag(t *testing.T) {
 		HTTPPort:           8080,
 		DisablemDNS:        true,
 		DisableMaintenance: true,
+		DisableWatcher:     true,
 		HeartbeatInterval:  time.Second,
 		NodeTimeout:        5 * time.Second,
 	}, store)
@@ -148,6 +149,7 @@ func TestAPIHandler_CameraNotFound(t *testing.T) {
 		HTTPPort:           8080,
 		DisablemDNS:        true,
 		DisableMaintenance: true,
+		DisableWatcher:     true,
 		HeartbeatInterval:  time.Second,
 		NodeTimeout:        5 * time.Second,
 	}, store)

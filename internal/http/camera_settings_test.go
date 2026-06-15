@@ -204,14 +204,26 @@ func TestCameraSettingsHandler_Get(t *testing.T) {
 		}
 	})
 
-	t.Run("Non-existent camera", func(t *testing.T) {
+	t.Run("Non-existent camera returns empty settings", func(t *testing.T) {
 		req := httptest.NewRequest("GET", "/api/v1/camera/settings/nonexistent", nil)
 		w := httptest.NewRecorder()
 
 		router.ServeHTTP(w, req)
 
-		if w.Code != http.StatusNotFound {
-			t.Errorf("Expected status 404, got %d", w.Code)
+		if w.Code != http.StatusOK {
+			t.Errorf("Expected status 200, got %d", w.Code)
+		}
+
+		var resp map[string]interface{}
+		json.NewDecoder(w.Body).Decode(&resp)
+
+		settingsData := resp["settings"].(map[string]interface{})
+		if settingsData["camera_id"] != "nonexistent" {
+			t.Errorf("Expected camera_id nonexistent, got %v", settingsData["camera_id"])
+		}
+		// Name should be empty for non-existent camera
+		if settingsData["name"] != "" {
+			t.Errorf("Expected empty name, got %v", settingsData["name"])
 		}
 	})
 }

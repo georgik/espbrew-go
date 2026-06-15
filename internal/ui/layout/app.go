@@ -12,12 +12,13 @@ type ContentFunc func() *dom.Element
 
 // App is the main application shell
 type App struct {
-	Container   *dom.Element
-	Navbar      *Navbar
-	TabBar      *TabBar
-	Main        *dom.Element
-	Tabs        []*dom.Element
-	contentFunc ContentFunc
+	Container        *dom.Element
+	Navbar           *Navbar
+	TabBar           *TabBar
+	Main             *dom.Element
+	Tabs             []*dom.Element
+	contentFunc      ContentFunc
+	selectedCameraID string // Shared camera selection across all tabs
 }
 
 // NewApp creates the app shell
@@ -124,4 +125,19 @@ func (a *App) NavigateTo(pageID string) {
 	}
 	// The page router will handle actual content loading
 	// via HandleNavigation callback
+}
+
+// SetSelectedCameraID sets the shared selected camera ID
+func (a *App) SetSelectedCameraID(cameraID string) {
+	a.selectedCameraID = cameraID
+}
+
+// GetSelectedCameraID returns the shared selected camera ID
+func (a *App) GetSelectedCameraID() string {
+	return a.selectedCameraID
+}
+
+// HasSelectedCamera returns true if a camera is selected
+func (a *App) HasSelectedCamera() bool {
+	return a.selectedCameraID != ""
 }

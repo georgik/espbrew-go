@@ -70,9 +70,10 @@ func TestHandleDevicesIncludesVirtual(t *testing.T) {
 		if _, exists := virtualFound[path]; exists {
 			virtualFound[path] = true
 
-			// Check virtual flag is set
-			if dev["virtual"] != true {
-				t.Errorf("Device %q missing virtual flag", path)
+			// Check backend indicates virtual device
+			backend, ok := dev["backend"].(string)
+			if !ok || (backend != "wokwi" && backend != "qemu") {
+				t.Errorf("Device %q has wrong backend: %v", path, dev["backend"])
 			}
 		}
 	}

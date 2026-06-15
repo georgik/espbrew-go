@@ -42,7 +42,7 @@ func renderCameraPropertiesContent() *dom.Element {
 	leftCol.SetStyle("gap", "16px")
 
 	// Camera selector card
-	selectorCard := createCameraSelectorCard()
+	selectorCard := createCameraSelectorCard(app)
 	leftCol.Append(selectorCard)
 
 	// Preview card
@@ -88,7 +88,7 @@ func renderCameraPropertiesContent() *dom.Element {
 }
 
 // createCameraSelectorCard creates the camera selection card
-func createCameraSelectorCard() *dom.Element {
+func createCameraSelectorCard(app *layout.App) *dom.Element {
 	doc := dom.GlobalDocument()
 	card := components.NewCard(components.CardConfig{
 		Title: "Camera Selection",
@@ -117,12 +117,65 @@ func createCameraSelectorCard() *dom.Element {
 
 	cameraSelect.AddEventListener("change", func(_ *dom.Event) {
 		cameraID := cameraSelect.GetValue()
+		// Save to shared app state
+		if app != nil {
+			app.SetSelectedCameraID(cameraID)
+		}
 		if cameraID != "" {
 			loadCameraProperties(cameraID)
+		} else {
+			// Hide name input when no camera selected
+			nameInput := doc.GetElementByID("camera-name-input")
+			saveNameBtn := doc.GetElementByID("save-camera-name-btn")
+			if nameInput != nil {
+				nameInput.SetStyle("display", "none")
+			}
+			if saveNameBtn != nil {
+				saveNameBtn.SetStyle("display", "none")
+			}
 		}
 	})
 
 	content.Append(cameraSelect)
+
+	// Camera name input field
+	nameLabel := doc.CreateElement("label")
+	nameLabel.SetTextContent("Camera Name:")
+	nameLabel.SetStyle("font-weight", "500")
+	nameLabel.SetStyle("font-size", "13px")
+	nameLabel.SetStyle("display", "block")
+	nameLabel.SetStyle("margin-top", "8px")
+	content.Append(nameLabel)
+
+	nameInputContainer := doc.CreateElement("div")
+	nameInputContainer.SetStyle("display", "flex")
+	nameInputContainer.SetStyle("gap", "8px")
+
+	nameInput := doc.CreateElement("input")
+	nameInput.SetID("camera-name-input")
+	nameInput.SetStyle("flex", "1")
+	nameInput.SetStyle("padding", "8px 12px")
+	nameInput.SetStyle("border-radius", "6px")
+	nameInput.SetStyle("background-color", "#161634")
+	nameInput.SetStyle("border", "1px solid rgba(255,255,255,0.1)")
+	nameInput.SetStyle("color", "#eee")
+	nameInput.SetStyle("font-size", "14px")
+	nameInput.SetStyle("display", "none")
+	nameInput.SetAttribute("placeholder", "Enter custom camera name")
+
+	saveNameBtn := components.NewButton(components.ButtonConfig{
+		Text:    "Save Name",
+		Class:   "btn-secondary",
+		OnClick: func(_ *dom.Event) { saveCameraName() },
+	})
+	saveNameBtn.Element.SetID("save-camera-name-btn")
+	saveNameBtn.Element.SetStyle("display", "none")
+	saveNameBtn.Element.SetStyle("font-size", "13px")
+	saveNameBtn.Element.SetStyle("padding", "6px 12px")
+
+	nameInputContainer.Append(nameInput)
+	nameInputContainer.Append(saveNameBtn.Element)
+	content.Append(nameInputContainer)
 
 	// Loading indicator
 	loading := doc.CreateElement("div")
@@ -269,6 +322,23 @@ func initCameraPropertiesPage() {
 			option.SetTextContent(camera.Name)
 			cameraSelect.Append(option)
 		}
+
+		// Restore shared camera selection if available
+		if app != nil && app.HasSelectedCamera() {
+			sharedCameraID := app.GetSelectedCameraID()
+			// Verify the shared camera is still available
+			cameraExists := false
+			for _, camera := range cameras {
+				if camera.ID == sharedCameraID {
+					cameraExists = true
+					break
+				}
+			}
+			if cameraExists {
+				cameraSelect.SetValue(sharedCameraID)
+				loadCameraProperties(sharedCameraID)
+			}
+		}
 	})
 }
 
@@ -279,6 +349,8 @@ func loadCameraProperties(cameraID string) {
 	// Show loading
 	platformInfo := doc.GetElementByID("camera-platform-info")
 	controlsContainer := doc.GetElementByID("camera-controls-container")
+	nameInput := doc.GetElementByID("camera-name-input")
+	saveNameBtn := doc.GetElementByID("save-camera-name-btn")
 
 	if platformInfo != nil {
 		platformInfo.SetTextContent("Loading camera controls...")
@@ -286,6 +358,24 @@ func loadCameraProperties(cameraID string) {
 	if controlsContainer != nil {
 		controlsContainer.SetStyle("display", "none")
 	}
+
+	// Show name input field
+	if nameInput != nil {
+		nameInput.SetStyle("display", "block")
+		nameInput.SetValue("") // Clear previous value
+	}
+	if saveNameBtn != nil {
+		saveNameBtn.SetStyle("display", "block")
+	}
+
+	// Load existing camera name from settings
+	api.GetCameraSettings(cameraID, func(settings *api.CameraSettings, err error) {
+		if settings != nil && settings.Name != "" {
+			if nameInput != nil {
+				nameInput.SetValue(settings.Name)
+			}
+		}
+	})
 
 	// Load camera controls
 	api.GetCameraControls(cameraID, func(resp *api.CameraControlsResponse, err error) {
@@ -908,6 +998,49 @@ func showSettingsSuccess(message string) {
 		}
 		return nil
 	}), 3000)
+}
+
+// saveCameraName saves the custom camera name
+func saveCameraName() {
+	doc := dom.GlobalDocument()
+	cameraSelect := doc.GetElementByID("camera-properties-select")
+	nameInput := doc.GetElementByID("camera-name-input")
+
+	if cameraSelect == nil || nameInput == nil {
+		showSettingsError("Camera or name input not found")
+		return
+	}
+
+	cameraID := cameraSelect.GetValue()
+	cameraName := nameInput.GetValue()
+
+	if cameraID == "" {
+		showSettingsError("No camera selected")
+		return
+	}
+
+	if cameraName == "" {
+		showSettingsError("Camera name cannot be empty")
+		return
+	}
+
+	// Save camera name via settings API
+	settings := map[string]interface{}{
+		"camera_id": cameraID,
+		"name":      cameraName,
+	}
+
+	api.UpdateCameraSettings(cameraID, settings, func(success bool, err error) {
+		if err != nil {
+			showSettingsError("Failed to save camera name: " + err.Error())
+			return
+		}
+		if !success {
+			showSettingsError("Failed to save camera name")
+			return
+		}
+		showSettingsSuccess("Camera name saved successfully")
+	})
 }
 
 // formatInt32 formats an int32 as a string

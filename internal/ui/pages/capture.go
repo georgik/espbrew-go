@@ -344,9 +344,30 @@ func loadCameras() {
 			captureBtn.SetDisabled(false)
 		}
 
-		// Add change listener for camera info display
+		// Restore shared camera selection if available
+		if app != nil && app.HasSelectedCamera() {
+			sharedCameraID := app.GetSelectedCameraID()
+			// Verify the shared camera is still available
+			cameraExists := false
+			for _, cam := range cameras {
+				if cam.ID == sharedCameraID {
+					cameraExists = true
+					break
+				}
+			}
+			if cameraExists {
+				cameraSelect.SetValue(sharedCameraID)
+				displayCameraInfo(sharedCameraID, cameras)
+			}
+		}
+
+		// Add change listener for camera info display and shared state
 		cameraSelect.AddEventListener("change", func(evt *dom.Event) {
 			selectedID := cameraSelect.GetValue()
+			// Save to shared app state
+			if app != nil {
+				app.SetSelectedCameraID(selectedID)
+			}
 			displayCameraInfo(selectedID, cameras)
 		})
 	})

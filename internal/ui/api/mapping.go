@@ -111,9 +111,10 @@ func CreateCalibration(cameraID, description string, callback func(*CalibrationI
 // CreateMapping creates a new device mapping (simplified version)
 func CreateMapping(req CreateMappingRequest, callback func(*CreateMappingResponse, error)) {
 	mapping := DeviceBoundingBoxMapping{
-		DeviceID: req.DeviceID,
-		CameraID: req.CameraID,
-		Bounds:   req.Bounds,
+		DeviceID:   req.DeviceID,
+		CameraID:   req.CameraID,
+		CameraName: req.CameraName, // Pass through stable camera identifier
+		Bounds:     req.Bounds,
 	}
 
 	DefaultAsyncClient.Post("/bounding_boxes", mapping, func(result js.Value, err error) {

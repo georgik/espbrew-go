@@ -85,28 +85,28 @@ func TestToggleSetDisabled(t *testing.T) {
 	toggle := NewToggle(config)
 
 	toggle.SetDisabled(true)
-	if toggle.switch == nil {
+	if toggle.toggleSwitch == nil {
 		t.Fatal("Toggle switch is nil")
 	}
 
-	opacity := toggle.switch.GetStyle("opacity")
+	opacity := toggle.toggleSwitch.GetStyle("opacity")
 	if opacity != "0.5" {
 		t.Errorf("Expected opacity 0.5, got %s", opacity)
 	}
 
-	pointerEvents := toggle.switch.GetStyle("pointer-events")
+	pointerEvents := toggle.toggleSwitch.GetStyle("pointer-events")
 	if pointerEvents != "none" {
 		t.Errorf("Expected pointer-events none, got %s", pointerEvents)
 	}
 
 	toggle.SetDisabled(false)
 
-	opacity = toggle.switch.GetStyle("opacity")
+	opacity = toggle.toggleSwitch.GetStyle("opacity")
 	if opacity != "1" {
 		t.Errorf("Expected opacity 1, got %s", opacity)
 	}
 
-	pointerEvents = toggle.switch.GetStyle("pointer-events")
+	pointerEvents = toggle.toggleSwitch.GetStyle("pointer-events")
 	if pointerEvents != "auto" {
 		t.Errorf("Expected pointer-events auto, got %s", pointerEvents)
 	}
@@ -124,7 +124,7 @@ func TestToggleInitialState(t *testing.T) {
 		t.Error("Toggle with Checked=true should start checked")
 	}
 
-	if !toggle.switch.HasClass("active") {
+	if !toggle.toggleSwitch.HasClass("active") {
 		t.Error("Checked toggle should have active class")
 	}
 }

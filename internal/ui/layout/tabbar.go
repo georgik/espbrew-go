@@ -20,11 +20,10 @@ var tabs = []Tab{
 	{ID: "dashboard", Name: "Dashboard"},
 	{ID: "capture", Name: "Capture"},
 	{ID: "cameras", Name: "Cameras"},
-	{ID: "devices", Name: "Devices"},
-	{ID: "monitor", Name: "Monitor"},
-	{ID: "gallery", Name: "Gallery"},
 	{ID: "mapping", Name: "Device Mapping"},
+	{ID: "devices", Name: "Devices"},
 	{ID: "flash", Name: "Flash"},
+	{ID: "monitor", Name: "Monitor"},
 	{ID: "settings", Name: "Settings"},
 }
 

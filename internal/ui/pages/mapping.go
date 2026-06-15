@@ -131,18 +131,6 @@ func createMappingCameraSelector() *dom.Element {
 	viewBtn.SetDisabled(true)
 	content.Append(viewBtn.Element)
 
-	// Open editor link
-	editorLink := doc.CreateElement("a")
-	editorLink.SetID("mapping-editor-link")
-	editorLink.SetAttribute("href", "/")
-	editorLink.SetAttribute("target", "_blank")
-	editorLink.SetStyle("color", "#6c5ce7")
-	editorLink.SetStyle("text-decoration", "none")
-	editorLink.SetStyle("font-size", "14px")
-	editorLink.SetStyle("display", "none")
-	editorLink.SetTextContent("Open Mapping Editor (legacy interface)")
-	content.Append(editorLink)
-
 	card.SetContent(content)
 	return card.Element
 }
@@ -459,12 +447,107 @@ func loadMappingCameras() {
 		if viewBtn != nil && len(cameras) > 0 {
 			viewBtn.SetDisabled(false)
 		}
+
+		// Restore shared camera selection if available
+		if app != nil && app.HasSelectedCamera() {
+			sharedCameraID := app.GetSelectedCameraID()
+			// Verify the shared camera is still available
+			cameraExists := false
+			for _, cam := range cameras {
+				if cam.ID == sharedCameraID {
+					cameraExists = true
+					break
+				}
+			}
+			if cameraExists {
+				cameraSelect.SetValue(sharedCameraID)
+			}
+		}
+
+		// Add change listener to save to shared state
+		cameraSelect.AddEventListener("change", func(_ *dom.Event) {
+			selectedID := cameraSelect.GetValue()
+			if app != nil {
+				app.SetSelectedCameraID(selectedID)
+			}
+		})
 	})
 }
 
 // Initialize mapping page when loaded
 func initMappingPage() {
-	loadMappingCameras()
+	loadMappingCamerasWithAutoLoad()
+}
+
+func loadMappingCamerasWithAutoLoad() {
+	doc := dom.GlobalDocument()
+	loading := doc.GetElementByID("mapping-camera-loading")
+	cameraSelect := doc.GetElementByID("mapping-camera-select")
+
+	if loading != nil {
+		loading.SetStyle("display", "block")
+	}
+
+	api.GetCameras(func(cameras []api.Camera, err error) {
+		if loading != nil {
+			loading.SetStyle("display", "none")
+		}
+
+		if err != nil {
+			showMappingsError("Failed to load cameras: " + err.Error())
+			return
+		}
+
+		if cameraSelect == nil {
+			return
+		}
+
+		// Clear existing options
+		cameraSelect.RemoveChildren()
+
+		// Add default option
+		defaultOption := doc.CreateElement("option")
+		defaultOption.SetTextContent("-- Select Camera --")
+		defaultOption.SetAttribute("value", "")
+		cameraSelect.Append(defaultOption)
+
+		// Sort cameras by name
+		sort.Slice(cameras, func(i, j int) bool {
+			return cameras[i].Name < cameras[j].Name
+		})
+
+		// Add camera options
+		for _, cam := range cameras {
+			option := doc.CreateElement("option")
+			option.SetAttribute("value", cam.ID)
+			option.SetTextContent(cam.Name)
+			cameraSelect.Append(option)
+		}
+
+		// Enable view button
+		viewBtn := doc.GetElementByID("view-mappings-button")
+		if viewBtn != nil && len(cameras) > 0 {
+			viewBtn.SetDisabled(false)
+		}
+
+		// Auto-select first camera and load its mappings
+		if len(cameras) > 0 {
+			firstCameraID := cameras[0].ID
+			cameraSelect.SetValue(firstCameraID)
+			if app != nil {
+				app.SetSelectedCameraID(firstCameraID)
+			}
+			loadMappings(firstCameraID)
+		}
+
+		// Add change listener to save to shared state
+		cameraSelect.AddEventListener("change", func(_ *dom.Event) {
+			selectedID := cameraSelect.GetValue()
+			if app != nil {
+				app.SetSelectedCameraID(selectedID)
+			}
+		})
+	})
 }
 
 func createMappingModeToggle() *dom.Element {

@@ -187,6 +187,15 @@ body {
     background-color: rgba(231, 76, 60, 0.3);
 }
 
+.btn-warning {
+    background-color: rgba(241, 196, 15, 0.2);
+    color: #f1c40f;
+}
+
+.btn-warning:hover:not(:disabled) {
+    background-color: rgba(241, 196, 15, 0.3);
+}
+
 /* Modal */
 .modal-overlay {
     position: fixed;

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -51,8 +52,8 @@ func NewCameraHandler() *CameraHandler {
 func (h *CameraHandler) RegisterRoutes(r *mux.Router) {
 	r.HandleFunc("/api/v1/captures", h.handleListCaptures).Methods("GET")
 	r.HandleFunc("/api/v1/captures/{captureId:.*}/devices", h.handleListDeviceCaptures).Methods("GET")
+	r.HandleFunc("/api/v1/captures/{path:.*}", h.handleDeleteCapture).Methods("DELETE")
 	r.HandleFunc("/captures/{path:.*}", h.handleServeCapture).Methods("GET")
-	r.HandleFunc("/captures/{path:.*}", h.handleDeleteCapture).Methods("DELETE")
 }
 
 func (h *CameraHandler) handleListCaptures(w http.ResponseWriter, r *http.Request) {
@@ -65,9 +66,52 @@ func (h *CameraHandler) handleListCaptures(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	// Parse pagination parameters
+	query := r.URL.Query()
+	page := 1
+	limit := 40
+
+	if pageStr := query.Get("page"); pageStr != "" {
+		if p, err := strconv.Atoi(pageStr); err == nil && p > 0 {
+			page = p
+		}
+	}
+	if limitStr := query.Get("limit"); limitStr != "" {
+		if l, err := strconv.Atoi(limitStr); err == nil && l > 0 {
+			limit = l
+		}
+	}
+
+	total := len(captures)
+	totalPages := (total + limit - 1) / limit
+	if totalPages == 0 {
+		totalPages = 1
+	}
+
+	// Validate page number
+	if page > totalPages {
+		page = totalPages
+	}
+
+	// Slice captures for current page
+	start := (page - 1) * limit
+	end := start + limit
+	if end > total {
+		end = total
+	}
+
+	var pageCaptures []*CaptureInfo
+	if start < total {
+		pageCaptures = captures[start:end]
+	}
+
 	respondJSON(w, map[string]interface{}{
-		"captures": captures,
-		"count":    len(captures),
+		"captures":    pageCaptures,
+		"count":       len(pageCaptures),
+		"total":       total,
+		"page":        page,
+		"limit":       limit,
+		"total_pages": totalPages,
 	})
 }
 

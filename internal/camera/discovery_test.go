@@ -219,11 +219,16 @@ func TestExtractV4L2Path(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// extractV4L2Path is not exported, so we test via deviceToCameraInfo
-			// by creating a mock MediaDeviceInfo
+			// Use the label as the device identifier for stable ID generation
+			// The test's deviceID becomes the label for V4L2 format devices
+			label := tt.deviceID
+			if !isV4L2Format(tt.deviceID) {
+				label = "Test Camera"
+			}
+
 			info, err := deviceToCameraInfo(mediadevices.MediaDeviceInfo{
 				DeviceID: tt.deviceID,
-				Label:    "Test Camera",
+				Label:    label,
 				Kind:     mediadevices.VideoInput,
 			})
 
@@ -241,14 +246,56 @@ func TestExtractV4L2Path(t *testing.T) {
 			}
 
 			// For V4L2-format inputs, Path should contain /dev/videoN
-			// ID should remain as the original DeviceID (UUID for V4L2)
-			// For UUID/other formats with no V4L2 pattern, Path equals DeviceID
+			// ID should be a stable identifier generated from the label
 			if tt.want != "" && info.Path != tt.want {
 				t.Errorf("Camera Path = %q, want %q", info.Path, tt.want)
 			}
-			// ID should be the original DeviceID
-			if info.ID != tt.deviceID {
-				t.Errorf("Camera ID = %q, want original DeviceID %q", info.ID, tt.deviceID)
+			// For V4L2 format, ID should be stable (cam-usb-...)
+			// For non-V4L2 format (UUID), ID should be the DeviceID
+			expectedID := tt.deviceID
+			if isV4L2Format(tt.deviceID) {
+				expectedID = generateStableCameraID(tt.deviceID)
+			}
+			if info.ID != expectedID {
+				t.Errorf("Camera ID = %q, want %q", info.ID, expectedID)
+			}
+		})
+	}
+}
+
+// isV4L2Format checks if a device ID looks like V4L2 format
+func isV4L2Format(deviceID string) bool {
+	return containsVideoKeyword(deviceID)
+}
+
+func TestGenerateStableCameraID(t *testing.T) {
+	tests := []struct {
+		name     string
+		label    string
+		expected string
+	}{
+		{
+			name:     "Standard USB camera with video-index",
+			label:    "usb-046d_HD_Webcam_C615_C574F460-video-index0",
+			expected: "cam-usb-046d_HD_Webcam_C615_C574F460",
+		},
+		{
+			name:     "USB camera with semicolon video suffix",
+			label:    "usb-Hewlett_Packard_HP_Webcam_HD_2300-video-index0;video0",
+			expected: "cam-usb-Hewlett_Packard_HP_Webcam_HD_2300",
+		},
+		{
+			name:     "Platform camera",
+			label:    "Facetime HD Camera",
+			expected: "cam-Facetime HD Camera",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := generateStableCameraID(tt.label)
+			if result != tt.expected {
+				t.Errorf("generateStableCameraID(%q) = %q, want %q", tt.label, result, tt.expected)
 			}
 		})
 	}

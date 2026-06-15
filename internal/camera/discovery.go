@@ -104,9 +104,19 @@ func deviceToCameraInfo(dm mediadevices.MediaDeviceInfo) (*CameraInfo, error) {
 	// For V4L2, extract actual device path from pion's device ID or label
 	// pion DeviceID might be UUID, Label contains actual path
 	// Label format: "usb-046d_HD_Webcam_C615_C574F460-video-index0" or "...;video4"
-	cameraID := dm.DeviceID // Use UUID/DeviceID as unique identifier
+
+	var cameraID string
 	devicePath := dm.DeviceID
+
 	if runtime.GOOS == "linux" {
+		// For V4L2 format devices (with "video" in label), generate stable ID from label
+		// For non-V4L2 (UUID format), use DeviceID as-is
+		if containsVideoKeyword(dm.Label) {
+			cameraID = generateStableCameraID(dm.Label)
+		} else {
+			cameraID = dm.DeviceID
+		}
+
 		// Try DeviceID first (some pion versions return device path in ID)
 		devicePath = extractV4L2Path(dm.DeviceID)
 		log.Debug().
@@ -126,12 +136,15 @@ func deviceToCameraInfo(dm mediadevices.MediaDeviceInfo) (*CameraInfo, error) {
 				Str("path_after_label_extract", devicePath).
 				Msg("Camera path extraction step 2")
 		}
-		// Keep cameraID as DeviceID (UUID), store device path in Path field
+
 		log.Info().
 			Str("camera_id", cameraID).
 			Str("label", dm.Label).
 			Str("final_path", devicePath).
-			Msg("Camera registered with path")
+			Msg("Camera registered")
+	} else {
+		// Non-Linux: use DeviceID (may be UUID or platform-specific ID)
+		cameraID = dm.DeviceID
 	}
 
 	info := &CameraInfo{
@@ -207,6 +220,30 @@ func extractV4L2Path(deviceID string) string {
 
 	// Fallback: return original deviceID
 	return deviceID
+}
+
+// generateStableCameraID creates a stable camera ID from device label.
+// Label format: "usb-046d_HD_Webcam_C615_C574F460-video-index0"
+// Returns: "cam-046d_HD_Webcam_C615_C574F460" (stable across restarts)
+func generateStableCameraID(label string) string {
+	// Remove the video-index suffix to get stable identifier
+	// Examples:
+	// "usb-046d_HD_Webcam_C615_C574F460-video-index0" -> "cam-046d_HD_Webcam_C615_C574F460"
+	// "usb-Hewlett_Packard_HP_Webcam_HD_2300-video-index0" -> "cam-Hewlett_Packard_HP_Webcam_HD_2300"
+
+	// Find and remove "-video-indexN" suffix
+	idx := strings.Index(label, "-video-index")
+	if idx != -1 {
+		label = label[:idx]
+	}
+
+	// Also remove ";videoN" suffix if present (some pion versions use this)
+	if semicolonIdx := strings.Index(label, ";video"); semicolonIdx != -1 {
+		label = label[:semicolonIdx]
+	}
+
+	// Add "cam-" prefix to distinguish camera IDs from device IDs
+	return "cam-" + label
 }
 
 // Discover is a convenience function that discovers cameras without a discoverer instance

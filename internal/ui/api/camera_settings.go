@@ -141,3 +141,24 @@ func SaveCameraSettings(cameraID string, settings *CameraSettingsRequest, callba
 		callback(err)
 	})
 }
+
+// UpdateCameraSettings updates specific camera settings (like name)
+func UpdateCameraSettings(cameraID string, settings map[string]interface{}, callback func(bool, error)) {
+	DefaultAsyncClient.Put("/camera/settings/"+cameraID, settings, func(result js.Value, err error) {
+		if err != nil {
+			callback(false, err)
+			return
+		}
+
+		// Check for status field
+		statusField := result.Get("status")
+		if !statusField.IsUndefined() && !statusField.IsNull() {
+			status := statusField.String()
+			success := (status == "updated" || status == "ok")
+			callback(success, nil)
+			return
+		}
+
+		callback(false, nil)
+	})
+}

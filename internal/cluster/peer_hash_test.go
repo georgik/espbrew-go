@@ -156,6 +156,10 @@ func TestQueryFlashHash(t *testing.T) {
 			var client *Client
 			if server != nil {
 				client = NewClient(server.URL)
+				// Reduce retry delay for tests that return errors
+				if tt.responseStatus >= 500 {
+					client.SetRetryPolicy(2, 10*time.Millisecond)
+				}
 			}
 
 			resp, err := QueryFlashHash(client, tt.deviceID, tt.regions)

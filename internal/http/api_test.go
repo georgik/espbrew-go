@@ -27,6 +27,7 @@ func TestAPIHandler_HandleStatus(t *testing.T) {
 		HTTPPort:           8080,
 		DisablemDNS:        true,
 		DisableMaintenance: true,
+		DisableWatcher:     true,
 		HeartbeatInterval:  time.Second,
 		NodeTimeout:        5 * time.Second,
 	}, store)
@@ -62,6 +63,7 @@ func TestAPIHandler_HandleNodes(t *testing.T) {
 		HTTPPort:           8080,
 		DisablemDNS:        true,
 		DisableMaintenance: true,
+		DisableWatcher:     true,
 		HeartbeatInterval:  time.Second,
 		NodeTimeout:        5 * time.Second,
 	}, store)
@@ -93,6 +95,7 @@ func TestAPIHandler_HandleDevices(t *testing.T) {
 		HTTPPort:           8080,
 		DisablemDNS:        true,
 		DisableMaintenance: true,
+		DisableWatcher:     true,
 		HeartbeatInterval:  time.Second,
 		NodeTimeout:        5 * time.Second,
 	}, store)
@@ -138,6 +141,7 @@ func TestAPIHandler_HandleReserveDevice(t *testing.T) {
 		HTTPPort:           8080,
 		DisablemDNS:        true,
 		DisableMaintenance: true,
+		DisableWatcher:     true,
 		HeartbeatInterval:  time.Second,
 		NodeTimeout:        5 * time.Second,
 	}, store)
@@ -198,6 +202,7 @@ func TestAPIHandler_HandleReserveDevice_NotFound(t *testing.T) {
 		HTTPPort:           8080,
 		DisablemDNS:        true,
 		DisableMaintenance: true,
+		DisableWatcher:     true,
 		HeartbeatInterval:  time.Second,
 		NodeTimeout:        5 * time.Second,
 	}, store)
