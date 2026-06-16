@@ -19,6 +19,7 @@ type Tab struct {
 var tabs = []Tab{
 	{ID: "dashboard", Name: "Dashboard"},
 	{ID: "capture", Name: "Capture"},
+	{ID: "gallery", Name: "Gallery"},
 	{ID: "cameras", Name: "Cameras"},
 	{ID: "mapping", Name: "Device Mapping"},
 	{ID: "devices", Name: "Devices"},
