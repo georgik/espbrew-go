@@ -105,7 +105,7 @@ func (c *Camera) GetControlRange(controlName string) (min, max int32, err error)
 
 // GetControlInfo returns default info on non-Linux platforms
 func (c *Camera) GetControlInfo(controlName string) (min, max, current int32, err error) {
-	min, max, _ := c.GetControlRange(controlName)
+	min, max, _ = c.GetControlRange(controlName)
 	current = (min + max) / 2 // Midpoint as default
 	return min, max, current, nil
 }
