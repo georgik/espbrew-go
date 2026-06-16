@@ -3,36 +3,36 @@ package espflash
 import (
 	"embed"
 	"encoding/base64"
-	"encoding/json"
 	"fmt"
+
+	"github.com/BurntSushi/toml"
 )
 
 //go:generate go run ../../tools/update-stubs.go
-//go:embed ../../vendor/espflash/espflash/resources/stubs
+//go:embed stubs
 var stubFS embed.FS
 
-// chipStubName maps each supported chip type to its stub JSON filename stem.
+// chipStubName maps each supported chip type to its stub TOML filename stem.
 var chipStubName = map[ChipType]string{
-	ChipESP8266:     "esp8266",
-	ChipESP32:       "esp32",
-	ChipESP32S2:     "esp32s2",
-	ChipESP32S3:     "esp32s3",
-	ChipESP32C2:     "esp32c2",
-	ChipESP32C3:     "esp32c3",
-	ChipESP32C5:     "esp32c5",
-	ChipESP32C6:     "esp32c6",
-	ChipESP32H2:     "esp32h2",
-	ChipESP32P4Rev1: "esp32p4-rev1",
+	ChipESP8266:     "stub_flasher_8266",
+	ChipESP32:       "stub_flasher_32",
+	ChipESP32S2:     "stub_flasher_32s2",
+	ChipESP32S3:     "stub_flasher_32s3",
+	ChipESP32C2:     "stub_flasher_32c2",
+	ChipESP32C3:     "stub_flasher_32c3",
+	ChipESP32C5:     "stub_flasher_32c5",
+	ChipESP32C6:     "stub_flasher_32c6",
+	ChipESP32H2:     "stub_flasher_32h2",
+	ChipESP32P4Rev1: "stub_flasher_32p4",
 }
 
-// stubJSON mirrors the JSON structure of the esptool stub flasher files.
-type stubJSON struct {
-	Entry     uint32 `json:"entry"`
-	Text      string `json:"text"`
-	TextStart uint32 `json:"text_start"`
-	Data      string `json:"data"`
-	DataStart uint32 `json:"data_start"`
-	BSSStart  uint32 `json:"bss_start"`
+// stubTOML mirrors the TOML structure of the espflash stub flasher files.
+type stubTOML struct {
+	Entry     uint32 `toml:"entry"`
+	Text      string `toml:"text"`
+	TextStart uint32 `toml:"text_start"`
+	Data      string `toml:"data"`
+	DataStart uint32 `toml:"data_start"`
 }
 
 // stub holds the decoded stub loader image ready for uploading.
@@ -52,24 +52,24 @@ func stubFor(chipType ChipType) (*stub, bool) {
 		return nil, false
 	}
 
-	raw, err := stubFS.ReadFile(fmt.Sprintf("vendor/espflash/espflash/resources/stubs/%s.json", name))
+	raw, err := stubFS.ReadFile(fmt.Sprintf("stubs/%s.toml", name))
 	if err != nil {
 		return nil, false
 	}
 
-	var sj stubJSON
-	if err := json.Unmarshal(raw, &sj); err != nil {
+	var st stubTOML
+	if err := toml.Unmarshal(raw, &st); err != nil {
 		return nil, false
 	}
 
-	text, err := base64.StdEncoding.DecodeString(sj.Text)
+	text, err := base64.StdEncoding.DecodeString(st.Text)
 	if err != nil {
 		return nil, false
 	}
 
 	var data []byte
-	if sj.Data != "" {
-		data, err = base64.StdEncoding.DecodeString(sj.Data)
+	if st.Data != "" {
+		data, err = base64.StdEncoding.DecodeString(st.Data)
 		if err != nil {
 			return nil, false
 		}
@@ -77,9 +77,9 @@ func stubFor(chipType ChipType) (*stub, bool) {
 
 	return &stub{
 		text:      text,
-		textStart: sj.TextStart,
+		textStart: st.TextStart,
 		data:      data,
-		dataStart: sj.DataStart,
-		entry:     sj.Entry,
+		dataStart: st.DataStart,
+		entry:     st.Entry,
 	}, true
 }

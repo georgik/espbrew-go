@@ -146,3 +146,27 @@ Run tests:
 go test ./internal/flash/...
 go test ./internal/espflash/...
 ```
+
+## Stub Loaders
+
+ESP stub loaders enable advanced flashing features:
+
+- MD5 verification
+- Compressed flashing
+- Region erase
+- Flash read operations
+
+**Source:** git submodule from esp-rs/espflash repository
+
+**Update procedure:**
+```bash
+# Update submodule to desired version
+cd vendor/espflash && git checkout v3.1.0 && cd ../..
+
+# Copy stubs to local directory
+go run tools/update-stubs.go
+```
+
+**Format:** TOML files with base64-encoded binary data
+
+**Embed:** Stubs are embedded in binary via go:embed, no runtime dependency on submodule

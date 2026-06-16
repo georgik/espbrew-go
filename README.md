@@ -31,6 +31,13 @@ ESP32 cluster flashing tool written in Go. Manages multiple ESP32 devices across
 ## Quick Start
 
 ```bash
+# Clone repository
+git clone https://codeberg.org/georgik/espbrew-go.git
+cd espbrew-go
+
+# Initialize submodules (contains ESP stub loaders)
+git submodule update --init --recursive
+
 # Build
 go build -o espbrew ./cmd/espbrew
 
@@ -55,6 +62,13 @@ go build -o espbrew.exe ./cmd/espbrew
 ## Installation
 
 ```bash
+# Clone repository
+git clone https://codeberg.org/georgik/espbrew-go.git
+cd espbrew-go
+
+# Initialize submodules
+git submodule update --init --recursive
+
 # Build the application
 go build -o espbrew ./cmd/espbrew
 
@@ -831,6 +845,12 @@ espbrew mapping import mappings.json
 ## Development
 
 ```bash
+# Initialize submodules (required for build)
+git submodule update --init --recursive
+
+# Update submodules to latest versions
+git submodule update --remote
+
 # Format code
 gofmt -w .
 
@@ -846,6 +866,21 @@ go test -cover ./...
 # Build all
 go build ./...
 ```
+
+### Stub Loaders
+
+ESP stub loaders are tracked via git submodule from esp-rs/espflash repository. The stubs enable advanced flashing features (MD5 verification, compressed flashing, region erase).
+
+**Update stubs from upstream:**
+```bash
+# Checkout specific version in submodule
+cd vendor/espflash && git checkout v3.1.0 && cd ../..
+
+# Copy stubs to local directory
+go run tools/update-stubs.go
+```
+
+**Stub location:** `internal/espflash/stubs/` (embedded in binary via go:embed)
 
 ### Test Data
 
