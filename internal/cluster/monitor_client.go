@@ -147,6 +147,10 @@ func (c *MonitorClient) readLoop(ctx context.Context, dataCh chan<- []byte, erro
 						continue
 					}
 					log.Debug().Int("bytes", len(data)).Str("content", string(data)).Msg("Received data from server")
+
+					// Normalize line endings: convert \r\n to \n for clean terminal output
+					data = normalizeLineEndings(data)
+
 					select {
 					case dataCh <- data:
 					case <-ctx.Done():
@@ -284,6 +288,30 @@ func (c *MonitorClient) ReleaseDevice(clientID string) error {
 	}
 
 	return nil
+}
+
+// normalizeLineEndings ensures proper line endings for raw terminal mode
+// In raw mode, \r is needed to move cursor to column 0
+// ESP32 serial output uses CRLF (\r\n), we preserve that
+// Lone \n gets converted to \r\n for proper cursor positioning
+func normalizeLineEndings(data []byte) []byte {
+	result := make([]byte, 0, len(data)*2)
+	for i := 0; i < len(data); i++ {
+		if data[i] == '\r' && i+1 < len(data) && data[i+1] == '\n' {
+			// Keep \r\n as-is for proper raw mode behavior
+			result = append(result, '\r', '\n')
+			i++ // skip the \n we just processed
+		} else if data[i] == '\n' {
+			// Lone \n becomes \r\n for raw mode
+			result = append(result, '\r', '\n')
+		} else if data[i] == '\r' {
+			// Lone \r (rare) stays as \r
+			result = append(result, '\r')
+		} else {
+			result = append(result, data[i])
+		}
+	}
+	return result
 }
 
 func jsonEscape(s string) string {

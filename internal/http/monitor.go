@@ -1,6 +1,7 @@
 package http
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"runtime"
@@ -116,7 +117,7 @@ func (s *MonitorServer) handleMonitorWebSocket(w http.ResponseWriter, r *http.Re
 			log.Debug().Int("bytes", len(data)).Str("content", string(data)).Msg("Sending data to client")
 			msg := map[string]interface{}{
 				"type": "data",
-				"data": string(data),
+				"data": base64.StdEncoding.EncodeToString(data),
 			}
 			if err := conn.WriteJSON(msg); err != nil {
 				log.Debug().Err(err).Msg("WebSocket write error")

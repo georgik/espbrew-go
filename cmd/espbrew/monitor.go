@@ -17,6 +17,11 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// forceFlush forces stdout to flush immediately (works for terminals)
+func forceFlush() {
+	syscall.Fsync(int(os.Stdout.Fd()))
+}
+
 var monitorCmd = &cobra.Command{
 	Use:   "monitor [flags]",
 	Short: "Open serial monitor",
@@ -116,11 +121,14 @@ func runMonitorRemoteStream(monitorClient *cluster.MonitorClient) error {
 		return fmt.Errorf("connect monitor: %w", err)
 	}
 
-	fmt.Printf("Remote monitor on %s @ %d baud\n", monitorOpts.port, monitorOpts.baud)
+	// Create unbuffered writer for immediate output in raw mode
+	stdoutWriter := &bufioWriter{w: os.Stdout}
+
+	fmt.Printf("Remote monitor on %s @ %d baud\r\n", monitorOpts.port, monitorOpts.baud)
 	if !monitorOpts.noRaw {
-		fmt.Println("CTRL+R to reset, CTRL+C to exit")
+		fmt.Printf("CTRL+R to reset, CTRL+C to exit\r\n")
 	}
-	fmt.Println("---")
+	fmt.Printf("---\r\n")
 
 	// Set up signal handler
 	sigCh := make(chan os.Signal, 1)
@@ -141,10 +149,15 @@ func runMonitorRemoteStream(monitorClient *cluster.MonitorClient) error {
 
 	// stdin reader for reset command
 	var stdinBuf []byte
+	var oldState *term.State
 	if !monitorOpts.noRaw {
 		stdinBuf = make([]byte, 1)
-		oldState, err := term.MakeRaw(int(os.Stdin.Fd()))
-		if err == nil {
+		var err error
+		oldState, err = term.MakeRaw(int(os.Stdin.Fd()))
+		if err != nil {
+			oldState = nil
+		}
+		if oldState != nil {
 			defer term.Restore(int(os.Stdin.Fd()), oldState)
 		}
 	}
@@ -157,14 +170,24 @@ func runMonitorRemoteStream(monitorClient *cluster.MonitorClient) error {
 	for {
 		select {
 		case exit := <-exitCh:
-			fmt.Printf("\r\n%s\n", exit.message)
+			// Restore terminal before printing
+			if oldState != nil {
+				term.Restore(int(os.Stdin.Fd()), oldState)
+				oldState = nil
+			}
+			fmt.Printf("\n%s\n", exit.message)
 			if exit.success {
 				return nil
 			}
 			return fmt.Errorf("monitor failed: %s", exit.message)
 
 		case <-timeoutCh:
-			fmt.Printf("\r\nDuration limit reached (%d seconds)\n", monitorOpts.duration)
+			// Restore terminal before printing
+			if oldState != nil {
+				term.Restore(int(os.Stdin.Fd()), oldState)
+				oldState = nil
+			}
+			fmt.Printf("\nDuration limit reached (%d seconds)\n", monitorOpts.duration)
 			return nil
 
 		case data, ok := <-dataCh:
@@ -172,7 +195,8 @@ func runMonitorRemoteStream(monitorClient *cluster.MonitorClient) error {
 				return nil
 			}
 			log.Debug().Int("bytes", len(data)).Str("content", string(data)).Msg("Writing data to stdout")
-			os.Stdout.Write(data)
+			stdoutWriter.Write(data)
+			stdoutWriter.Flush()
 
 			// Check exit patterns
 			dataStr := string(data)
@@ -189,11 +213,11 @@ func runMonitorRemoteStream(monitorClient *cluster.MonitorClient) error {
 				if n > 0 {
 					c := stdinBuf[0]
 					if c == 18 { // CTRL+R
-						fmt.Println("\r\n[Resetting device]")
+						fmt.Print("\r\n[Resetting device]\r\n")
 						if err := monitorClient.Reset(); err != nil {
 							log.Warn().Err(err).Msg("Reset failed")
 						}
-						fmt.Println("---")
+						fmt.Print("---\r\n")
 					} else if c == 3 { // CTRL+C
 						exitCh <- monitorExit{success: true, message: "Exiting..."}
 					}
@@ -236,6 +260,9 @@ func runMonitor(portName string, baud int) error {
 
 	serialPort.SetReadTimeout(50 * time.Millisecond)
 
+	// Create unbuffered writer for immediate output in raw mode
+	stdoutWriter := &bufioWriter{w: os.Stdout}
+
 	// Start reader goroutine FIRST (before reset to capture boot logs)
 	dataCh := make(chan []byte, 256)
 	go func() {
@@ -257,6 +284,13 @@ func runMonitor(portName string, baud int) error {
 		}
 	}()
 
+	// stdin reader for reset command
+	var stdinBuf []byte
+	var oldState *term.State
+	if !monitorOpts.noRaw {
+		stdinBuf = make([]byte, 1)
+	}
+
 	// Reset device AFTER reader is running (to capture boot logs)
 	if monitorOpts.resetFirst {
 		fmt.Println("[Resetting device to capture boot logs...]")
@@ -270,11 +304,14 @@ func runMonitor(portName string, baud int) error {
 
 	if !monitorOpts.noRaw {
 		stdinFd := int(os.Stdin.Fd())
-		oldState, err := term.MakeRaw(stdinFd)
+		var err error
+		oldState, err = term.MakeRaw(stdinFd)
 		if err != nil {
 			return fmt.Errorf("set raw terminal: %w", err)
 		}
-		defer term.Restore(stdinFd, oldState)
+		if oldState != nil {
+			defer term.Restore(stdinFd, oldState)
+		}
 	}
 
 	fmt.Printf("Serial monitor on %s @ %d baud\n", portName, baud)
@@ -291,11 +328,6 @@ func runMonitor(portName string, baud int) error {
 		exitCh <- monitorExit{success: true, message: "Interrupted"}
 	}()
 
-	var stdinBuf []byte
-	if !monitorOpts.noRaw {
-		stdinBuf = make([]byte, 1)
-	}
-
 	var timeoutCh <-chan time.Time
 	if monitorOpts.duration > 0 {
 		timeoutCh = time.After(time.Duration(monitorOpts.duration) * time.Second)
@@ -304,14 +336,24 @@ func runMonitor(portName string, baud int) error {
 	for {
 		select {
 		case exit := <-exitCh:
-			fmt.Printf("\r\n%s\n", exit.message)
+			// Restore terminal before printing
+			if oldState != nil {
+				term.Restore(int(os.Stdin.Fd()), oldState)
+				oldState = nil
+			}
+			fmt.Printf("\n%s\n", exit.message)
 			if exit.success {
 				return nil
 			}
 			return fmt.Errorf("monitor failed: %s", exit.message)
 
 		case <-timeoutCh:
-			fmt.Printf("\r\nDuration limit reached (%d seconds)\n", monitorOpts.duration)
+			// Restore terminal before printing
+			if oldState != nil {
+				term.Restore(int(os.Stdin.Fd()), oldState)
+				oldState = nil
+			}
+			fmt.Printf("\nDuration limit reached (%d seconds)\n", monitorOpts.duration)
 			return nil
 
 		case data, ok := <-dataCh:
@@ -319,7 +361,8 @@ func runMonitor(portName string, baud int) error {
 				return nil
 			}
 			dataStr := string(data)
-			os.Stdout.Write(data)
+			stdoutWriter.Write(data)
+			stdoutWriter.Flush()
 
 			if monitorOpts.exitOnError != "" && contains(dataStr, monitorOpts.exitOnError) {
 				exitCh <- monitorExit{success: false, message: fmt.Sprintf("Error pattern matched: %s", monitorOpts.exitOnError)}
@@ -361,4 +404,18 @@ func indexOf(s, substr string) int {
 		}
 	}
 	return -1
+}
+
+// bufioWriter wraps stdout with explicit flush for raw mode
+type bufioWriter struct {
+	w *os.File
+}
+
+func (b *bufioWriter) Write(p []byte) (n int, err error) {
+	return b.w.Write(p)
+}
+
+func (b *bufioWriter) Flush() error {
+	// Use syscall.Fsync on file descriptor for immediate terminal output
+	return syscall.Fsync(int(b.w.Fd()))
 }
