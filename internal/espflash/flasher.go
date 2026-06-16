@@ -1036,10 +1036,8 @@ func (f *Flasher) ReadFlash(offset, size uint32) ([]byte, error) {
 func (f *Flasher) Reset() {
 	if f.conn.isStub() {
 		// Tell the stub to cleanly exit flash mode and reboot.
-		// flashEnd(true) triggers a software reboot inside the stub.
 		f.conn.flashBegin(0, 0, false, false) //nolint:errcheck
 		f.conn.flashEnd(true)                 //nolint:errcheck
-		time.Sleep(50 * time.Millisecond)
 	}
 
 	// For ROM bootloaders, skip flash_begin/flash_end — sending

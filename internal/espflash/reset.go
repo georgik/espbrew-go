@@ -164,24 +164,30 @@ func usbJTAGSerialReset(port serial.Port) {
 func hardReset(port serial.Port, usesUSB bool) {
 	if usesUSB {
 		// On USB-JTAG/Serial, the peripheral latches DTR (GPIO0 state)
-		// at reset time. Ensure DTR=false so GPIO0=HIGH → normal boot,
-		// not bootloader mode.
-		port.SetDTR(false) //nolint:errcheck
-	}
-	port.SetRTS(true) //nolint:errcheck // EN=LOW (chip in reset)
-	if usesUSB {
-		time.Sleep(200 * time.Millisecond)
-		port.SetRTS(false) //nolint:errcheck
-		time.Sleep(200 * time.Millisecond)
-	} else {
+		// at reset time. Correct sequence to clear download mode flag:
+		// 1. DTR=false (GPIO0=HIGH for normal boot)
+		// 2. RTS=false (clears download mode flag)
+		// 3. RTS=true (triggers reset)
+		// 4. RTS=false (exit reset)
+		port.SetDTR(false) //nolint:errcheck // GPIO0=HIGH
+		port.SetRTS(false) //nolint:errcheck // Clear download mode flag
 		time.Sleep(100 * time.Millisecond)
-		// Release DTR before exiting reset. Otherwise a leftover DTR=true
-		// from a prior operation holds IO0 LOW at reset exit and the chip
-		// boots into the download-mode bootloader instead of the
-		// application. Matches esptool.py HardReset.
-		port.SetDTR(false) //nolint:errcheck
-		port.SetRTS(false) //nolint:errcheck
+		port.SetRTS(true) //nolint:errcheck // Trigger reset
+		time.Sleep(100 * time.Millisecond)
+		port.SetRTS(false) //nolint:errcheck // Exit reset
+		time.Sleep(100 * time.Millisecond)
+		return
 	}
+
+	// For non-USB devices: classic DTR/RTS reset sequence
+	port.SetRTS(true) //nolint:errcheck // EN=LOW (chip in reset)
+	time.Sleep(100 * time.Millisecond)
+	// Release DTR before exiting reset. Otherwise a leftover DTR=true
+	// from a prior operation holds IO0 LOW at reset exit and the chip
+	// boots into the download-mode bootloader instead of the
+	// application. Matches esptool.py HardReset.
+	port.SetDTR(false) //nolint:errcheck
+	port.SetRTS(false) //nolint:errcheck // EN=HIGH (chip out of reset)
 }
 
 // String returns the string representation of the ResetMode.

@@ -55,11 +55,20 @@ Fast mode reduces connection attempts and delays for rapid development iteration
 
 ### Reset Sequence for USB-JTAG Devices
 
-**Problem**: ResetAuto was trying classic reset first for USB-JTAG devices, which doesn't work. This wasted attempts and caused timeouts.
+**Problem**: ResetAuto was trying classic reset first for USB-JTAG devices, which doesn't work. This wasted attempts and caused timeouts. Additionally, devices remained in download mode after flashing completed.
 
-**Solution**: For USB CDC ports, use USB-JTAG reset immediately in ResetAuto mode.
+**Solution**: For USB CDC ports, use USB-JTAG reset immediately in ResetAuto mode. Implemented correct reset sequence that clears the download mode flag before triggering reset:
 
-**Impact**: Connection is faster and more reliable for USB-JTAG/Serial devices.
+1. DTR=false (GPIO0=HIGH for normal boot)
+2. RTS=false (clears download mode flag) ← **Critical step**
+3. Sleep 100ms
+4. RTS=true (triggers reset)
+5. Sleep 100ms
+6. RTS=false (exit reset)
+
+**Impact**: Connection is faster and more reliable for USB-JTAG/Serial devices. Devices now properly boot to user application after flashing instead of remaining in download mode.
+
+**Reference**: [ESP32-S3 Technical Reference Manual](https://documentation.espressif.com/projects/esp32s3/en/latest/esp32s3/usb-serial-jtag/usb-serial-jtag-console.html) - The USB-Serial/JTAG controller expects specific RTS/DTR sequences to enter/exit download mode.
 
 ## Multi-Part Flashing
 
