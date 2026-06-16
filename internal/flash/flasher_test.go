@@ -116,3 +116,76 @@ func TestEraseResult_Failure(t *testing.T) {
 	assert.False(t, result.Success)
 	assert.Equal(t, err, result.Error)
 }
+
+// TestFlasherEraseDefault tests that erase defaults to false
+func TestFlasherEraseDefault(t *testing.T) {
+	flasher := NewFlasher(nil)
+	assert.NotNil(t, flasher)
+	assert.NotNil(t, flasher.opts)
+	assert.False(t, flasher.opts.Erase, "Erase should default to false")
+}
+
+// TestFlasherSetErase tests the SetErase method
+func TestFlasherSetErase(t *testing.T) {
+	flasher := NewFlasher(nil)
+	assert.NotNil(t, flasher)
+
+	// Test setting to true
+	flasher.SetErase(true)
+	assert.True(t, flasher.opts.Erase, "Erase should be true after SetErase(true)")
+
+	// Test setting to false
+	flasher.SetErase(false)
+	assert.False(t, flasher.opts.Erase, "Erase should be false after SetErase(false)")
+}
+
+// TestFlasherOptionsWithErase tests creating Flasher with erase enabled
+func TestFlasherOptionsWithErase(t *testing.T) {
+	opts := &FlasherOptions{
+		BaudRate:      115200,
+		FlashBaudRate: 460800,
+		Compress:      true,
+		Erase:         true,
+	}
+
+	flasher := NewFlasher(opts)
+	assert.NotNil(t, flasher)
+	assert.True(t, flasher.opts.Erase, "Erase should be true when set in options")
+}
+
+// TestFlasherOptionsAllDefaults tests that FlasherOptions has all correct defaults
+func TestFlasherOptionsAllDefaults(t *testing.T) {
+	flasher := NewFlasher(nil)
+
+	assert.Equal(t, 115200, flasher.opts.BaudRate, "BaudRate should default to 115200")
+	assert.Equal(t, 460800, flasher.opts.FlashBaudRate, "FlashBaudRate should default to 460800")
+	assert.True(t, flasher.opts.Compress, "Compress should default to true")
+	assert.False(t, flasher.opts.Erase, "Erase should default to false")
+}
+
+// TestIsUSBPort tests USB CDC port detection
+func TestIsUSBPort(t *testing.T) {
+	tests := []struct {
+		name     string
+		port     string
+		expected bool
+	}{
+		{"Linux USB CDC ACM0", "/dev/ttyACM0", true},
+		{"Linux USB CDC ACM1", "/dev/ttyACM1", true},
+		{"Linux USB CDC ACM with number", "/dev/ttyACM42", true},
+		{"macOS USB CDC", "/dev/cu.usbmodem1234", true},
+		{"macOS USB serial", "/dev/cu.usbserial", true},
+		{"Linux USB serial", "/dev/ttyUSB0", false},
+		{"Linux standard serial", "/dev/ttyS0", false},
+		{"Windows COM port", "COM1", false},
+		{"Empty string", "", false},
+		{"Short string", "/dev/tty", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := isUSBPort(tt.port)
+			assert.Equal(t, tt.expected, result, "isUSBPort(%q) should return %v", tt.port, tt.expected)
+		})
+	}
+}

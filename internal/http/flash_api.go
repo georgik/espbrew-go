@@ -49,6 +49,7 @@ type FlashSubmitRequest struct {
 	Options     map[string]interface{} `json:"options,omitempty"`
 	ClientID    string                 `json:"client_id,omitempty"`
 	Offset      int                    `json:"offset,omitempty"`
+	Erase       bool                   `json:"erase,omitempty"`
 }
 
 type FlashSubmitResponse struct {
@@ -140,8 +141,8 @@ func (h *FlashHandler) handleFlashSubmit(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Enqueue job with offset
-	job, err := h.leader.EnqueueJobWithOffset(firmwarePath, req.DevicePath, req.Offset)
+	// Enqueue job with offset and erase option
+	job, err := h.leader.EnqueueJobWithOffsetAndErase(firmwarePath, req.DevicePath, req.Offset, req.Erase)
 	if err != nil {
 		respondError(w, http.StatusConflict, err.Error())
 		return

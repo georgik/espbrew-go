@@ -14,14 +14,16 @@ import (
 
 // Discoverer handles camera discovery
 type Discoverer struct {
-	mu      sync.RWMutex
-	cameras map[string]*CameraInfo
+	mu         sync.RWMutex
+	cameras    map[string]*CameraInfo
+	loggedOnce map[string]bool // Track which cameras we've logged at least once
 }
 
 // NewDiscoverer creates a new camera discoverer
 func NewDiscoverer() *Discoverer {
 	return &Discoverer{
-		cameras: make(map[string]*CameraInfo),
+		cameras:    make(map[string]*CameraInfo),
+		loggedOnce: make(map[string]bool),
 	}
 }
 
@@ -36,6 +38,8 @@ func (d *Discoverer) Discover() ([]*CameraInfo, error) {
 	dms := mediadevices.EnumerateDevices()
 
 	cameras := make([]*CameraInfo, 0, len(dms))
+	newCameras := make(map[string]*CameraInfo)
+	stateChanged := false
 
 	for _, dm := range dms {
 		// Only include video input devices
@@ -53,18 +57,56 @@ func (d *Discoverer) Discover() ([]*CameraInfo, error) {
 			// V4L2 creates multiple nodes per camera; we want the primary one
 			// Check using device label which contains the video-index pattern
 			if isPrimaryVideoDevice(dm.Label) {
-				d.cameras[info.ID] = info
+				newCameras[info.ID] = info
 				cameras = append(cameras, info)
+
+				// Log only when camera is newly discovered or path changed
+				oldCam, existed := d.cameras[info.ID]
+				if !existed {
+					stateChanged = true
+					// New camera
+					log.Info().
+						Str("camera_id", info.ID).
+						Str("label", dm.Label).
+						Str("final_path", info.Path).
+						Msg("Camera discovered")
+					d.loggedOnce[info.ID] = true
+				} else if oldCam.Path != info.Path {
+					// Path changed
+					stateChanged = true
+					log.Info().
+						Str("camera_id", info.ID).
+						Str("old_path", oldCam.Path).
+						Str("new_path", info.Path).
+						Msg("Camera path changed")
+				}
 			} else {
 				log.Debug().Str("device_id", info.ID).Str("label", dm.Label).Msg("Skipping non-primary video device")
 			}
 		}
 	}
 
-	log.Info().
-		Int("count", len(cameras)).
-		Str("platform", runtime.GOOS).
-		Msg("Camera discovery completed")
+	// Log removed cameras
+	for id, oldCam := range d.cameras {
+		if _, exists := newCameras[id]; !exists {
+			stateChanged = true
+			log.Info().
+				Str("camera_id", id).
+				Str("path", oldCam.Path).
+				Msg("Camera removed")
+		}
+	}
+
+	// Update stored cameras
+	d.cameras = newCameras
+
+	// Only log completion when something changed
+	if stateChanged {
+		log.Info().
+			Int("count", len(cameras)).
+			Str("platform", runtime.GOOS).
+			Msg("Camera discovery completed")
+	}
 
 	return cameras, nil
 }
@@ -137,11 +179,6 @@ func deviceToCameraInfo(dm mediadevices.MediaDeviceInfo) (*CameraInfo, error) {
 				Msg("Camera path extraction step 2")
 		}
 
-		log.Info().
-			Str("camera_id", cameraID).
-			Str("label", dm.Label).
-			Str("final_path", devicePath).
-			Msg("Camera registered")
 	} else {
 		// Non-Linux: use DeviceID (may be UUID or platform-specific ID)
 		cameraID = dm.DeviceID

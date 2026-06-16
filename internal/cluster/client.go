@@ -184,6 +184,7 @@ type FlashSubmitRequest struct {
 	Options     map[string]interface{} `json:"options,omitempty"`
 	ClientID    string                 `json:"client_id,omitempty"`
 	Offset      int                    `json:"offset,omitempty"`
+	Erase       bool                   `json:"erase,omitempty"`
 }
 
 type FlashSubmitResponse struct {
@@ -506,8 +507,6 @@ func (p *ProgressClient) Stream(callback func(ProgressMessage)) error {
 			}
 			return fmt.Errorf("read message: %w", err)
 		}
-
-		log.Debug().Str("type", msg.Type).Int("progress", msg.Progress).Msg("Progress update")
 
 		if callback != nil {
 			callback(msg)

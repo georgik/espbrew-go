@@ -138,6 +138,9 @@ func (e *JobExecutor) executeFlash(job *Job) error {
 		return err
 	}
 
+	// Update flasher options with erase setting from job
+	e.flasher.SetErase(job.Erase)
+
 	// Execute flash with timeout
 	ctx, cancel := context.WithTimeout(e.ctx, DefaultJobTimeout)
 	defer cancel()

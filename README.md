@@ -197,6 +197,7 @@ curl -X PUT http://localhost:8080/api/v1/devices/{id}/backend \
 
 ## Documentation
 
+- [Flashing Implementation](docs/FLASHING_IMPLEMENTATION.md) - ESP32-S3 USB-JTAG/Serial support, reset modes, connection handling
 - [Snap Command](docs/SNAP.md) - Flash, monitor, capture workflow
 - [Cluster Usage](docs/CLUSTER.md) - Multi-node setup, remote operations
 - [HTTP API Reference](docs/API.md) - REST and WebSocket endpoints
@@ -295,6 +296,7 @@ Note: Windows users should use `espbrew.exe` instead of `./espbrew` in the examp
 ```bash
 ./espbrew flash firmware.bin                     # Auto-detect device
 ./espbrew flash firmware.bin -p /dev/ttyUSB0     # Specific port
+./espbrew flash firmware.bin -p /dev/ttyACM0     # USB-JTAG/Serial device
 ./espbrew flash firmware.bin --chip esp32-s3     # Specify chip
 ./espbrew flash firmware.bin --monitor           # Flash and monitor
 ./espbrew flash firmware.bin --offset 0x10000    # Flash at custom offset
@@ -530,7 +532,7 @@ esp-ci-cluster/
 
 ## Hardware Support
 
-Supports all ESP32 variants with chip-specific bootloader offsets and automatic bootloader management:
+Supports all ESP32 variants with chip-specific bootloader offsets and automatic bootloader management. ESP32-S3, ESP32-C3, ESP32-C5, ESP32-C6, and ESP32-H2 chips with USB-JTAG/Serial support are automatically detected and use the appropriate reset method.
 
 | Chip      | Bootloader Offset | Bootloader Size | Notes                   |
 |-----------|-------------------|-----------------|-------------------------|

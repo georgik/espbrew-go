@@ -40,6 +40,7 @@ type Job struct {
 	DevicePath   string
 	DeviceNode   string
 	Offset       int
+	Erase        bool // Enable erase before flash
 	EraseAll     bool
 	EraseAddress uint32
 	EraseSize    uint32
@@ -66,10 +67,10 @@ func NewJobQueue() *JobQueue {
 }
 
 func (q *JobQueue) Enqueue(firmwarePath, devicePath string, offset int) *Job {
-	return q.EnqueueFlash(firmwarePath, devicePath, offset)
+	return q.EnqueueFlash(firmwarePath, devicePath, offset, false)
 }
 
-func (q *JobQueue) EnqueueFlash(firmwarePath, devicePath string, offset int) *Job {
+func (q *JobQueue) EnqueueFlash(firmwarePath, devicePath string, offset int, erase bool) *Job {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
@@ -79,6 +80,7 @@ func (q *JobQueue) EnqueueFlash(firmwarePath, devicePath string, offset int) *Jo
 		Firmware:   firmwarePath,
 		DevicePath: devicePath,
 		Offset:     offset,
+		Erase:      erase,
 		Status:     JobPending,
 		CreatedAt:  time.Now(),
 	}

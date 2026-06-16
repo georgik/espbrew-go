@@ -384,6 +384,10 @@ func (l *LeaderNode) EnqueueJob(firmwarePath, devicePath string) (*Job, error) {
 }
 
 func (l *LeaderNode) EnqueueJobWithOffset(firmwarePath, devicePath string, offset int) (*Job, error) {
+	return l.EnqueueJobWithOffsetAndErase(firmwarePath, devicePath, offset, false)
+}
+
+func (l *LeaderNode) EnqueueJobWithOffsetAndErase(firmwarePath, devicePath string, offset int, erase bool) (*Job, error) {
 	l.mu.RLock()
 	dev, exists := l.state.Devices[devicePath]
 	l.mu.RUnlock()
@@ -396,7 +400,7 @@ func (l *LeaderNode) EnqueueJobWithOffset(firmwarePath, devicePath string, offse
 		return nil, fmt.Errorf("device is disabled: %s", devicePath)
 	}
 
-	job := l.queue.Enqueue(firmwarePath, devicePath, offset)
+	job := l.queue.EnqueueFlash(firmwarePath, devicePath, offset, erase)
 
 	// Reserve device for this job
 	if !l.devices.Reserve(devicePath, job.ID) {

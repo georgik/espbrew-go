@@ -6,9 +6,9 @@ import (
 	"io"
 
 	"codeberg.org/georgik/espbrew-go/internal/chips"
+	"codeberg.org/georgik/espbrew-go/internal/espflash"
 	"codeberg.org/georgik/espbrew-go/internal/flash/virtual"
 	"github.com/rs/zerolog/log"
-	"tinygo.org/x/espflasher/pkg/espflasher"
 )
 
 type Flasher struct {
@@ -19,6 +19,9 @@ type FlasherOptions struct {
 	BaudRate      int
 	FlashBaudRate int
 	Compress      bool
+	Erase         bool // Enable erase before flash (default: false)
+	FastMode      bool // Enable fast connection mode (default: true)
+	SkipUnchanged bool // Skip flashing unchanged segments (default: false)
 }
 
 type FlashResult struct {
@@ -33,9 +36,17 @@ func NewFlasher(opts *FlasherOptions) *Flasher {
 			BaudRate:      115200,
 			FlashBaudRate: 460800,
 			Compress:      true,
+			Erase:         false,
+			FastMode:      true,
+			SkipUnchanged: false,
 		}
 	}
 	return &Flasher{opts: opts}
+}
+
+// SetErase updates the erase option for the flasher
+func (f *Flasher) SetErase(erase bool) {
+	f.opts.Erase = erase
 }
 
 type FlashRequest struct {
@@ -83,13 +94,17 @@ func (f *Flasher) Flash(ctx context.Context, req *FlashRequest) *FlashResult {
 
 		logger := &flashLogger{port: req.Port}
 
-		espOpts := espflasher.DefaultOptions()
+		espOpts := espflash.DefaultOptions()
 		espOpts.BaudRate = f.opts.BaudRate
 		espOpts.FlashBaudRate = f.opts.FlashBaudRate
 		espOpts.Compress = false // Disable compression to isolate issue
+		espOpts.Erase = f.opts.Erase
 		espOpts.Logger = logger
+		// Disable FastMode for USB CDC ports - they re-enumerate after reset
+		espOpts.FastMode = f.opts.FastMode && !isUSBPort(req.Port)
+		espOpts.SkipUnchanged = f.opts.SkipUnchanged
 
-		flasher, err := espflasher.New(req.Port, espOpts)
+		flasher, err := espflash.New(ctx, req.Port, espOpts)
 		if err != nil {
 			log.Error().Err(err).Str("port", req.Port).Msg("Failed to create flasher")
 			return &FlashResult{Success: false, Error: err}
@@ -132,7 +147,7 @@ func (f *Flasher) Flash(ctx context.Context, req *FlashRequest) *FlashResult {
 				}
 			} else {
 				// Raw binary part (bootloader, partition table)
-				imageParts := []espflasher.ImagePart{
+				imageParts := []espflash.ImagePart{
 					{Data: part.Data, Offset: part.Offset},
 				}
 				if err := flasher.FlashImages(imageParts, nil); err != nil {
@@ -153,13 +168,17 @@ func (f *Flasher) Flash(ctx context.Context, req *FlashRequest) *FlashResult {
 
 	logger := &flashLogger{port: req.Port}
 
-	espOpts := espflasher.DefaultOptions()
+	espOpts := espflash.DefaultOptions()
 	espOpts.BaudRate = f.opts.BaudRate
 	espOpts.FlashBaudRate = f.opts.FlashBaudRate
 	espOpts.Compress = f.opts.Compress
+	espOpts.Erase = f.opts.Erase
 	espOpts.Logger = logger
+	// Disable FastMode for USB CDC ports - they re-enumerate after reset
+	espOpts.FastMode = f.opts.FastMode && !isUSBPort(req.Port)
+	espOpts.SkipUnchanged = f.opts.SkipUnchanged
 
-	flasher, err := espflasher.New(req.Port, espOpts)
+	flasher, err := espflash.New(ctx, req.Port, espOpts)
 	if err != nil {
 		log.Error().Err(err).Str("port", req.Port).Msg("Failed to create flasher")
 		return &FlashResult{Success: false, Error: err}
@@ -174,7 +193,7 @@ func (f *Flasher) Flash(ctx context.Context, req *FlashRequest) *FlashResult {
 
 	log.Info().Int("bytes", len(firmware)).Msg("Starting flash")
 
-	var progressFunc espflasher.ProgressFunc
+	var progressFunc espflash.ProgressFunc
 	if req.Progress != nil {
 		progressFunc = func(current, total int) {
 			pct := 0
@@ -308,7 +327,7 @@ type flashLogger struct {
 }
 
 func (l *flashLogger) Logf(format string, args ...interface{}) {
-	log.Debug().Str("port", l.port).Msgf(format, args...)
+	log.Info().Str("port", l.port).Msgf(format, args...)
 }
 
 // Monitor opens a serial monitor for the device
@@ -338,14 +357,18 @@ func (f *Flasher) ReadFlash(ctx context.Context, req *ReadFlashRequest) *ReadFla
 	log.Info().Str("port", req.Port).Uint32("address", req.Address).Uint32("size", req.Size).Msg("Reading flash")
 
 	// Build flasher options
-	espOpts := espflasher.DefaultOptions()
+	espOpts := espflash.DefaultOptions()
 	espOpts.BaudRate = f.opts.BaudRate
 	espOpts.FlashBaudRate = f.opts.FlashBaudRate
 	espOpts.Compress = f.opts.Compress
+	espOpts.Erase = f.opts.Erase
 	espOpts.Logger = &flashLogger{port: req.Port}
+	// Disable FastMode for USB CDC ports - they re-enumerate after reset
+	espOpts.FastMode = f.opts.FastMode && !isUSBPort(req.Port)
+	espOpts.SkipUnchanged = f.opts.SkipUnchanged
 
 	// Open connection
-	flasher, err := espflasher.New(req.Port, espOpts)
+	flasher, err := espflash.New(ctx, req.Port, espOpts)
 	if err != nil {
 		return &ReadFlashResult{Success: false, Error: fmt.Errorf("connect: %w", err)}
 	}
@@ -391,14 +414,18 @@ func (f *Flasher) EraseFlash(ctx context.Context, req *EraseRequest) *EraseResul
 	}
 
 	// Build flasher options
-	espOpts := espflasher.DefaultOptions()
+	espOpts := espflash.DefaultOptions()
 	espOpts.BaudRate = f.opts.BaudRate
 	espOpts.FlashBaudRate = f.opts.FlashBaudRate
 	espOpts.Compress = f.opts.Compress
+	espOpts.Erase = f.opts.Erase
 	espOpts.Logger = &flashLogger{port: req.Port}
+	// Disable FastMode for USB CDC ports - they re-enumerate after reset
+	espOpts.FastMode = f.opts.FastMode && !isUSBPort(req.Port)
+	espOpts.SkipUnchanged = f.opts.SkipUnchanged
 
 	// Open connection
-	flasher, err := espflasher.New(req.Port, espOpts)
+	flasher, err := espflash.New(ctx, req.Port, espOpts)
 	if err != nil {
 		return &EraseResult{Success: false, Error: fmt.Errorf("connect: %w", err)}
 	}
@@ -516,4 +543,11 @@ func (f *Flasher) eraseVirtual(ctx context.Context, req *EraseRequest) *EraseRes
 		Success: true,
 		Bytes:   eraseSize,
 	}
+}
+
+// isUSBPort detects USB CDC ports that re-enumerate after reset.
+// These include /dev/ttyACM* (Linux USB CDC) and /dev/cu.usb* (macOS).
+// FastMode must be disabled for these ports to allow port reopen.
+func isUSBPort(port string) bool {
+	return len(port) > 11 && port[:11] == "/dev/ttyACM" || len(port) > 11 && port[:11] == "/dev/cu.usb"
 }

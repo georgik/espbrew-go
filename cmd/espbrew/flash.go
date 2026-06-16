@@ -32,6 +32,7 @@ var flashOpts struct {
 	flashMode       string
 	flashFreq       string
 	flashSize       string
+	erase           bool // Enable erase before flash (default: false)
 	eraseAll        bool
 	noCompress      bool
 	resetMode       string
@@ -67,6 +68,7 @@ func init() {
 	flashCmd.Flags().StringVar(&flashOpts.flashMode, "fm", "keep", "Flash mode (keep, qio, qout, dio, dout)")
 	flashCmd.Flags().StringVar(&flashOpts.flashFreq, "ff", "keep", "Flash frequency (keep, 80m, 40m, 26m, 20m)")
 	flashCmd.Flags().StringVar(&flashOpts.flashSize, "fs", "keep", "Flash size (keep, 1MB, 2MB, 4MB, 8MB, 16MB)")
+	flashCmd.Flags().BoolVar(&flashOpts.erase, "erase", false, "Enable erase before flash (default: false)")
 	flashCmd.Flags().BoolVar(&flashOpts.eraseAll, "erase-all", false, "Erase entire flash before writing")
 	flashCmd.Flags().BoolVar(&flashOpts.noCompress, "no-compress", false, "Disable compression")
 	flashCmd.Flags().StringVar(&flashOpts.resetMode, "reset", "default", "Reset mode (default, no-reset, usb-jtag, auto)")
@@ -117,11 +119,11 @@ func runFlashRemote(args []string) error {
 		if err == nil {
 			projType, detector := projectRegistry.Detect(cwd)
 			if projType != project.ProjectTypeNone {
-				log.Info().Str("type", string(projType)).Str("dir", cwd).Msg("Detected project")
+				log.Debug().Str("type", string(projType)).Str("dir", cwd).Msg("Detected project")
 
 				buildDir, err := detector.FindBuildDir(cwd)
 				if err == nil {
-					log.Info().Str("build_dir", buildDir).Msg("Found build directory")
+					log.Debug().Str("build_dir", buildDir).Msg("Found build directory")
 
 					artifacts, err := detector.GetArtifacts(buildDir)
 					if err == nil {
@@ -136,7 +138,7 @@ func runFlashRemote(args []string) error {
 							flashOpts.app = artifacts.App
 						}
 
-						log.Info().
+						log.Debug().
 							Str("bootloader", flashOpts.bootloader).
 							Str("partitions", flashOpts.partitions).
 							Str("app", flashOpts.app).
@@ -230,6 +232,7 @@ func runFlashRemote(args []string) error {
 		DevicePath: devicePath,
 		FileID:     uploadResp.FileID,
 		ClientID:   "espbrew-cli",
+		Erase:      flashOpts.erase,
 	}
 
 	flashResp, err := client.SubmitFlash(submitReq)
@@ -727,6 +730,7 @@ func runFlashRemoteMultiImage() error {
 			FileID:     uploadResp.FileID,
 			ClientID:   "espbrew-cli",
 			Offset:     img.offset,
+			Erase:      flashOpts.erase,
 		}
 
 		flashResp, err := client.SubmitFlash(submitReq)
@@ -744,10 +748,21 @@ func runFlashRemoteMultiImage() error {
 		}
 
 		completed := false
+		showedWaiting := false
 		err = progressClient.Stream(func(msg cluster.ProgressMessage) {
 			switch msg.Type {
+			case "init":
+				if !showedWaiting {
+					displayProgressBar(0, fmt.Sprintf("%s: pending", img.name))
+					showedWaiting = true
+				}
 			case "progress":
-				displayProgressBar(msg.Progress, fmt.Sprintf("%s: %s", img.name, msg.Status))
+				showedWaiting = true
+				if msg.Progress == 0 && msg.Status == "running" {
+					displayProgressBar(0, fmt.Sprintf("%s: preparing...", img.name))
+				} else {
+					displayProgressBar(msg.Progress, fmt.Sprintf("%s: running", img.name))
+				}
 			case "complete":
 				completed = true
 				if msg.Status == "completed" {
