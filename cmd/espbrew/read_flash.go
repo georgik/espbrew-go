@@ -41,7 +41,7 @@ Examples:
 
 	rootCmd.AddCommand(readCmd)
 
-	readCmd.Flags().StringVar(&readFlashCmd.clusterURL, "cluster", "", "Cluster URL for remote reading")
+	readCmd.Flags().StringVar(&readFlashCmd.clusterURL, "cluster", os.Getenv("ESPBREW_CLUSTER"), "Cluster URL for remote reading")
 	readCmd.Flags().StringVar(&readFlashCmd.device, "device", "", "Device path (required with cluster)")
 	readCmd.Flags().Uint32Var(&readFlashCmd.address, "address", 0x10000, "Flash address to read from")
 	readCmd.Flags().Uint32Var(&readFlashCmd.size, "size", 0x100000, "Number of bytes to read")

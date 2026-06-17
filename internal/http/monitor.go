@@ -98,6 +98,7 @@ func (s *MonitorServer) handleMonitorWebSocket(w http.ResponseWriter, r *http.Re
 
 	// Trigger reset after connection is established (if requested)
 	if resetRequested {
+		log.Info().Msg("Reset requested, sending control message")
 		// Small delay to ensure client is ready
 		time.Sleep(50 * time.Millisecond)
 		session.SendControl(&monitor.ControlMessage{Type: "reset"})
@@ -105,22 +106,56 @@ func (s *MonitorServer) handleMonitorWebSocket(w http.ResponseWriter, r *http.Re
 		conn.WriteJSON(map[string]interface{}{
 			"type": "reset_complete",
 		})
+		log.Info().Msg("Reset control sent to device")
 	}
 
-	// Stream data to client
+	// Stream data to client with batching
+	batch := make([]byte, 0, 4096)
+	batchTimer := time.NewTimer(10 * time.Millisecond)
+	batchTimer.Stop()
+
+	flushBatch := func() error {
+		if len(batch) == 0 {
+			return nil
+		}
+		log.Info().Int("bytes", len(batch)).Msg("WebSocket: sending batched data")
+		msg := map[string]interface{}{
+			"type": "data",
+			"data": base64.StdEncoding.EncodeToString(batch),
+		}
+		if err := conn.WriteJSON(msg); err != nil {
+			log.Error().Err(err).Msg("WebSocket write error")
+			return err
+		}
+		batch = batch[:0]
+		return nil
+	}
+
 	for {
 		select {
 		case data, ok := <-session.Data():
 			if !ok {
+				flushBatch()
 				return
 			}
-			log.Debug().Int("bytes", len(data)).Str("content", string(data)).Msg("Sending data to client")
-			msg := map[string]interface{}{
-				"type": "data",
-				"data": base64.StdEncoding.EncodeToString(data),
+			log.Info().Int("bytes", len(data)).Str("preview", string(data)).Msg("Received from serial port")
+
+			// Append to batch
+			batch = append(batch, data...)
+
+			// Flush if batch is large enough
+			if len(batch) >= 4096 {
+				if err := flushBatch(); err != nil {
+					return
+				}
+			} else {
+				// Reset timer to flush after delay if more data arrives
+				batchTimer.Reset(10 * time.Millisecond)
 			}
-			if err := conn.WriteJSON(msg); err != nil {
-				log.Debug().Err(err).Msg("WebSocket write error")
+
+		case <-batchTimer.C:
+			log.Info().Msg("Batch timer fired, flushing partial batch")
+			if err := flushBatch(); err != nil {
 				return
 			}
 
@@ -128,6 +163,7 @@ func (s *MonitorServer) handleMonitorWebSocket(w http.ResponseWriter, r *http.Re
 			if !ok {
 				return
 			}
+			flushBatch()
 			s.sendMonitorError(conn, err.Error())
 			return
 		}
@@ -156,6 +192,7 @@ func (s *MonitorServer) handleMonitorMessages(conn *websocket.Conn, session *mon
 
 		switch msgType {
 		case "reset":
+			log.Info().Msg("Reset requested via WebSocket message")
 			session.SendControl(&monitor.ControlMessage{Type: "reset"})
 			conn.WriteJSON(map[string]interface{}{
 				"type": "reset_complete",

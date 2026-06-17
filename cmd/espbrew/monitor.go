@@ -40,7 +40,7 @@ var monitorOpts struct {
 }
 
 func init() {
-	monitorCmd.Flags().StringVar(&monitorOpts.clusterURL, "cluster", "", "Cluster URL for remote monitoring")
+	monitorCmd.Flags().StringVar(&monitorOpts.clusterURL, "cluster", os.Getenv("ESPBREW_CLUSTER"), "Cluster URL for remote monitoring")
 	monitorCmd.Flags().StringVarP(&monitorOpts.port, "port", "p", "", "Serial port (auto-detect if empty)")
 	monitorCmd.Flags().IntVar(&monitorOpts.baud, "baud", 115200, "Baud rate")
 	monitorCmd.Flags().StringVar(&monitorOpts.exitOn, "exit-on", "", "Exit when string found (success)")
@@ -147,11 +147,9 @@ func runMonitorRemoteStream(monitorClient *cluster.MonitorClient) error {
 		}
 	}()
 
-	// stdin reader for reset command
-	var stdinBuf []byte
+	// Set up terminal for raw mode
 	var oldState *term.State
 	if !monitorOpts.noRaw {
-		stdinBuf = make([]byte, 1)
 		var err error
 		oldState, err = term.MakeRaw(int(os.Stdin.Fd()))
 		if err != nil {
@@ -167,9 +165,34 @@ func runMonitorRemoteStream(monitorClient *cluster.MonitorClient) error {
 		timeoutCh = time.After(time.Duration(monitorOpts.duration) * time.Second)
 	}
 
+	// stdin reader goroutine - reads keyboard input without blocking select
+	keyCh := make(chan byte, 1)
+	stopStdinReader := make(chan struct{})
+	if !monitorOpts.noRaw {
+		go func() {
+			stdinBuf := make([]byte, 1)
+			for {
+				select {
+				case <-stopStdinReader:
+					return
+				default:
+					n, err := os.Stdin.Read(stdinBuf)
+					if n > 0 {
+						keyCh <- stdinBuf[0]
+					}
+					if err != nil {
+						return
+					}
+				}
+			}
+		}()
+	}
+
 	for {
 		select {
 		case exit := <-exitCh:
+			// Stop stdin reader before restoring terminal
+			close(stopStdinReader)
 			// Restore terminal before printing
 			if oldState != nil {
 				term.Restore(int(os.Stdin.Fd()), oldState)
@@ -182,6 +205,8 @@ func runMonitorRemoteStream(monitorClient *cluster.MonitorClient) error {
 			return fmt.Errorf("monitor failed: %s", exit.message)
 
 		case <-timeoutCh:
+			// Stop stdin reader before restoring terminal
+			close(stopStdinReader)
 			// Restore terminal before printing
 			if oldState != nil {
 				term.Restore(int(os.Stdin.Fd()), oldState)
@@ -207,21 +232,15 @@ func runMonitorRemoteStream(monitorClient *cluster.MonitorClient) error {
 				exitCh <- monitorExit{success: true, message: fmt.Sprintf("Success pattern matched: %s", monitorOpts.exitOn)}
 			}
 
-		default:
-			if !monitorOpts.noRaw {
-				n, _ := os.Stdin.Read(stdinBuf)
-				if n > 0 {
-					c := stdinBuf[0]
-					if c == 18 { // CTRL+R
-						fmt.Print("\r\n[Resetting device]\r\n")
-						if err := monitorClient.Reset(); err != nil {
-							log.Warn().Err(err).Msg("Reset failed")
-						}
-						fmt.Print("---\r\n")
-					} else if c == 3 { // CTRL+C
-						exitCh <- monitorExit{success: true, message: "Exiting..."}
-					}
+		case c := <-keyCh:
+			if c == 18 { // CTRL+R
+				fmt.Print("\r\n[Resetting device]\r\n")
+				if err := monitorClient.Reset(); err != nil {
+					log.Warn().Err(err).Msg("Reset failed")
 				}
+				fmt.Print("---\r\n")
+			} else if c == 3 { // CTRL+C
+				exitCh <- monitorExit{success: true, message: "Exiting..."}
 			}
 		}
 	}
@@ -333,9 +352,34 @@ func runMonitor(portName string, baud int) error {
 		timeoutCh = time.After(time.Duration(monitorOpts.duration) * time.Second)
 	}
 
+	// stdin reader goroutine - reads keyboard input without blocking select
+	keyCh := make(chan byte, 1)
+	stopStdinReader := make(chan struct{})
+	if !monitorOpts.noRaw {
+		go func() {
+			stdinBuf := make([]byte, 1)
+			for {
+				select {
+				case <-stopStdinReader:
+					return
+				default:
+					n, err := os.Stdin.Read(stdinBuf)
+					if n > 0 {
+						keyCh <- stdinBuf[0]
+					}
+					if err != nil {
+						return
+					}
+				}
+			}
+		}()
+	}
+
 	for {
 		select {
 		case exit := <-exitCh:
+			// Stop stdin reader before restoring terminal
+			close(stopStdinReader)
 			// Restore terminal before printing
 			if oldState != nil {
 				term.Restore(int(os.Stdin.Fd()), oldState)

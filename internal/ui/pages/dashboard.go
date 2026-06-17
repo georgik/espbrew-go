@@ -29,6 +29,10 @@ func renderDashboardContent() *dom.Element {
 	header.SetTextContent("Dashboard")
 	container.Append(header)
 
+	// Mode switcher
+	modeCard := renderModeSwitcher()
+	container.Append(modeCard)
+
 	// Stats cards
 	statsRow := renderStatsCards()
 	container.Append(statsRow)
@@ -437,4 +441,202 @@ func formatTimestamp(ts int64) string {
 	}
 	// In full implementation, use proper date formatting
 	return "Recently"
+}
+
+func renderModeSwitcher() *dom.Element {
+	doc := dom.GlobalDocument()
+	content := doc.CreateElement("div")
+	content.SetID("mode-switcher-content")
+
+	// Loading state
+	loading := doc.CreateElement("div")
+	loading.SetClass("loading")
+	loading.SetTextContent("Loading mode...")
+	content.Append(loading)
+
+	// Fetch current mode asynchronously
+	js.Global().Get("setTimeout").Invoke(js.FuncOf(func(this js.Value, args []js.Value) interface{} {
+		api.GetCurrentMode(func(mode api.OperationMode, err error) {
+			loading.Remove()
+			if err == nil {
+				renderModeSwitcherContent(content, mode)
+			} else {
+				content.SetTextContent("Error loading mode")
+			}
+		})
+		return nil
+	}), 0)
+
+	card := components.NewCard(components.CardConfig{
+		Title:   "Operational Mode",
+		Content: content,
+	})
+	return card.Element
+}
+
+func renderModeSwitcherContent(container *dom.Element, currentMode api.OperationMode) {
+	container.RemoveChildren()
+	doc := dom.GlobalDocument()
+
+	// Current mode display
+	modeDisplay := doc.CreateElement("div")
+	modeDisplay.SetStyle("display", "flex")
+	modeDisplay.SetStyle("align-items", "center")
+	modeDisplay.SetStyle("justify-content", "space-between")
+	modeDisplay.SetStyle("margin-bottom", "12px")
+
+	modeInfo := doc.CreateElement("div")
+	modeInfo.SetStyle("display", "flex")
+	modeDisplay.SetStyle("align-items", "center")
+	modeDisplay.SetStyle("gap", "12px")
+
+	badge := api.ModeBadge(currentMode)
+	modeInfo.Append(badge)
+
+	desc := doc.CreateElement("div")
+	desc.SetStyle("font-size", "13px")
+	desc.SetStyle("color", "#aaa")
+	desc.SetTextContent(api.ModeDescription(currentMode))
+	modeInfo.Append(desc)
+
+	modeDisplay.Append(modeInfo)
+	container.Append(modeDisplay)
+
+	// Mode buttons
+	buttons := doc.CreateElement("div")
+	buttons.SetStyle("display", "flex")
+	buttons.SetStyle("gap", "8px")
+
+	// Discovery button
+	discoveryBtn := components.NewButton(components.ButtonConfig{
+		Text:    "Discovery",
+		Class:   buttonClassForMode(currentMode, api.ModeDiscovery),
+		OnClick: func(_ *dom.Event) { setMode(api.ModeDiscovery, container) },
+	})
+	if currentMode == api.ModeDiscovery {
+		discoveryBtn.Element.SetAttribute("disabled", "true")
+	}
+	buttons.Append(discoveryBtn.Element)
+
+	// Operational button
+	operationalBtn := components.NewButton(components.ButtonConfig{
+		Text:    "Operational",
+		Class:   buttonClassForMode(currentMode, api.ModeOperational),
+		OnClick: func(_ *dom.Event) { setMode(api.ModeOperational, container) },
+	})
+	if currentMode == api.ModeOperational {
+		operationalBtn.Element.SetAttribute("disabled", "true")
+	}
+	buttons.Append(operationalBtn.Element)
+
+	container.Append(buttons)
+
+	// Refresh button (only in discovery mode)
+	if currentMode == api.ModeDiscovery {
+		divider := doc.CreateElement("div")
+		divider.SetStyle("height", "1px")
+		divider.SetStyle("background-color", "rgba(255,255,255,0.1)")
+		divider.SetStyle("margin", "12px 0")
+		container.Append(divider)
+
+		refreshBtn := components.NewButton(components.ButtonConfig{
+			Text:    "Refresh Device Scan",
+			Class:   "btn-secondary",
+			OnClick: func(_ *dom.Event) { refreshDiscovery() },
+		})
+		refreshBtn.Element.SetStyle("width", "100%")
+		container.Append(refreshBtn.Element)
+	}
+}
+
+func buttonClassForMode(currentMode, buttonMode api.OperationMode) string {
+	if currentMode == buttonMode {
+		return "btn-primary"
+	}
+	return "btn-secondary"
+}
+
+func setMode(mode api.OperationMode, container *dom.Element) {
+	// Show loading state
+	container.SetAttribute("data-loading", "true")
+
+	api.SetMode(mode, func(success bool, err error) {
+		container.RemoveAttribute("data-loading")
+		if err != nil {
+			showModeError(err.Error())
+			return
+		}
+		if success {
+			renderModeSwitcherContent(container, mode)
+		}
+	})
+}
+
+func refreshDiscovery() {
+	api.RefreshDiscovery(func(success bool, err error) {
+		if err != nil {
+			showModeError("Refresh failed: " + err.Error())
+			return
+		}
+		// Refresh could show a success indicator
+		showModeSuccess("Device scan refreshed")
+	})
+}
+
+func showModeError(message string) {
+	doc := dom.GlobalDocument()
+	// Remove existing error if any
+	if existing := doc.GetElementByID("mode-error-toast"); existing != nil {
+		existing.Remove()
+	}
+
+	toast := doc.CreateElement("div")
+	toast.SetID("mode-error-toast")
+	toast.SetStyle("position", "fixed")
+	toast.SetStyle("bottom", "16px")
+	toast.SetStyle("right", "16px")
+	toast.SetStyle("padding", "12px 16px")
+	toast.SetStyle("background-color", "rgba(255, 82, 82, 0.9)")
+	toast.SetStyle("color", "#fff")
+	toast.SetStyle("border-radius", "4px")
+	toast.SetStyle("font-size", "13px")
+	toast.SetStyle("z-index", "1000")
+	toast.SetTextContent(message)
+
+	doc.GetBody().Append(toast)
+
+	// Auto-remove after 3 seconds
+	js.Global().Get("setTimeout").Invoke(js.FuncOf(func(this js.Value, args []js.Value) interface{} {
+		toast.Remove()
+		return nil
+	}), 3000)
+}
+
+func showModeSuccess(message string) {
+	doc := dom.GlobalDocument()
+	// Remove existing success if any
+	if existing := doc.GetElementByID("mode-success-toast"); existing != nil {
+		existing.Remove()
+	}
+
+	toast := doc.CreateElement("div")
+	toast.SetID("mode-success-toast")
+	toast.SetStyle("position", "fixed")
+	toast.SetStyle("bottom", "16px")
+	toast.SetStyle("right", "16px")
+	toast.SetStyle("padding", "12px 16px")
+	toast.SetStyle("background-color", "rgba(76, 209, 55, 0.9)")
+	toast.SetStyle("color", "#fff")
+	toast.SetStyle("border-radius", "4px")
+	toast.SetStyle("font-size", "13px")
+	toast.SetStyle("z-index", "1000")
+	toast.SetTextContent(message)
+
+	doc.GetBody().Append(toast)
+
+	// Auto-remove after 3 seconds
+	js.Global().Get("setTimeout").Invoke(js.FuncOf(func(this js.Value, args []js.Value) interface{} {
+		toast.Remove()
+		return nil
+	}), 3000)
 }

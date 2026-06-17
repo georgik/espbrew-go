@@ -21,32 +21,42 @@ import (
 
 // LeaderNode coordinates the cluster, discovers local devices, and aggregates state from peers.
 type LeaderNode struct {
-	id       string
-	config   *LeaderConfig
-	state    *ClusterState
-	queue    *JobQueue
-	executor *JobExecutor
-	devices  *DeviceRegistry
-	store    *persistence.Store
-	mu       sync.RWMutex
-	ctx      context.Context
-	cancel   context.CancelFunc
-	wg       sync.WaitGroup
-	mdns     *mDNSService
-	watcher  *device.Watcher
+	id         string
+	config     *LeaderConfig
+	state      *ClusterState
+	queue      *JobQueue
+	executor   *JobExecutor
+	devices    *DeviceRegistry
+	store      *persistence.Store
+	mu         sync.RWMutex
+	ctx        context.Context
+	cancel     context.CancelFunc
+	wg         sync.WaitGroup
+	mdns       *mDNSService
+	watcher    *device.Watcher
+	mode       protocol.OperationMode
+	modeTimer  *time.Timer
+	modeCancel context.CancelFunc
 }
 
 type LeaderConfig struct {
 	HeartbeatInterval  time.Duration
 	NodeTimeout        time.Duration
 	HTTPPort           int
-	DisablemDNS        bool // For testing
-	DisableWatcher     bool // For testing
-	DisableMaintenance bool // For testing - skips maintenance loop
-	DisableVirtual     bool // For testing - skips virtual device registration
+	DisablemDNS        bool          // For testing
+	DisableWatcher     bool          // For testing
+	DisableMaintenance bool          // For testing - skips maintenance loop
+	DisableVirtual     bool          // For testing - skips virtual device registration
+	DiscoveryDuration  time.Duration // How long to stay in discovery mode (default 30s)
+	InitialMode        string        // Starting mode (default "discovery")
 }
 
 func NewLeaderNode(id string, cfg *LeaderConfig, store *persistence.Store) *LeaderNode {
+	initialMode := protocol.ModeDiscovery
+	if cfg.InitialMode == "operational" {
+		initialMode = protocol.ModeOperational
+	}
+
 	return &LeaderNode{
 		id:      id,
 		config:  cfg,
@@ -54,6 +64,7 @@ func NewLeaderNode(id string, cfg *LeaderConfig, store *persistence.Store) *Lead
 		queue:   NewJobQueue(),
 		devices: NewDeviceRegistry(),
 		store:   store,
+		mode:    initialMode,
 	}
 }
 
@@ -102,6 +113,27 @@ func (l *LeaderNode) Start(ctx context.Context) error {
 
 	// Register virtual devices
 	l.registerVirtualDevices()
+
+	// Initialize operational mode
+	l.mu.Lock()
+	l.state.Nodes[l.id] = &protocol.NodeInfo{
+		ID:       l.id,
+		Role:     "leader",
+		Mode:     l.mode,
+		LastSeen: time.Now(),
+	}
+	l.mu.Unlock()
+
+	// Start discovery timer if in discovery mode
+	if l.mode == protocol.ModeDiscovery {
+		duration := l.config.DiscoveryDuration
+		if duration == 0 {
+			duration = 30 * time.Second // Default 30s
+		}
+		l.startDiscoveryTimer(duration)
+	}
+
+	log.Info().Str("mode", string(l.mode)).Msg("Leader node operational mode set")
 
 	return nil
 }
@@ -388,6 +420,11 @@ func (l *LeaderNode) EnqueueJobWithOffset(firmwarePath, devicePath string, offse
 }
 
 func (l *LeaderNode) EnqueueJobWithOffsetAndErase(firmwarePath, devicePath string, offset int, erase bool) (*Job, error) {
+	// Check operational mode - flashing not allowed in discovery mode
+	if l.GetMode() == protocol.ModeDiscovery {
+		return nil, fmt.Errorf("flashing not allowed in discovery mode - switch to operational mode first")
+	}
+
 	l.mu.RLock()
 	dev, exists := l.state.Devices[devicePath]
 	l.mu.RUnlock()
@@ -418,6 +455,11 @@ func (l *LeaderNode) EnqueueJobWithOffsetAndErase(firmwarePath, devicePath strin
 }
 
 func (l *LeaderNode) EnqueueEraseJob(devicePath string, eraseAll bool, address, size uint32) (*Job, error) {
+	// Check operational mode - flashing not allowed in discovery mode
+	if l.GetMode() == protocol.ModeDiscovery {
+		return nil, fmt.Errorf("flashing not allowed in discovery mode - switch to operational mode first")
+	}
+
 	l.mu.RLock()
 	dev, exists := l.state.Devices[devicePath]
 	l.mu.RUnlock()
@@ -890,6 +932,10 @@ func (l *LeaderNode) cleanupStaleNodes() {
 	// Collect stale node IDs first
 	var staleNodeIDs []string
 	for id, node := range l.state.Nodes {
+		// Skip the leader node itself - it should never be cleaned up
+		if id == l.id {
+			continue
+		}
 		if now.Sub(node.LastSeen) > l.config.NodeTimeout {
 			log.Warn().Str("node_id", id).Msg("Node timed out")
 			staleNodeIDs = append(staleNodeIDs, id)
@@ -1364,4 +1410,87 @@ func (l *LeaderNode) StoreJobFlashHashes(jobID, deviceID string, regions []flash
 	}
 
 	return l.store.SaveFlashHashes(hashes)
+}
+
+// GetMode returns the current operational mode
+func (l *LeaderNode) GetMode() protocol.OperationMode {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	return l.mode
+}
+
+// SetMode sets the operational mode and updates discovery state
+func (l *LeaderNode) SetMode(mode protocol.OperationMode) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	if l.mode == mode {
+		return nil // Already in this mode
+	}
+
+	log.Info().Str("mode", string(mode)).Str("node_id", l.id).Msg("Switching operational mode")
+
+	oldMode := l.mode
+	l.mode = mode
+
+	// Stop existing mode timer if running
+	if l.modeTimer != nil {
+		l.modeTimer.Stop()
+		l.modeTimer = nil
+	}
+	if l.modeCancel != nil {
+		l.modeCancel()
+		l.modeCancel = nil
+	}
+
+	switch mode {
+	case protocol.ModeDiscovery:
+		// Enable discovery
+		if l.watcher != nil {
+			l.watcher.Resume()
+		}
+		camera.GetRegistry().Resume()
+
+		// Set timer to auto-switch to operational mode
+		duration := l.config.DiscoveryDuration
+		if duration == 0 {
+			duration = 30 * time.Second // Default 30s
+		}
+		l.startDiscoveryTimer(duration)
+
+	case protocol.ModeOperational:
+		// Disable discovery
+		if l.watcher != nil {
+			l.watcher.Pause()
+		}
+		camera.GetRegistry().Pause()
+
+	default:
+		log.Warn().Str("mode", string(mode)).Msg("Unknown mode")
+		l.mode = oldMode // Revert
+		return fmt.Errorf("unknown mode: %s", mode)
+	}
+
+	// Update node info in state
+	l.state.Nodes[l.id].Mode = mode
+
+	return nil
+}
+
+// startDiscoveryTimer starts the timer to auto-switch from discovery to operational mode
+func (l *LeaderNode) startDiscoveryTimer(duration time.Duration) {
+	ctx, cancel := context.WithCancel(l.ctx)
+	l.modeCancel = cancel
+
+	l.modeTimer = time.AfterFunc(duration, func() {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+			log.Info().Dur("duration", duration).Msg("Discovery duration expired, switching to operational mode")
+			l.SetMode(protocol.ModeOperational)
+		}
+	})
+
+	log.Info().Dur("duration", duration).Msg("Discovery timer started")
 }

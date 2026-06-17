@@ -221,3 +221,37 @@ type CameraSettingsRequest struct {
 	AutoFocus        bool   `json:"auto_focus,omitempty"`
 	AutoWhiteBalance bool   `json:"auto_white_balance,omitempty"`
 }
+
+// OperationMode represents the operational state of the cluster
+type OperationMode string
+
+const (
+	ModeDiscovery   OperationMode = "discovery"
+	ModeOperational OperationMode = "operational"
+)
+
+// ModeResponse represents the current operational mode
+type ModeResponse struct {
+	Mode OperationMode `json:"mode"`
+}
+
+// ModeRequest represents a request to set the operational mode
+type ModeRequest struct {
+	Mode OperationMode `json:"mode"`
+}
+
+// StatusResponse represents cluster status
+type StatusResponse struct {
+	Nodes       []NodeStatus  `json:"nodes"`
+	Mode        OperationMode `json:"mode,omitempty"`
+	DeviceCount int           `json:"device_count,omitempty"`
+	CameraCount int           `json:"camera_count,omitempty"`
+}
+
+// NodeStatus represents a node in the status response
+type NodeStatus struct {
+	ID      string        `json:"id"`
+	Address string        `json:"address"`
+	Role    string        `json:"role"`
+	Mode    OperationMode `json:"mode,omitempty"`
+}

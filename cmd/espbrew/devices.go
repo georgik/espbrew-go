@@ -23,7 +23,7 @@ var devicesOpts struct {
 }
 
 func init() {
-	devicesCmd.Flags().StringVar(&devicesOpts.clusterURL, "cluster", "", "Cluster URL for remote devices")
+	devicesCmd.Flags().StringVar(&devicesOpts.clusterURL, "cluster", os.Getenv("ESPBREW_CLUSTER"), "Cluster URL for remote devices")
 	devicesCmd.Flags().BoolVar(&devicesOpts.json, "json", false, "Output as JSON")
 	devicesCmd.Flags().BoolVar(&devicesOpts.espOnly, "esp", false, "Show only ESP devices")
 

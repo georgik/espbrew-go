@@ -31,19 +31,29 @@ type PeerNode struct {
 	flasher    *flash.Flasher
 	cameras    *camera.Discoverer
 	registered bool // Tracks successful registration with leader
+	mode       protocol.OperationMode
+	modeTimer  *time.Timer
+	modeCancel context.CancelFunc
 }
 
 type PeerConfig struct {
 	HeartbeatInterval time.Duration
 	HTTPPort          int
-	DisablemDNS       bool // For testing
-	DisableWatcher    bool // For testing
+	DisablemDNS       bool          // For testing
+	DisableWatcher    bool          // For testing
+	DiscoveryDuration time.Duration // How long to stay in discovery mode (default 10s)
+	InitialMode       string        // Starting mode (default "discovery")
 }
 
 func NewPeerNode(id, leaderURL string, cfg *PeerConfig) *PeerNode {
 	// Ensure leaderURL has a scheme
 	if leaderURL != "" && !startsWithScheme(leaderURL) {
 		leaderURL = "http://" + leaderURL
+	}
+
+	initialMode := protocol.ModeDiscovery
+	if cfg.InitialMode == "operational" {
+		initialMode = protocol.ModeOperational
 	}
 
 	return &PeerNode{
@@ -53,6 +63,7 @@ func NewPeerNode(id, leaderURL string, cfg *PeerConfig) *PeerNode {
 		state:     NewClusterState(),
 		flasher:   flash.NewFlasher(nil),
 		cameras:   camera.NewDiscoverer(),
+		mode:      initialMode,
 	}
 }
 
@@ -85,6 +96,17 @@ func (p *PeerNode) Start(ctx context.Context) error {
 
 	p.wg.Add(1)
 	go p.heartbeatLoop()
+
+	// Start discovery timer if in discovery mode
+	if p.mode == protocol.ModeDiscovery {
+		duration := p.config.DiscoveryDuration
+		if duration == 0 {
+			duration = 10 * time.Second // Default 10s
+		}
+		p.startDiscoveryTimer(duration)
+	}
+
+	log.Info().Str("mode", string(p.mode)).Msg("Peer node operational mode set")
 
 	return nil
 }
@@ -338,4 +360,82 @@ func (p *PeerNode) discoverCameras() {
 	}
 
 	log.Info().Int("count", len(cameras)).Msg("Cameras discovered")
+}
+
+// GetMode returns the current operational mode
+func (p *PeerNode) GetMode() protocol.OperationMode {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.mode
+}
+
+// SetMode sets the operational mode and updates discovery state
+func (p *PeerNode) SetMode(mode protocol.OperationMode) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if p.mode == mode {
+		return nil // Already in this mode
+	}
+
+	log.Info().Str("mode", string(mode)).Str("node_id", p.id).Msg("Switching operational mode")
+
+	oldMode := p.mode
+	p.mode = mode
+
+	// Stop existing mode timer if running
+	if p.modeTimer != nil {
+		p.modeTimer.Stop()
+		p.modeTimer = nil
+	}
+	if p.modeCancel != nil {
+		p.modeCancel()
+		p.modeCancel = nil
+	}
+
+	switch mode {
+	case protocol.ModeDiscovery:
+		// Enable discovery
+		if p.watcher != nil {
+			p.watcher.Resume()
+		}
+
+		// Set timer to auto-switch to operational mode
+		duration := p.config.DiscoveryDuration
+		if duration == 0 {
+			duration = 10 * time.Second // Default 10s
+		}
+		p.startDiscoveryTimer(duration)
+
+	case protocol.ModeOperational:
+		// Disable discovery
+		if p.watcher != nil {
+			p.watcher.Pause()
+		}
+
+	default:
+		log.Warn().Str("mode", string(mode)).Msg("Unknown mode")
+		p.mode = oldMode // Revert
+		return fmt.Errorf("unknown mode: %s", mode)
+	}
+
+	return nil
+}
+
+// startDiscoveryTimer starts the timer to auto-switch from discovery to operational mode
+func (p *PeerNode) startDiscoveryTimer(duration time.Duration) {
+	ctx, cancel := context.WithCancel(p.ctx)
+	p.modeCancel = cancel
+
+	p.modeTimer = time.AfterFunc(duration, func() {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+			log.Info().Dur("duration", duration).Msg("Discovery duration expired, switching to operational mode")
+			p.SetMode(protocol.ModeOperational)
+		}
+	})
+
+	log.Info().Dur("duration", duration).Msg("Discovery timer started")
 }

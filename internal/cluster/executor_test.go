@@ -71,6 +71,7 @@ func TestLeaderNode_JobExecutor(t *testing.T) {
 		DisableMaintenance: true,
 		HeartbeatInterval:  time.Second,
 		NodeTimeout:        5 * time.Second,
+		InitialMode:        "operational", // Start in operational mode for job tests
 	}, store)
 
 	ctx := context.Background()

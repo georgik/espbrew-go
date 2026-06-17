@@ -73,11 +73,13 @@ func TestLeaderNodeTimeoutCleanup(t *testing.T) {
 	}
 	leader.RegisterNode(node)
 
-	assert.Equal(t, 1, len(leader.State().Nodes))
+	// Leader node + 1 registered node = 2 total
+	assert.Equal(t, 2, len(leader.State().Nodes))
 
 	time.Sleep(300 * time.Millisecond)
 
-	assert.Equal(t, 0, len(leader.State().Nodes), "stale node should be cleaned up")
+	// Only leader node should remain (stale node cleaned up)
+	assert.Equal(t, 1, len(leader.State().Nodes), "stale node should be cleaned up")
 }
 
 func TestPeerNodeHeartbeat(t *testing.T) {

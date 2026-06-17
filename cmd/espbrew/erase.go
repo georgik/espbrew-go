@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
 	"time"
 
 	"codeberg.org/georgik/espbrew-go/internal/cluster"
@@ -55,7 +56,7 @@ var eraseOpts struct {
 }
 
 func init() {
-	eraseCmd.Flags().StringVar(&eraseOpts.clusterURL, "cluster", "", "Cluster URL for remote erase")
+	eraseCmd.Flags().StringVar(&eraseOpts.clusterURL, "cluster", os.Getenv("ESPBREW_CLUSTER"), "Cluster URL for remote erase")
 	eraseCmd.Flags().StringVar(&eraseOpts.deviceID, "device", "", "Device selection by ID, alias, or MAC (from inventory)")
 	eraseCmd.Flags().StringVarP(&eraseOpts.port, "port", "p", "", "Serial port (auto-detect if empty)")
 	eraseCmd.Flags().StringVar(&eraseOpts.address, "address", "0", "Start address for region erase (hex format)")

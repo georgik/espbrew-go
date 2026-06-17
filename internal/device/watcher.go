@@ -21,6 +21,7 @@ type Watcher struct {
 	platform platformWatcher
 	mu       sync.RWMutex
 	seen     map[string]*DeviceInfo
+	paused   bool
 }
 
 func NewWatcher() *Watcher {
@@ -60,6 +61,29 @@ func (w *Watcher) sendEvent(event DeviceEvent) {
 	default:
 		log.Warn().Str("path", event.Path).Msg("Event channel full, dropping")
 	}
+}
+
+// Pause pauses the device watcher (stops generating events)
+func (w *Watcher) Pause() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.paused = true
+	log.Info().Msg("Device watcher paused")
+}
+
+// Resume resumes the device watcher
+func (w *Watcher) Resume() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.paused = false
+	log.Info().Msg("Device watcher resumed")
+}
+
+// IsPaused returns whether the watcher is paused
+func (w *Watcher) IsPaused() bool {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	return w.paused
 }
 
 type pollingWatcher struct {
@@ -106,6 +130,11 @@ func (pw *pollingWatcher) run() {
 }
 
 func (pw *pollingWatcher) scan() {
+	// Skip scanning if watcher is paused
+	if pw.watcher.IsPaused() {
+		return
+	}
+
 	// Scan for serial ports
 	ports, err := pw.scanner.Scan()
 	if err != nil {

@@ -17,6 +17,7 @@ type Registry struct {
 	cancel     context.CancelFunc
 	wg         sync.WaitGroup
 	interval   time.Duration
+	paused     bool
 }
 
 var (
@@ -82,6 +83,11 @@ func (r *Registry) watch() {
 
 // scan updates cached camera list
 func (r *Registry) scan() {
+	// Skip scanning if registry is paused
+	if r.IsPaused() {
+		return
+	}
+
 	cameras, err := r.discoverer.Discover()
 	if err != nil {
 		log.Debug().Err(err).Msg("Camera scan failed")
@@ -177,4 +183,27 @@ func (r *Registry) GetNameByID(id string) string {
 // Refresh forces an immediate re-scan
 func (r *Registry) Refresh() {
 	r.scan()
+}
+
+// Pause pauses the camera registry (stops scanning)
+func (r *Registry) Pause() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.paused = true
+	log.Info().Msg("Camera registry paused")
+}
+
+// Resume resumes the camera registry
+func (r *Registry) Resume() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.paused = false
+	log.Info().Msg("Camera registry resumed")
+}
+
+// IsPaused returns whether the registry is paused
+func (r *Registry) IsPaused() bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.paused
 }

@@ -103,6 +103,8 @@ func (m *mDNSService) announce() {
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 
+	announced := false
+
 	info := []string{
 		fmt.Sprintf("node_id=%s", m.nodeID),
 		fmt.Sprintf("role=%s", m.role),
@@ -143,8 +145,11 @@ func (m *mDNSService) announce() {
 			return
 		}
 
-		log.Info().Str("ip", ip.String()).Int("port", m.httpPort).
-			Msg("mDNS announcement sent")
+		if !announced {
+			log.Info().Str("ip", ip.String()).Int("port", m.httpPort).
+				Msg("mDNS announcement sent")
+			announced = true
+		}
 
 		// Announce once, then wait for ticker
 		<-time.After(1 * time.Second)

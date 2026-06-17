@@ -383,13 +383,13 @@ func appendMonitorOutput(data string) {
 		placeholder.Remove()
 	}
 
-	// Append data
-	dataElem := dom.GlobalDocument().CreateElement("span")
-	dataElem.SetTextContent(data)
-	monitorOutput.Append(dataElem)
+	// Get current content and append new data (more efficient than creating many spans)
+	currentContent := monitorOutput.GetTextContent()
+	newContent := currentContent + data
+	monitorOutput.SetTextContent(newContent)
 
-	// Auto-scroll to bottom
-	monitorOutput.Value().Set("scrollTop", monitorOutput.Value().Get("scrollHeight"))
+	// Force browser reflow and scroll immediately
+	monitorOutput.Value().Call("scrollIntoView", map[string]interface{}{"block": "end", "behavior": "instant"})
 }
 
 func showMonitorConnected() {

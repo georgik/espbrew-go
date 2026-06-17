@@ -74,6 +74,7 @@ func TestVirtualDeviceFlashJob(t *testing.T) {
 		DisablemDNS:        true,
 		DisableWatcher:     true,
 		DisableMaintenance: true,
+		InitialMode:        "operational", // Start in operational mode for job tests
 	}
 
 	store, err := persistence.Open(persistence.DefaultConfig(t.TempDir() + "/test.db"))

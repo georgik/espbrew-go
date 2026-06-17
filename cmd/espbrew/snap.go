@@ -44,7 +44,7 @@ var snapOpts struct {
 }
 
 func init() {
-	snapCmd.Flags().StringVar(&snapOpts.clusterURL, "cluster", "", "Cluster URL for remote capture")
+	snapCmd.Flags().StringVar(&snapOpts.clusterURL, "cluster", os.Getenv("ESPBREW_CLUSTER"), "Cluster URL for remote capture")
 	snapCmd.Flags().StringVar(&snapOpts.deviceID, "device", "", "Device selection by ID, alias, or MAC (from inventory)")
 	snapCmd.Flags().StringVarP(&snapOpts.port, "port", "p", "", "Serial port (auto-detect if empty)")
 	snapCmd.Flags().StringVarP(&snapOpts.firmware, "firmware", "f", "", "Firmware .bin file to flash before capture")
@@ -57,7 +57,7 @@ func init() {
 	snapCmd.Flags().BoolVar(&snapOpts.noCapture, "no-capture", false, "Skip image capture (flash only)")
 	snapCmd.Flags().BoolVar(&snapOpts.noMonitor, "no-monitor", false, "Skip serial monitor after flash")
 	snapCmd.Flags().StringVar(&snapOpts.saveDir, "save-dir", "", "Directory to save captured images")
-	snapCmd.Flags().StringVar(&snapOpts.leader, "leader", "", "Leader address for cluster mode")
+	snapCmd.Flags().StringVar(&snapOpts.leader, "leader", os.Getenv("ESPBREW_LEADER"), "Leader address for cluster mode")
 	snapCmd.Flags().StringVar(&snapOpts.jobID, "job-id", "", "Job ID for resuming operations")
 	snapCmd.Flags().BoolVar(&snapOpts.displayPreset, "display-preset", false, "Apply display photography preset (Linux only)")
 

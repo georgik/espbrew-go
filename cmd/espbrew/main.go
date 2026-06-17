@@ -51,7 +51,7 @@ func init() {
 	clusterCmd.Flags().StringVarP(&cfg.role, "role", "r", "standalone", "Node role: leader, peer, standalone")
 	clusterCmd.Flags().StringVar(&cfg.bindAddr, "bind", "0.0.0.0", "Bind address")
 	clusterCmd.Flags().IntVarP(&cfg.httpPort, "port", "p", 8080, "HTTP port")
-	clusterCmd.Flags().StringVar(&cfg.leaderAddr, "leader", "", "Leader address (for peers)")
+	clusterCmd.Flags().StringVar(&cfg.leaderAddr, "leader", os.Getenv("ESPBREW_LEADER"), "Leader address (for peers)")
 	clusterCmd.Flags().StringVar(&cfg.nodeID, "node-id", "", "Node ID (default: hostname)")
 	clusterCmd.Flags().StringVar(&cfg.logLevel, "log-level", "info", "Log level: debug, info, warn, error")
 	clusterCmd.Flags().IntVar(&cfg.workers, "workers", 2, "Number of flash workers")

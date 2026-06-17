@@ -58,7 +58,7 @@ var flashOpts struct {
 }
 
 func init() {
-	flashCmd.Flags().StringVar(&flashOpts.clusterURL, "cluster", "", "Cluster URL for remote flashing")
+	flashCmd.Flags().StringVar(&flashOpts.clusterURL, "cluster", os.Getenv("ESPBREW_CLUSTER"), "Cluster URL for remote flashing")
 	flashCmd.Flags().StringVar(&flashOpts.deviceID, "device", "", "Device selection by ID, alias, or MAC (from inventory)")
 	flashCmd.Flags().StringVarP(&flashOpts.port, "port", "p", "", "Serial port (auto-detect if empty)")
 	flashCmd.Flags().IntVar(&flashOpts.baud, "baud", 460800, "Flash baud rate")

@@ -18,6 +18,14 @@ const (
 	BackendQEMU     BackendType = "qemu"     // QEMU emulator (future)
 )
 
+// OperationMode defines the operational state of a cluster node
+type OperationMode string
+
+const (
+	ModeDiscovery   OperationMode = "discovery"   // Discovery enabled, flashing blocked
+	ModeOperational OperationMode = "operational" // Discovery disabled, flashing enabled
+)
+
 // BackendConfig defines the interface for simulator-specific configuration
 type BackendConfig interface {
 	GetType() BackendType
@@ -138,11 +146,12 @@ type Message struct {
 }
 
 type NodeInfo struct {
-	ID       string    `json:"id"`
-	Address  string    `json:"address"`
-	Port     int       `json:"port,omitempty"` // HTTP port for API access
-	Role     string    `json:"role"`
-	LastSeen time.Time `json:"last_seen"`
+	ID       string        `json:"id"`
+	Address  string        `json:"address"`
+	Port     int           `json:"port,omitempty"` // HTTP port for API access
+	Role     string        `json:"role"`
+	Mode     OperationMode `json:"mode"` // Current operational mode
+	LastSeen time.Time     `json:"last_seen"`
 }
 
 type DeviceInfo struct {

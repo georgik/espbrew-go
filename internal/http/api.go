@@ -65,6 +65,11 @@ func (h *APIHandler) RegisterRoutes(r *mux.Router) {
 	// Device reservation (use device name without /dev/ prefix)
 	api.HandleFunc("/devices/{name}/reserve", h.handleReserveDevice).Methods("POST", "DELETE")
 
+	// Operational mode management
+	api.HandleFunc("/mode", h.handleGetMode).Methods("GET")
+	api.HandleFunc("/mode", h.handleSetMode).Methods("PUT")
+	api.HandleFunc("/discovery/refresh", h.handleDiscoveryRefresh).Methods("POST")
+
 	// Jobs
 	api.HandleFunc("/jobs", h.handleListJobs).Methods("GET")
 	api.HandleFunc("/jobs", h.handleCreateJob).Methods("POST")
@@ -95,8 +100,10 @@ func (h *APIHandler) handleStatus(w http.ResponseWriter, r *http.Request) {
 	if h.leader != nil {
 		response["role"] = "leader"
 		response["queue_size"] = h.leader.GetJobQueue().PendingCount()
+		response["mode"] = string(h.leader.GetMode())
 	} else if h.peer != nil {
 		response["role"] = "peer"
+		response["mode"] = string(h.peer.GetMode())
 	}
 
 	respondJSON(w, response)
@@ -1426,4 +1433,81 @@ func scanCapturesFromDir(capturesDir string) ([]*CaptureInfo, error) {
 	})
 
 	return captures, nil
+}
+
+// handleGetMode returns the current operational mode
+func (h *APIHandler) handleGetMode(w http.ResponseWriter, r *http.Request) {
+	var currentMode string
+
+	if h.leader != nil {
+		currentMode = string(h.leader.GetMode())
+	} else {
+		currentMode = string(protocol.ModeOperational) // Default for non-leader
+	}
+
+	respondJSON(w, map[string]interface{}{
+		"mode": currentMode,
+	})
+}
+
+// handleSetMode sets the operational mode
+func (h *APIHandler) handleSetMode(w http.ResponseWriter, r *http.Request) {
+	if h.leader == nil {
+		respondError(w, http.StatusNotImplemented, "Mode control only available on leader")
+		return
+	}
+
+	var req struct {
+		Mode string `json:"mode"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+
+	// Validate mode
+	var targetMode protocol.OperationMode
+	switch req.Mode {
+	case "discovery":
+		targetMode = protocol.ModeDiscovery
+	case "operational":
+		targetMode = protocol.ModeOperational
+	default:
+		respondError(w, http.StatusBadRequest, "Invalid mode, must be 'discovery' or 'operational'")
+		return
+	}
+
+	// Set mode
+	if err := h.leader.SetMode(targetMode); err != nil {
+		respondError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	respondJSON(w, map[string]interface{}{
+		"status": "ok",
+		"mode":   string(targetMode),
+	})
+}
+
+// handleDiscoveryRefresh forces a re-scan of devices and cameras
+func (h *APIHandler) handleDiscoveryRefresh(w http.ResponseWriter, r *http.Request) {
+	if h.leader == nil {
+		respondError(w, http.StatusNotImplemented, "Discovery refresh only available on leader")
+		return
+	}
+
+	// Check if in discovery mode
+	if h.leader.GetMode() != protocol.ModeDiscovery {
+		respondError(w, http.StatusForbidden, "Discovery refresh only available in discovery mode")
+		return
+	}
+
+	// Force device re-scan by refreshing watchers
+	camera.GetRegistry().Refresh()
+
+	respondJSON(w, map[string]interface{}{
+		"status":  "ok",
+		"message": "Discovery refresh initiated",
+	})
 }
