@@ -190,6 +190,192 @@ func TestExecuteSnap_DeviceNotFound(t *testing.T) {
 	}
 }
 
+func TestClient_ListCameras(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/cameras" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+
+		cameras := []CameraInfo{
+			{ID: "cam-001", Name: "Test Camera 1", Backend: "v4l2", Status: "available", DevicePath: "/dev/video0"},
+			{ID: "cam-002", Name: "Test Camera 2", Backend: "v4l2", Status: "busy", DevicePath: "/dev/video1"},
+		}
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"cameras": cameras,
+			"count":   2,
+		})
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL)
+	cameras, err := client.ListCameras()
+	if err != nil {
+		t.Fatalf("ListCameras failed: %v", err)
+	}
+
+	if len(cameras) != 2 {
+		t.Fatalf("expected 2 cameras, got %d", len(cameras))
+	}
+
+	if cameras[0].ID != "cam-001" {
+		t.Errorf("expected cam-001, got %s", cameras[0].ID)
+	}
+
+	if cameras[0].Status != "available" {
+		t.Errorf("expected available, got %s", cameras[0].Status)
+	}
+}
+
+func TestClient_CaptureImage(t *testing.T) {
+	testData := []byte{0xFF, 0xD8, 0xFF, 0xE0} // JPEG header
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/cameras/capture" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+		if r.Method != "POST" {
+			t.Errorf("expected POST, got %s", r.Method)
+		}
+
+		var req CameraCaptureRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Errorf("failed to decode request: %v", err)
+		}
+
+		// Return response with unix timestamp (number)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"path":      "/tmp/capture.jpg",
+			"data":      testData,
+			"format":    "jpg",
+			"width":     640,
+			"height":    480,
+			"size":      len(testData),
+			"timestamp": time.Now().Unix(),
+		})
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL)
+	req := CameraCaptureRequest{
+		CameraID: "cam-001",
+		Width:    640,
+		Height:   480,
+		Format:   "jpg",
+		Quality:  85,
+	}
+
+	result, err := client.CaptureImage(req)
+	if err != nil {
+		t.Fatalf("CaptureImage failed: %v", err)
+	}
+
+	if result.Width != 640 {
+		t.Errorf("expected width 640, got %d", result.Width)
+	}
+
+	if result.Height != 480 {
+		t.Errorf("expected height 480, got %d", result.Height)
+	}
+
+	if len(result.Data) != len(testData) {
+		t.Errorf("expected data size %d, got %d", len(testData), len(result.Data))
+	}
+}
+
+func TestClient_CaptureImage_RFC3339Timestamp(t *testing.T) {
+	testData := []byte{0xFF, 0xD8, 0xFF, 0xE0}
+	timestamp := time.Now()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"path":      "/tmp/capture.jpg",
+			"data":      testData,
+			"format":    "jpg",
+			"width":     640,
+			"height":    480,
+			"size":      len(testData),
+			"timestamp": timestamp.Format(time.RFC3339),
+		})
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL)
+	req := CameraCaptureRequest{CameraID: "cam-001"}
+
+	result, err := client.CaptureImage(req)
+	if err != nil {
+		t.Fatalf("CaptureImage failed: %v", err)
+	}
+
+	// Verify timestamp was parsed
+	if result.Timestamp.IsZero() {
+		t.Error("expected non-zero timestamp")
+	}
+}
+
+func TestClient_CaptureImage_Error(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": "capture failed"})
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL)
+	req := CameraCaptureRequest{CameraID: "cam-001"}
+
+	_, err := client.CaptureImage(req)
+	if err == nil {
+		t.Fatal("CaptureImage() expected error for 500 response, got nil")
+	}
+}
+
+func TestClient_DownloadCapture(t *testing.T) {
+	testData := []byte{0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x01, 0x02, 0x03}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/captures/test.jpg" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+
+		w.Header().Set("Content-Type", "image/jpeg")
+		w.Write(testData)
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL)
+
+	data, err := client.DownloadCapture("/captures/test.jpg")
+	if err != nil {
+		t.Fatalf("DownloadCapture failed: %v", err)
+	}
+
+	if len(data) != len(testData) {
+		t.Errorf("expected %d bytes, got %d", len(testData), len(data))
+	}
+
+	for i := range testData {
+		if data[i] != testData[i] {
+			t.Errorf("byte mismatch at index %d: expected 0x%02X, got 0x%02X", i, testData[i], data[i])
+		}
+	}
+}
+
+func TestClient_DownloadCapture_NotFound(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		w.Write([]byte("file not found"))
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL)
+
+	_, err := client.DownloadCapture("/captures/missing.jpg")
+	if err == nil {
+		t.Fatal("DownloadCapture() expected error for 404 response, got nil")
+	}
+}
+
 func contains(s, substr string) bool {
 	for i := 0; i <= len(s)-len(substr); i++ {
 		if s[i:i+len(substr)] == substr {

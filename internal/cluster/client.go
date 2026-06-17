@@ -749,3 +749,158 @@ func (c *Client) CheckFlashHash(deviceID string, req FlashHashCheckRequest) (*Fl
 
 	return &hashResp, nil
 }
+
+// CameraInfo represents camera information from the cluster.
+type CameraInfo struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Backend     string `json:"backend"`
+	Status      string `json:"status"`
+	DevicePath  string `json:"device_path"`
+	Description string `json:"description"`
+}
+
+// ListCameras retrieves available cameras from the cluster.
+func (c *Client) ListCameras() ([]CameraInfo, error) {
+	url := fmt.Sprintf("%s/api/v1/cameras", c.baseURL)
+	httpReq, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+
+	resp, err := c.doWithRetry(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("status %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	var result struct {
+		Cameras []CameraInfo `json:"cameras"`
+		Count   int          `json:"count"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode response: %w", err)
+	}
+
+	return result.Cameras, nil
+}
+
+// CameraCaptureRequest represents a request to capture an image from a camera.
+type CameraCaptureRequest struct {
+	CameraID string `json:"camera_id"`
+	Width    uint32 `json:"width"`
+	Height   uint32 `json:"height"`
+	Format   string `json:"format"`
+	Quality  int    `json:"quality"`
+	Preview  bool   `json:"preview"`
+}
+
+// CameraCaptureResult represents the result of a camera capture.
+type CameraCaptureResult struct {
+	Path      string    `json:"path"`
+	Data      []byte    `json:"data"`
+	Format    string    `json:"format"`
+	Width     int       `json:"width"`
+	Height    int       `json:"height"`
+	Size      int       `json:"size"`
+	Timestamp time.Time `json:"timestamp"`
+}
+
+// CaptureImage captures an image from a camera on the cluster.
+func (c *Client) CaptureImage(req CameraCaptureRequest) (*CameraCaptureResult, error) {
+	body, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("marshal request: %w", err)
+	}
+
+	url := fmt.Sprintf("%s/api/v1/cameras/capture", c.baseURL)
+	httpReq, err := http.NewRequest("POST", url, bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.doWithRetry(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("status %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	var result struct {
+		Path      string      `json:"path"`
+		Data      []byte      `json:"data"`
+		Format    string      `json:"format"`
+		Width     int         `json:"width"`
+		Height    int         `json:"height"`
+		Size      int         `json:"size"`
+		Timestamp interface{} `json:"timestamp"` // Can be string (RFC3339) or number (unix timestamp)
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode response: %w", err)
+	}
+
+	var timestamp time.Time
+	switch v := result.Timestamp.(type) {
+	case string:
+		timestamp, _ = time.Parse(time.RFC3339, v)
+		if timestamp.IsZero() {
+			timestamp = time.Now()
+		}
+	case float64:
+		timestamp = time.Unix(int64(v), 0)
+	case int64:
+		timestamp = time.Unix(v, 0)
+	default:
+		timestamp = time.Now()
+	}
+
+	return &CameraCaptureResult{
+		Path:      result.Path,
+		Data:      result.Data,
+		Format:    result.Format,
+		Width:     result.Width,
+		Height:    result.Height,
+		Size:      result.Size,
+		Timestamp: timestamp,
+	}, nil
+}
+
+// DownloadCapture downloads a capture file from the cluster by path.
+// The path should be relative to the cluster's captures directory.
+func (c *Client) DownloadCapture(capturePath string) ([]byte, error) {
+	// Build full URL for the capture file
+	url := c.baseURL + capturePath
+
+	httpReq, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("download failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("download failed: status %d: %s", resp.StatusCode, string(body))
+	}
+
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read response: %w", err)
+	}
+
+	return data, nil
+}

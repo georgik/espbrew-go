@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"codeberg.org/georgik/espbrew-go/internal/camera"
+	"codeberg.org/georgik/espbrew-go/internal/cluster"
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
 )
@@ -31,16 +32,18 @@ Examples:
 }
 
 var captureOpts struct {
-	cameraID string
-	width    uint32
-	height   uint32
-	format   string
-	quality  int
-	timeout  time.Duration
-	list     bool
+	clusterURL string
+	cameraID   string
+	width      uint32
+	height     uint32
+	format     string
+	quality    int
+	timeout    time.Duration
+	list       bool
 }
 
 func init() {
+	captureCmd.Flags().StringVar(&captureOpts.clusterURL, "cluster", os.Getenv("ESPBREW_CLUSTER"), "Cluster URL for remote capture")
 	rootCmd.AddCommand(captureCmd)
 
 	captureCmd.Flags().StringVar(&captureOpts.cameraID, "camera-id", "", "Camera ID (default: first available)")
@@ -53,6 +56,13 @@ func init() {
 }
 
 func runCapture(cmd *cobra.Command, args []string) error {
+	if captureOpts.clusterURL != "" {
+		return runCaptureRemote(args)
+	}
+	return runCaptureLocal(args)
+}
+
+func runCaptureLocal(args []string) error {
 	// List cameras if requested
 	if captureOpts.list {
 		if err := listCameras(); err != nil {
@@ -130,6 +140,120 @@ func listCameras() error {
 		log.Info().Msgf("  %d. %s", i+1, cam.Name)
 		log.Info().Msgf("     ID:     %s", cam.ID)
 		log.Info().Msgf("     Backend: %s", cam.Backend)
+	}
+
+	return nil
+}
+
+func runCaptureRemote(args []string) error {
+	client := cluster.NewClient(captureOpts.clusterURL)
+
+	// List cameras if requested
+	if captureOpts.list {
+		if err := listRemoteCameras(client); err != nil {
+			return err
+		}
+		return nil
+	}
+
+	// Build capture request
+	req := &cluster.CameraCaptureRequest{
+		CameraID: captureOpts.cameraID,
+		Width:    captureOpts.width,
+		Height:   captureOpts.height,
+		Format:   captureOpts.format,
+		Quality:  captureOpts.quality,
+	}
+
+	log.Info().
+		Str("camera", req.CameraID).
+		Uint32("width", req.Width).
+		Uint32("height", req.Height).
+		Str("format", req.Format).
+		Str("cluster", captureOpts.clusterURL).
+		Msg("Capturing image via cluster")
+
+	// Capture via cluster
+	result, err := client.CaptureImage(*req)
+	if err != nil {
+		return fmt.Errorf("cluster capture failed: %w", err)
+	}
+
+	// Save image data if available
+	if len(result.Data) > 0 {
+		var outputPath string
+		if len(args) > 0 {
+			outputPath = args[0]
+		} else {
+			// Generate default filename
+			timestamp := result.Timestamp.Format("20060102-150405")
+			outputPath = fmt.Sprintf("capture-%s.%s", timestamp, result.Format)
+		}
+
+		if err := os.WriteFile(outputPath, result.Data, 0644); err != nil {
+			return fmt.Errorf("save image: %w", err)
+		}
+		log.Info().
+			Str("path", outputPath).
+			Int("width", result.Width).
+			Int("height", result.Height).
+			Int("size", result.Size).
+			Msg("Image saved")
+	} else if result.Path != "" {
+		// Download file from cluster
+		log.Info().
+			Str("path", result.Path).
+			Msg("Downloading image from cluster")
+
+		data, err := client.DownloadCapture(result.Path)
+		if err != nil {
+			return fmt.Errorf("download capture: %w", err)
+		}
+
+		// Save downloaded data
+		var outputPath string
+		if len(args) > 0 {
+			outputPath = args[0]
+		} else {
+			// Extract filename from path or generate default
+			timestamp := result.Timestamp.Format("20060102-150405")
+			outputPath = fmt.Sprintf("capture-%s.%s", timestamp, result.Format)
+		}
+
+		if err := os.WriteFile(outputPath, data, 0644); err != nil {
+			return fmt.Errorf("save downloaded image: %w", err)
+		}
+		log.Info().
+			Str("path", outputPath).
+			Int("size", len(data)).
+			Msg("Image downloaded and saved")
+	} else {
+		return fmt.Errorf("no image data returned from cluster")
+	}
+
+	return nil
+}
+
+func listRemoteCameras(client *cluster.Client) error {
+	cameras, err := client.ListCameras()
+	if err != nil {
+		return fmt.Errorf("list cameras: %w", err)
+	}
+
+	if len(cameras) == 0 {
+		log.Info().Msg("No cameras found on cluster")
+		return nil
+	}
+
+	log.Info().Msg("Available cameras on cluster:")
+	for i, cam := range cameras {
+		log.Info().Msgf("  %d. %s", i+1, cam.Name)
+		log.Info().Msgf("     ID:     %s", cam.ID)
+		log.Info().Msgf("     Backend: %s", cam.Backend)
+		log.Info().Msgf("     Status: %s", cam.Status)
+		if cam.DevicePath != "" {
+			log.Info().Msgf("     Path:   %s", cam.DevicePath)
+		}
 	}
 
 	return nil

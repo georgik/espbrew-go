@@ -17,6 +17,8 @@ ESP32 cluster flashing tool written in Go. Manages multiple ESP32 devices across
 - **Device Protection**: Flash read-only mode for production devices while allowing serial monitoring
 - **Camera Support**: Discover and capture images from connected cameras
 - **Snap Command**: Flash, monitor serial output, and capture camera image in one command
+- **Operational Modes**: Discovery mode for device auto-detection, operational mode for normal flashing
+- **Environment Variables**: Configure cluster endpoints via ESPBREW_CLUSTER and ESPBREW_LEADER
 - **Job Queue**: Queue and manage flash jobs across all available devices
 - **Device Locking**: Prevents concurrent access to serial ports
 - **Remote Flashing**: Flash devices from any machine on the network
@@ -76,6 +78,50 @@ go build -o espbrew ./cmd/espbrew
 sudo mv espbrew /usr/local/bin/
 
 # Windows: Add espbrew.exe to your PATH or use from current directory
+```
+
+## Environment Variables
+
+ESPBrew supports environment variables for configuration without command-line flags:
+
+### Cluster Configuration
+
+- **ESPBREW_CLUSTER**: Default cluster URL for remote operations
+- **ESPBREW_LEADER**: Default leader address for cluster mode
+
+```bash
+# Set default cluster URL
+export ESPBREW_CLUSTER=http://leader:8080
+
+# All cluster commands now use the default
+espbrew flash firmware.bin              # Uses ESPBREW_CLUSTER
+espbrew monitor                         # Uses ESPBREW_CLUSTER
+espbrew snap                             # Uses ESPBREW_CLUSTER
+
+# Override with --cluster flag when needed
+espbrew --cluster http://other:8080 flash firmware.bin
+```
+
+### Leader Node Configuration
+
+```bash
+# Set default leader for peer nodes
+export ESPBREW_LEADER=leader:8080
+
+# Start peer with default leader
+espbrew cluster --role peer --node-id station-1
+```
+
+### Usage Examples
+
+```bash
+# Daily workflow with environment variables
+export ESPBREW_CLUSTER=http://build-server:8080
+idf.py build
+espbrew flash                          # Auto-build, auto-flash to cluster
+espbrew snap --duration 5              # Quick verification
+```
+
 ```
 
 ## Windows Support
@@ -246,8 +292,16 @@ http://localhost:8080/v2/
 - **Mapping**: Device-to-camera region mapping for automated screenshot extraction
 - **Flash**: Web-based firmware flashing with progress tracking
 - **Settings**: Connection and display configuration
+- **Operational Modes**: Switch between discovery mode (10-second auto-detection) and operational mode (normal flashing)
 
-**Building WASM:**
+**Operational Modes:**
+
+The cluster supports two operational modes accessible via the WASM dashboard:
+
+- **Discovery Mode**: Auto-detects ESP devices for 10 seconds after startup, then switches to operational mode
+- **Operational Mode**: Normal flashing and monitoring operations
+
+Mode switching is available on the dashboard with current status display and manual control buttons.
 
 ```bash
 # Using the helper command
@@ -284,9 +338,16 @@ The WASM monitor page provides terminal-style serial communication:
 - Bidirectional data transfer via WebSocket
 - Baud rate selection (9600 to 921600)
 - Reset on connect option
-- Device reset button
-- Real-time output with auto-scroll
+- Device reset button (CTRL+R support)
+- Real-time output with immediate display after reset
 - Pattern-based exit conditions
+- Proper terminal restoration on disconnect
+
+**Recent Improvements:**
+
+- Fixed monitor output buffering after CTRL+R reset
+- Improved interrupt handling for clean shutdown
+- Non-blocking stdin for responsive keyboard input
 
 **WebSocket API:**
 ```
@@ -405,12 +466,35 @@ Send data: `{type: "data", data: "character"}`
 
 ### Camera
 
+The `capture` command provides camera discovery and image capture functionality:
+
 ```bash
-./espbrew capture --list           # List available cameras
-./espbrew capture                  # Capture image with defaults
+./espbrew capture --list                          # List available cameras (local)
+./espbrew capture                                 # Capture image with defaults
 ./espbrew capture --width 1920 --height 1080 --quality 90
-./espbrew capture my-photo.jpg     # Save to specific file
+./espbrew capture my-photo.jpg                    # Save to specific file
 ```
+
+**Cluster Mode:**
+
+Camera operations can be performed remotely via cluster:
+
+```bash
+./espbrew --cluster http://leader:8080 capture --list
+./espbrew --cluster http://leader:8080 capture test.jpg
+```
+
+**Cluster Capture Features:**
+- List cameras connected to cluster nodes
+- Capture images from remote cameras
+- Automatic download of captured files to local system
+- Environment variable support via ESPBREW_CLUSTER
+
+**Camera Selection:**
+- `--camera-id`: Specify camera by ID (auto-selects first available if omitted)
+- `--width/--height`: Set capture resolution (default: 1280x720)
+- `--format`: Output format (default: jpg)
+- `--quality`: JPEG quality 1-100 (default: 85)
 
 ### Snap
 
@@ -419,7 +503,7 @@ The `snap` command combines flashing, serial monitoring, and camera capture into
 ```bash
 ./espbrew snap                                          # Auto-detect device and firmware
 ./espbrew snap --device esp-aa:bb:cc:dd:ee:ff          # Use device from inventory
-./espbrew snap --duration 10                           # Monitor for 10 seconds
+./espbrew snap --duration 5                            # Monitor for 5 seconds
 ./espbrew snap --skip-flash                             # Monitor and capture only
 ./espbrew snap --no-capture                             # Flash and monitor only
 ./espbrew snap --cluster http://leader:8080             # Remote snap via cluster
@@ -427,10 +511,12 @@ The `snap` command combines flashing, serial monitoring, and camera capture into
 
 **Snap Features:**
 - Auto-detects devices and firmware from project directory
+- Default 10-second monitoring duration for quick verification
 - Hash-based flash optimization skips unchanged regions
 - Monitors serial output for boot verification
 - Captures camera image for visual confirmation
 - Works in local and cluster modes
+- Automatic client timeout calculation based on duration
 
 See [Snap Documentation](docs/SNAP.md) for complete details.
 
@@ -451,6 +537,8 @@ See [Snap Documentation](docs/SNAP.md) for complete details.
 ./espbrew cluster --role peer --leader IP:8080 --node-id "station-1"    # Start named peer
 ./espbrew --cluster http://IP:8080 flash firmware.bin                   # Remote flash
 ./espbrew --cluster http://IP:8080 monitor                              # Remote monitor
+./espbrew --cluster http://IP:8080 capture                             # Remote camera capture
+./espbrew --cluster http://IP:8080 capture test.jpg                      # Capture and download
 ./espbrew --cluster http://IP:8080 read-flash --device /dev/ttyUSB0 --address 0x10000 --size 0x100000 app.bin  # Remote read flash
 ```
 

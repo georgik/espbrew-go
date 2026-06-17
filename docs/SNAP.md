@@ -34,7 +34,7 @@ espbrew snap [flags]
 | `--device` | string | (empty) | Device selection by ID, alias, or MAC from inventory |
 | `-p, --port` | string | (auto) | Serial port (auto-detects ESP device if empty) |
 | `-f, --firmware` | string | (auto) | Firmware .bin file to flash before capture |
-| `--duration` | int | 30 | Capture duration in seconds |
+| `--duration` | int | 10 | Capture duration in seconds |
 | `--baud-rate` | int | 115200 | Serial baud rate |
 | `--camera` | string | (auto) | Camera device identifier (empty for auto-select first available) |
 | `-o, --output` | string | (empty) | Output file path for captured image |
@@ -62,7 +62,7 @@ The `--device` flag accepts multiple identifier formats:
 #### Basic snap with auto-detection
 
 ```bash
-# Auto-detects device and firmware, monitors for 30 seconds
+# Auto-detects device and firmware, monitors for 10 seconds (default)
 espbrew snap
 ```
 
@@ -149,7 +149,7 @@ INFO Auto-detected ESP device: /dev/ttyUSB0
 INFO Auto-detected firmware: build/app.bin
 INFO Flashing firmware to /dev/ttyUSB0
 [========================================] 100% Flashing complete
-INFO Starting monitor for capture (duration: 30s)
+INFO Starting monitor for capture (duration: 10s)
 === Serial Output ===
 Boot complete. Ready.
 ```
@@ -168,7 +168,7 @@ INFO Auto-detected ESP device: /dev/ttyUSB0
 INFO Auto-detected firmware: build/app.bin
 INFO Flashing firmware to /dev/ttyUSB0
 [========================================] 100% Flashing complete
-INFO Starting monitor for capture (duration: 30s)
+INFO Starting monitor for capture (duration: 10s)
 
 --- Snap Result ---
 Snap ID: snap-20240602-123456
@@ -288,12 +288,12 @@ For local operations (without `--cluster`), the snap command performs all operat
 
 For iterative development with unchanged bootloader/partitions:
 
-- **Full flash + monitor + capture**: ~30s
-- **Hash skip + monitor + capture**: ~10s
-- **Monitor + capture only** (`--skip-flash`): ~8s
-- **Flash only** (`--no-capture`): ~25s
+- **Full flash + monitor + capture**: ~25s
+- **Hash skip + monitor + capture**: ~12s
+- **Monitor + capture only** (`--skip-flash`): ~10s
+- **Flash only** (`--no-capture`): ~22s
 
-The hash check adds ~100-200ms in cluster mode but saves ~20s when firmware is unchanged.
+The hash check adds ~100-200ms in cluster mode but saves ~15s when firmware is unchanged.
 
 ### Manual Control
 
@@ -316,10 +316,9 @@ espbrew snap --skip-flash
 | Duration | Use Case |
 |----------|----------|
 | 5s | Quick boot check, minimal output |
-| 10s | Standard boot + app startup |
+| 10s | Default, standard boot + app startup |
 | 20s | Full initialization, network connection |
-| 30s | Default, comprehensive capture |
-| 60s+ | Extended monitoring, debugging |
+| 30s+ | Extended monitoring, debugging |
 
 ### Baud Rate Impact
 

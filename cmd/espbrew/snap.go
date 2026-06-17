@@ -48,7 +48,7 @@ func init() {
 	snapCmd.Flags().StringVar(&snapOpts.deviceID, "device", "", "Device selection by ID, alias, or MAC (from inventory)")
 	snapCmd.Flags().StringVarP(&snapOpts.port, "port", "p", "", "Serial port (auto-detect if empty)")
 	snapCmd.Flags().StringVarP(&snapOpts.firmware, "firmware", "f", "", "Firmware .bin file to flash before capture")
-	snapCmd.Flags().IntVar(&snapOpts.duration, "duration", 30, "Capture duration in seconds")
+	snapCmd.Flags().IntVar(&snapOpts.duration, "duration", 10, "Capture duration in seconds")
 	snapCmd.Flags().IntVar(&snapOpts.baud, "baud-rate", 115200, "Serial baud rate")
 	snapCmd.Flags().StringVar(&snapOpts.camera, "camera", "", "Camera ID (empty for auto-select first available)")
 	snapCmd.Flags().StringVarP(&snapOpts.output, "output", "o", "", "Output file path for captured image")
@@ -170,6 +170,10 @@ func runLocalSnap() error {
 
 func runClusterSnap() error {
 	client := cluster.NewClient(snapOpts.clusterURL)
+
+	// Set longer timeout for snap operations (duration + capture + overhead)
+	snapTimeout := time.Duration(snapOpts.duration)*time.Second + 30*time.Second
+	client.SetTimeout(snapTimeout)
 
 	// Resolve device from inventory if --device specified
 	var devicePath string
