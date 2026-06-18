@@ -18,15 +18,6 @@ jobs:
           - goos: linux
             goarch: amd64
             output: espbrew-linux-amd64
-          - goos: linux
-            goarch: arm64
-            output: espbrew-linux-arm64
-          - goos: linux
-            goarch: arm
-            output: espbrew-linux-arm
-          - goos: darwin
-            goarch: amd64
-            output: espbrew-darwin-amd64
           - goos: darwin
             goarch: arm64
             output: espbrew-darwin-arm64
