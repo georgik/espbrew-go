@@ -19,7 +19,8 @@ import (
 
 // forceFlush forces stdout to flush immediately (works for terminals)
 func forceFlush() {
-	syscall.Fsync(int(os.Stdout.Fd()))
+	// Flush is handled implicitly by stdio on most systems
+	// Explicit flush on file descriptors is platform-specific
 }
 
 var monitorCmd = &cobra.Command{
@@ -458,6 +459,6 @@ func (b *bufioWriter) Write(p []byte) (n int, err error) {
 }
 
 func (b *bufioWriter) Flush() error {
-	// Use syscall.Fsync on file descriptor for immediate terminal output
-	return syscall.Fsync(int(b.w.Fd()))
+	// Sync is cross-platform and ensures immediate output
+	return b.w.Sync()
 }
