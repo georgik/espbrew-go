@@ -1,0 +1,72 @@
+name: Demo Deployment
+
+on:
+  workflow_dispatch:
+    inputs:
+      source:
+        description: 'Source to deploy'
+        required: true
+        default: 'current'
+        type: choice
+        options:
+          - current
+          - release
+      tag:
+        description: 'Release tag (when source=release)'
+        required: false
+        type: string
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.source == 'release' && inputs.tag || '' }}
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.26'
+
+      - name: Build WASM
+        run: |
+          GOOS=js GOARCH=wasm go build -ldflags="-s -w" -o web/main.wasm ./cmd/wasm
+
+      - name: Copy wasm_exec.js
+        run: cp "$(go env GOROOT)/misc/wasm/wasm_exec.js" web/
+
+      - name: Create demo package
+        run: |
+          mkdir -p demo/v2
+          cp web/index.html demo/v2/
+          cp web/styles.css demo/v2/
+          cp web/wasm_exec.js demo/v2/
+          cp web/main.wasm demo/v2/
+          cp -r web/static demo/v2/
+          cp web/demo/index.html demo/
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: demo
+
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

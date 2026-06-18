@@ -1,6 +1,6 @@
 # ESPBrew Makefile
 
-.PHONY: all build wasm clean test fmt vet lint run e2e
+.PHONY: all build wasm clean test fmt vet lint run e2e demo demo-serve
 
 # Default target builds everything
 all: build
@@ -82,6 +82,32 @@ dev:
 		$(MAKE) run; \
 	fi
 
+# Build demo package for GitHub Pages or static hosting
+demo: wasm
+	@echo "Creating demo package..."
+	@rm -rf demo
+	@mkdir -p demo/v2
+	@cp web/index.html demo/v2/
+	@cp web/styles.css demo/v2/
+	@cp web/wasm_exec.js demo/v2/
+	@cp web/main.wasm demo/v2/
+	@cp -r web/static demo/v2/
+	@cp web/demo/index.html demo/
+	@echo "Demo package ready: demo/"
+	@echo "  Size: $$(du -sh demo | cut -f1)"
+	@echo ""
+	@echo "To test locally:"
+	@echo "  make demo-serve"
+	@echo ""
+	@echo "Demo URL with demo mode enabled:"
+	@echo "  https://georgik.github.io/espbrew-go/v2/?demo=true"
+
+# Serve demo package locally for testing
+demo-serve: demo
+	@echo "Starting demo server on http://localhost:8000"
+	@echo "Press Ctrl+C to stop"
+	@cd demo && python3 -m http.server 8000
+
 # Show help
 help:
 	@echo "ESPBrew Build Commands:"
@@ -101,6 +127,11 @@ help:
 	@echo "  make install      - Install to GOPATH/bin"
 	@echo "  make dev          - Run with hot reload (requires air)"
 	@echo ""
+	@echo "Demo (GitHub Pages / static hosting):"
+	@echo "  make demo         - Build demo package for static hosting"
+	@echo "  make demo-serve   - Serve demo locally on port 8000"
+	@echo ""
 	@echo "Access:"
 	@echo "  http://localhost:8080/  - Legacy HTML UI"
 	@echo "  http://localhost:8080/v2/ - WASM UI"
+	@echo "  http://localhost:8080/v2/?demo=true - WASM UI demo mode"

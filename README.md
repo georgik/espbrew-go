@@ -2,6 +2,14 @@
 
 ESP32 cluster flashing tool written in Go. Manages multiple ESP32 devices across multiple machines with web-based dashboard and CLI tools.
 
+## Demo
+
+Try ESPBrew in your browser without installation:
+
+**[Live Demo](https://georgik.github.io/espbrew-go/v2/?demo=true)** - WebAssembly interface running in demo mode
+
+The demo showcases the full WASM UI with mock data for devices, cameras, captures, and serial monitoring.
+
 ## Features
 
 - **Smart File Detection**: Auto-detects ELF, ESP32 binary, and raw firmware files
