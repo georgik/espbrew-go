@@ -71,8 +71,8 @@ func TestResolveBuildPath(t *testing.T) {
 	// Create temp directory structure
 	tmpDir := t.TempDir()
 	buildDir := filepath.Join(tmpDir, "build")
-	os.MkdirAll(buildDir, 0755)
-	os.MkdirAll(filepath.Join(buildDir, "bootloader"), 0755)
+	_ = os.MkdirAll(buildDir, 0755)
+	_ = os.MkdirAll(filepath.Join(buildDir, "bootloader"), 0755)
 
 	// Create test files
 	mainFile := filepath.Join(buildDir, "main.bin")

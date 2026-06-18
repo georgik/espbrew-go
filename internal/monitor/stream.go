@@ -66,7 +66,7 @@ func (s *StreamSession) Start() error {
 	}
 	s.port = port
 
-	port.SetReadTimeout(50 * time.Millisecond)
+	_ = port.SetReadTimeout(50 * time.Millisecond)
 
 	go s.readLoop()
 	go s.controlLoop()
@@ -131,7 +131,7 @@ func (s *StreamSession) readLoop() {
 
 					// Close old port
 					if s.port != nil {
-						s.port.Close()
+						_ = s.port.Close()
 					}
 
 					// Try to reopen
@@ -139,7 +139,7 @@ func (s *StreamSession) readLoop() {
 					port, openErr := serial.Open(s.config.Port, mode)
 					if openErr == nil {
 						s.port = port
-						s.port.SetReadTimeout(50 * time.Millisecond)
+						_ = s.port.SetReadTimeout(50 * time.Millisecond)
 						log.Info().Str("session", s.id).Int("attempt", attempt).Msg("Reconnected to device")
 						break // Success, continue reading
 					}
@@ -167,10 +167,10 @@ func (s *StreamSession) controlLoop() {
 			switch msg.Type {
 			case "reset":
 				// Toggle DTR/RTS to reset device
-				s.port.SetDTR(false)
-				s.port.SetRTS(true)
+				_ = s.port.SetDTR(false)
+				_ = s.port.SetRTS(true)
 				time.Sleep(100 * time.Millisecond)
-				s.port.SetRTS(false)
+				_ = s.port.SetRTS(false)
 				time.Sleep(50 * time.Millisecond)
 				log.Debug().Str("session", s.id).Msg("Device reset triggered")
 			case "close":
@@ -263,7 +263,7 @@ func (m *StreamManager) Remove(id string) {
 	defer m.mu.Unlock()
 
 	if s, exists := m.sessions[id]; exists {
-		s.Close()
+		_ = s.Close()
 		delete(m.sessions, id)
 	}
 }

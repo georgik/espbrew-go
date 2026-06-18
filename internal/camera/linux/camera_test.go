@@ -137,6 +137,6 @@ func BenchmarkGetControlRangeByName(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		cam.GetControlRangeByName(controlName)
+		_ = cam.GetControlRangeByName(controlName)
 	}
 }

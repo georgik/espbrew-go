@@ -20,7 +20,7 @@ func TestHTTPDirectAccess(t *testing.T) {
 		if err != nil {
 			t.Fatalf("HTTP GET failed: %v", err)
 		}
-		defer resp.Body.Close()
+		defer _ = resp.Body.Close()
 
 		t.Logf("URL: %s", url)
 		t.Logf("Status: %s", resp.Status)

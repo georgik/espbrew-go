@@ -104,7 +104,7 @@ func (t *Transport) Connect(ctx context.Context) (*HelloMessage, error) {
 			ProtocolVersion: int(event.Result["protocolVersion"].(float64)),
 		}, nil
 	case <-ctx.Done():
-		t.Close()
+		_ = t.Close()
 		return nil, ctx.Err()
 	}
 }
@@ -123,8 +123,8 @@ func (t *Transport) Close() error {
 
 	if t.conn != nil {
 		// Send close message
-		t.conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
-		t.conn.Close()
+		_ = t.conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
+		_ = t.conn.Close()
 		t.conn = nil
 	}
 
@@ -251,7 +251,7 @@ func (t *Transport) readLoop() {
 		if err != nil {
 			if !t.closed {
 				log.Error().Err(err).Msg("read error")
-				t.Close()
+				_ = t.Close()
 			}
 			return
 		}

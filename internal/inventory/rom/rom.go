@@ -121,7 +121,7 @@ func (c *Connection) write(data []byte) error {
 // flush reads any pending data from the port
 func (c *Connection) flush() error {
 	buf := make([]byte, 1024)
-	c.port.SetReadTimeout(100 * time.Millisecond)
+	_ = c.port.SetReadTimeout(100 * time.Millisecond)
 	for {
 		n, err := c.port.Read(buf)
 		if err != nil || n == 0 {
@@ -134,7 +134,7 @@ func (c *Connection) flush() error {
 // Sync synchronizes with the ROM bootloader
 func (c *Connection) Sync() error {
 	// Flush any pending data
-	c.flush()
+	_ = c.flush()
 
 	// Build sync command
 	cmd := []byte{0x07, 0x07, 0x12, 0x20}

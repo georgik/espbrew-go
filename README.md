@@ -961,6 +961,77 @@ make e2e
 make e2e-short
 ```
 
+### Linting
+
+The project uses [golangci-lint](https://golangci-lint.run/) for code quality checks. CI runs linter automatically on all pull requests.
+
+**Install golangci-lint:**
+```bash
+# Via install script (recommended)
+curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(go env GOPATH)/bin
+
+# Or via package manager
+go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+```
+
+**Run linter locally:**
+```bash
+# Basic run
+golangci-lint run
+
+# Run with specific config
+golangci-lint run --config .golangci.yml
+
+# Run only specific linters
+golangci-lint run --disable-all --enable errcheck,govet
+
+# Fix issues automatically
+golangci-lint run --fix
+```
+
+**Common Issues and Fixes:**
+
+1. **errcheck (unchecked error returns)**
+   ```go
+   // Bad: defer port.Close()
+   // Good:
+   defer func() { _ = port.Close() }()
+   
+   // Bad: _ = fmt.Scanf(...)
+   // Good (scanf returns 2 values):
+   _, _ = fmt.Scanf(...)
+   
+   // Bad: conn.WriteMessage(...)
+   // Good:
+   _ = conn.WriteMessage(...)
+   ```
+
+2. **govet (structural issues)**
+   ```go
+   // Bad: if v.Kind() == reflect.Ptr
+   // Good (inline constant):
+   const ptrKind = reflect.Ptr
+   if v.Kind() == ptrKind
+   ```
+
+3. **ineffassign (ineffectual assignments)**
+   ```go
+   // Bad: assignment before return
+   if oldState != nil {
+       term.Restore(int(os.Stdin.Fd()), oldState)
+       oldState = nil  // Useless, function returns
+   }
+   return nil
+   
+   // Good: remove useless assignment
+   if oldState != nil {
+       term.Restore(int(os.Stdin.Fd()), oldState)
+   }
+   return nil
+   ```
+
+**CI Configuration:** `.github/workflows/ci.yml` runs linter with latest version.
+
 ### End-to-End Tests
 
 E2E tests validate the complete snap workflow against a real cluster server with actual hardware:

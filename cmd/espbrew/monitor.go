@@ -196,7 +196,6 @@ func runMonitorRemoteStream(monitorClient *cluster.MonitorClient) error {
 			// Restore terminal before printing
 			if oldState != nil {
 				term.Restore(int(os.Stdin.Fd()), oldState)
-				oldState = nil
 			}
 			fmt.Printf("\n%s\n", exit.message)
 			if exit.success {
@@ -210,7 +209,6 @@ func runMonitorRemoteStream(monitorClient *cluster.MonitorClient) error {
 			// Restore terminal before printing
 			if oldState != nil {
 				term.Restore(int(os.Stdin.Fd()), oldState)
-				oldState = nil
 			}
 			fmt.Printf("\nDuration limit reached (%d seconds)\n", monitorOpts.duration)
 			return nil

@@ -109,7 +109,7 @@ func (f *Flasher) Flash(ctx context.Context, req *FlashRequest) *FlashResult {
 			log.Error().Err(err).Str("port", req.Port).Msg("Failed to create flasher")
 			return &FlashResult{Success: false, Error: err}
 		}
-		defer flasher.Close()
+		defer func() { _ = flasher.Close() }()
 
 		log.Info().Str("port", req.Port).Msg("Chip detected")
 
@@ -183,7 +183,7 @@ func (f *Flasher) Flash(ctx context.Context, req *FlashRequest) *FlashResult {
 		log.Error().Err(err).Str("port", req.Port).Msg("Failed to create flasher")
 		return &FlashResult{Success: false, Error: err}
 	}
-	defer flasher.Close()
+	defer func() { _ = flasher.Close() }()
 
 	log.Info().Str("port", req.Port).Msg("Chip detected")
 
@@ -372,7 +372,7 @@ func (f *Flasher) ReadFlash(ctx context.Context, req *ReadFlashRequest) *ReadFla
 	if err != nil {
 		return &ReadFlashResult{Success: false, Error: fmt.Errorf("connect: %w", err)}
 	}
-	defer flasher.Close()
+	defer func() { _ = flasher.Close() }()
 
 	log.Info().Str("port", req.Port).Msg("Chip detected")
 	log.Info().Str("chip", flasher.ChipName()).Msg("Detected chip")

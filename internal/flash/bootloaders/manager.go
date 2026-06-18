@@ -219,7 +219,7 @@ func (m *Manager) downloadBootloader(filename, destPath string) ([]byte, error) 
 	if err != nil {
 		return nil, fmt.Errorf("http get: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("http status: %d", resp.StatusCode)
@@ -260,7 +260,7 @@ func (m *Manager) ClearCache() error {
 
 	for _, entry := range entries {
 		if !entry.IsDir() {
-			os.Remove(filepath.Join(m.cacheDir, entry.Name()))
+			_ = os.Remove(filepath.Join(m.cacheDir, entry.Name()))
 		}
 	}
 

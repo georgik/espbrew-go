@@ -56,7 +56,7 @@ func (s *Scanner) identifyESP(path string) (DeviceInfo, bool) {
 	if err != nil {
 		return DeviceInfo{}, false
 	}
-	defer port.Close()
+	defer func() { _ = port.Close() }()
 
 	// For now, assume all serial ports could be ESP devices
 	// TODO: Use USB VID/PID via platform-specific APIs

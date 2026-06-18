@@ -10,8 +10,8 @@ func TestVirtualFlashRoundtrip(t *testing.T) {
 	// Use temp dir for test isolation
 	oldHome := os.Getenv("HOME")
 	tmpDir := t.TempDir()
-	os.Setenv("HOME", tmpDir)
-	defer os.Setenv("HOME", oldHome)
+	_ = os.Setenv("HOME", tmpDir)
+	defer func() { _ = os.Setenv("HOME", oldHome) }()
 
 	testData := []byte{0xE9, 0x05, 0x02, 0x20, 0xAA, 0xBB, 0xCC, 0xDD}
 
@@ -20,7 +20,7 @@ func TestVirtualFlashRoundtrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to open device: %v", err)
 	}
-	defer device.Close()
+	defer func() { _ = device.Close() }()
 
 	// Write test data at offset 0x10000
 	err = device.Write(0x10000, testData)
@@ -42,14 +42,14 @@ func TestVirtualFlashRoundtrip(t *testing.T) {
 func TestVirtualFlashErase(t *testing.T) {
 	oldHome := os.Getenv("HOME")
 	tmpDir := t.TempDir()
-	os.Setenv("HOME", tmpDir)
+	_ = os.Setenv("HOME", tmpDir)
 	defer os.Setenv("HOME", oldHome)
 
 	device, err := OpenDevice("test-erase")
 	if err != nil {
 		t.Fatalf("Failed to open device: %v", err)
 	}
-	defer device.Close()
+	defer func() { _ = device.Close() }()
 
 	// Write data
 	err = device.Write(0x10000, []byte{0xAA, 0xBB, 0xCC, 0xDD})
@@ -86,7 +86,7 @@ func TestVirtualFlashMultipleParts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to open device: %v", err)
 	}
-	defer device.Close()
+	defer func() { _ = device.Close() }()
 
 	// Simulate ESP flash layout: bootloader, partition table, app
 	bootloader := []byte{0xE9, 0x01, 0x02, 0x20}
@@ -220,7 +220,7 @@ func TestVirtualDeviceDump(t *testing.T) {
 	defer device.Close()
 
 	// Write some data
-	device.Write(0x1000, []byte{0xAA, 0xBB, 0xCC})
+	_ = device.Write(0x1000, []byte{0xAA, 0xBB, 0xCC})
 
 	// Dump entire flash
 	dump, err := device.Dump()

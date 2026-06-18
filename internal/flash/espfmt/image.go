@@ -327,7 +327,7 @@ func (b *ImageBuilder) BuildAppImage() ([]byte, error) {
 	}
 
 	// Write header (24 bytes extended header)
-	binary.Write(&buf, binary.LittleEndian, header)
+	_ = binary.Write(&buf, binary.LittleEndian, header)
 
 	// Build segments with proper alignment
 	var checksum uint8 = ESP_CHECKSUM_MAGIC
@@ -401,7 +401,7 @@ func (b *ImageBuilder) BuildAppImage() ([]byte, error) {
 		for buf.Len()+8 < targetOffset {
 			padLen := uint32(targetOffset - (buf.Len() + 8))
 			padSegHeader := SegmentHeader{Addr: 0, Length: padLen}
-			binary.Write(&buf, binary.LittleEndian, padSegHeader)
+			_ = binary.Write(&buf, binary.LittleEndian, padSegHeader)
 			for i := uint32(0); i < padLen; i++ {
 				buf.WriteByte(0)
 				checksum ^= byte(i & 0xFF)
@@ -455,7 +455,7 @@ func (b *ImageBuilder) saveSegment(buf *bytes.Buffer, segment Segment, checksum 
 		Addr:   segment.Addr,
 		Length: uint32(len(segment.Data)) + uint32(padding),
 	}
-	binary.Write(buf, binary.LittleEndian, segHeader)
+	_ = binary.Write(buf, binary.LittleEndian, segHeader)
 	buf.Write(segment.Data)
 
 	// Write padding

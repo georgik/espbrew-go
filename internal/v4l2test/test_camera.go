@@ -27,7 +27,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to open device: %v", err)
 	}
-	defer dev.Close()
+	defer func() { _ = dev.Close() }()
 
 	fmt.Println("✓ Device opened successfully")
 
@@ -185,7 +185,7 @@ func testCapture(dev *device.Device) {
 		log.Printf("Failed to start capture: %v", err)
 		return
 	}
-	defer dev.Stop()
+	defer func() { _ = dev.Stop() }()
 
 	fmt.Println("✓ Capture started, waiting for frame...")
 

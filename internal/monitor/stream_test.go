@@ -224,7 +224,7 @@ func TestStreamSession_Close(t *testing.T) {
 func TestStreamSession_CloseTwice(t *testing.T) {
 	sess := NewStreamSession("test", StreamConfig{})
 
-	sess.Close()
+	_ = sess.Close()
 	err := sess.Close()
 	if err != nil {
 		t.Errorf("Second Close returned error: %v", err)
@@ -332,7 +332,7 @@ func TestStreamManager_ConcurrentCreateRemove(t *testing.T) {
 				Port:     "/dev/nonexistent",
 				BaudRate: 115200,
 			}
-			mgr.Create(string(rune(id)), cfg)
+			_ = mgr.Create(string(rune(id)), cfg)
 			done <- true
 		}(i)
 	}

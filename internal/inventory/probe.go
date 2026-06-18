@@ -39,7 +39,7 @@ func ProbeDeviceQuick(port string) (*DeviceIdentity, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open port: %w", err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	// Synchronize with bootloader
 	if err := conn.Sync(); err != nil {
@@ -91,7 +91,7 @@ func ProbeDevice(port string) (*DeviceIdentity, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open port: %w", err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	// Synchronize with bootloader
 	if err := conn.Sync(); err != nil {
@@ -150,7 +150,7 @@ func ProbeDeviceWithConfig(port string, cfg *rom.Config) (*DeviceIdentity, error
 	if err != nil {
 		return nil, fmt.Errorf("open port: %w", err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	if err := conn.Sync(); err != nil {
 		return nil, fmt.Errorf("sync: %w", err)

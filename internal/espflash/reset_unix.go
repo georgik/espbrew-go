@@ -19,8 +19,9 @@ func setDTRandRTSAtomic(port interface{}, dtr, rts bool) error {
 	// Try to get the underlying file descriptor via type assertion.
 	// go.bug.st/serial's unixPort has a handle field (int), but it's unexported.
 	// We'll use reflect to access it.
+	const ptrKind = reflect.Ptr
 	v := reflect.ValueOf(port)
-	if v.Kind() == reflect.Ptr {
+	if v.Kind() == ptrKind {
 		v = v.Elem()
 	}
 

@@ -47,17 +47,17 @@ func MonitorBootLog(port string, timeout time.Duration) (*BootLogInfo, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open port: %w", err)
 	}
-	defer p.Close()
+	defer func() { _ = p.Close() }()
 
 	// Set read timeout
-	p.SetReadTimeout(timeout)
+	_ = p.SetReadTimeout(timeout)
 
 	// Toggle DTR to reset device
-	p.SetDTR(false)
+	_ = p.SetDTR(false)
 	time.Sleep(50 * time.Millisecond)
-	p.SetDTR(true)
+	_ = p.SetDTR(true)
 	time.Sleep(50 * time.Millisecond)
-	p.SetDTR(false)
+	_ = p.SetDTR(false)
 
 	info := &BootLogInfo{}
 	scanner := bufio.NewScanner(p)
@@ -129,9 +129,9 @@ func parseBootLine(line string, info *BootLogInfo) {
 
 	// Frequency
 	if matches := patternFreq.FindStringSubmatch(line); matches != nil {
-		fmt.Sscanf(matches[1], "%d", &info.Frequency)
+		_, _ = fmt.Sscanf(matches[1], "%d", &info.Frequency)
 	} else if matches := patternFreqAlt.FindStringSubmatch(line); matches != nil {
-		fmt.Sscanf(matches[1], "%d", &info.Frequency)
+		_, _ = fmt.Sscanf(matches[1], "%d", &info.Frequency)
 	}
 
 	// MAC address
