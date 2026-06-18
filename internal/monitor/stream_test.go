@@ -332,7 +332,7 @@ func TestStreamManager_ConcurrentCreateRemove(t *testing.T) {
 				Port:     "/dev/nonexistent",
 				BaudRate: 115200,
 			}
-			_ = mgr.Create(string(rune(id)), cfg)
+			_, _ = mgr.Create(string(rune(id)), cfg)
 			done <- true
 		}(i)
 	}
