@@ -58,11 +58,36 @@ func main() {
 	fmt.Printf("WASM file: %s\n", outputFile)
 	fmt.Printf("File size: %d bytes\n", fileSize(outputFile))
 
-	// Check if wasm_exec.js exists
+	// Check if wasm_exec.js exists, copy if missing
 	wasmExecJs := filepath.Join(webDir, "wasm_exec.js")
 	if _, err := os.Stat(wasmExecJs); os.IsNotExist(err) {
-		fmt.Printf("\nWarning: %s not found\n", wasmExecJs)
-		fmt.Printf("Copy it from Go SDK: cp $(go env GOROOT)/misc/wasm/wasm_exec.js %s\n", webDir)
+		fmt.Printf("\nCopying wasm_exec.js...\n")
+
+		// Try common locations
+		goroot := os.Getenv("GOROOT")
+		locations := []string{
+			filepath.Join(goroot, "misc/wasm/wasm_exec.js"),
+			filepath.Join(goroot, "src/crypto/tls/wasm/wasm_exec.js"),
+		}
+
+		copied := false
+		for _, loc := range locations {
+			if _, err := os.Stat(loc); err == nil {
+				data, err := os.ReadFile(loc)
+				if err == nil {
+					if err := os.WriteFile(wasmExecJs, data, 0644); err == nil {
+						fmt.Printf("  Copied from %s\n", loc)
+						copied = true
+						break
+					}
+				}
+			}
+		}
+
+		if !copied {
+			fmt.Printf("Warning: Could not find wasm_exec.js in Go SDK\n")
+			fmt.Printf("Download from: https://raw.githubusercontent.com/golang/go/master/misc/wasm/wasm_exec.js\n")
+		}
 	}
 }
 

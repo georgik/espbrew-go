@@ -43,7 +43,17 @@ jobs:
           GOOS=js GOARCH=wasm go build -ldflags="-s -w" -o web/main.wasm ./cmd/wasm
 
       - name: Copy wasm_exec.js
-        run: cp "$(go env GOROOT)/misc/wasm/wasm_exec.js" web/
+        run: |
+          # Try old location first
+          if [ -f "$(go env GOROOT)/misc/wasm/wasm_exec.js" ]; then
+            cp "$(go env GOROOT)/misc/wasm/wasm_exec.js" web/
+          # Try new location (Go 1.21+)
+          elif [ -f "$(go env GOROOT)/src/crypto/tls/wasm/wasm_exec.js" ]; then
+            cp "$(go env GOROOT)/src/crypto/tls/wasm/wasm_exec.js" web/
+          # Download from Go source as fallback
+          else
+            curl -sSL https://raw.githubusercontent.com/golang/go/master/misc/wasm/wasm_exec.js -o web/wasm_exec.js
+          fi
 
       - name: Create demo package
         run: |
