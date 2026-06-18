@@ -610,8 +610,17 @@ func TestCameraSettingsHandler_ApplySettings(t *testing.T) {
 
 		router.ServeHTTP(w, req)
 
-		// Should return error, not auto-create
-		assert.Equal(t, http.StatusBadRequest, w.Code, "Should return 400 when no settings available")
+		// On Linux: should return 400 (no settings)
+		// On non-Linux: returns 200 with "skipped" status (controls not available)
+		if camera.ControllerAvailable() {
+			assert.Equal(t, http.StatusBadRequest, w.Code, "Should return 400 when no settings available on Linux")
+		} else {
+			// Non-Linux platforms skip camera controls
+			assert.Equal(t, http.StatusOK, w.Code, "Should return 200 with skipped status on non-Linux")
+			var resp map[string]interface{}
+			json.NewDecoder(w.Body).Decode(&resp)
+			assert.Equal(t, "skipped", resp["status"], "Should indicate controls skipped")
+		}
 	})
 
 	t.Run("apply with request body values", func(t *testing.T) {
