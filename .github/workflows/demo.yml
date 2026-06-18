@@ -50,9 +50,12 @@ jobs:
           # Try new location (Go 1.21+)
           elif [ -f "$(go env GOROOT)/src/crypto/tls/wasm/wasm_exec.js" ]; then
             cp "$(go env GOROOT)/src/crypto/tls/wasm/wasm_exec.js" web/
-          # Download from Go source as fallback
+          # Try alternative Go 1.22+ location
+          elif [ -f "$(go env GOROOT)/src/syscall/js/wasm_exec.js" ]; then
+            cp "$(go env GOROOT)/src/syscall/js/wasm_exec.js" web/
+          # Download from Go 1.20 (known working version)
           else
-            curl -sSL https://raw.githubusercontent.com/golang/go/master/misc/wasm/wasm_exec.js -o web/wasm_exec.js
+            curl -sSL https://raw.githubusercontent.com/golang/go/v1.20.14/misc/wasm/wasm_exec.js -o web/wasm_exec.js
           fi
 
       - name: Create demo package
