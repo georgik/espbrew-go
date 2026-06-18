@@ -113,14 +113,14 @@ func (e *Extractor) ExtractDevices(fullImage image.Image, cameraID, capturePath 
 		}
 
 		if err := jpeg.Encode(outFile, subimage, &jpeg.Options{Quality: 90}); err != nil {
-			outFile.Close()
+			_ = outFile.Close()
 			log.Warn().
 				Err(err).
 				Str("device_id", mapping.DeviceID).
 				Msg("Failed to encode subimage")
 			continue
 		}
-		outFile.Close()
+		_ = outFile.Close()
 
 		// Get relative path for storage
 		relPath, err := filepath.Rel(e.store.GetBaseDir(), subimagePath)

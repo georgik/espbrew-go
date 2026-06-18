@@ -119,14 +119,14 @@ func (m *APIMonitor) Start(ctx context.Context) error {
 
 	// Upload diagram
 	if err := m.client.UploadDiagram(m.ctx); err != nil {
-		m.client.Close()
+		_ = m.client.Close()
 		return fmt.Errorf("failed to upload diagram: %w", err)
 	}
 
 	// Set and upload firmware
 	m.client.SetFirmware(m.elfPath)
 	if err := m.client.UploadFirmware(m.ctx); err != nil {
-		m.client.Close()
+		_ = m.client.Close()
 		return fmt.Errorf("failed to upload firmware: %w", err)
 	}
 
@@ -138,7 +138,7 @@ func (m *APIMonitor) Start(ctx context.Context) error {
 
 	// Start simulation
 	if err := m.client.StartSimulation(m.ctx); err != nil {
-		m.client.Close()
+		_ = m.client.Close()
 		return fmt.Errorf("failed to start simulation: %w", err)
 	}
 
@@ -192,7 +192,7 @@ func (m *APIMonitor) timeoutWatcher() {
 	select {
 	case <-timer.C:
 		log.Info().Msg("Wokwi simulation timeout reached")
-		m.Stop()
+		_ = m.Stop()
 	case <-m.ctx.Done():
 		return
 	}

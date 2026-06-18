@@ -209,7 +209,7 @@ func TestMonitor_Validate_Valid(t *testing.T) {
 		t.Fatalf("Failed to create temp file: %v", err)
 	}
 	defer os.Remove(tmpFile.Name())
-	tmpFile.Close()
+	_ = tmpFile.Close()
 
 	monitor := &Monitor{
 		config:  cfg,

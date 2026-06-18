@@ -160,13 +160,13 @@ func (f *Flasher) copyFirmware(src, dst string, progress chan<- int) error {
 	if err != nil {
 		return err
 	}
-	defer sourceFile.Close()
+	defer func() { _ = sourceFile.Close() }()
 
 	destFile, err := os.Create(dst)
 	if err != nil {
 		return err
 	}
-	defer destFile.Close()
+	defer func() { _ = destFile.Close() }()
 
 	// Get file size for progress calculation
 	sourceInfo, err := sourceFile.Stat()
