@@ -1,0 +1,31 @@
+version: 2
+updates:
+  # Maintain dependencies for Go modules
+  - package-ecosystem: "gomod"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    reviewers:
+      - "georgik"
+    labels:
+      - "dependencies"
+      - "go"
+    ignore:
+      # Ignore major version updates for stability
+      - dependency-name: "github.com/pion/*"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "go.etcd.io/bbolt"
+        update-types: ["version-update:semver-major"]
+
+  # Maintain dependencies for GitHub Actions
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 3
+    labels:
+      - "dependencies"
+      - "ci"

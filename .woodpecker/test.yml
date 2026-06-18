@@ -1,0 +1,32 @@
+when:
+  event:
+    - pull_request
+    - push
+  branch:
+    - main
+    - develop
+
+variables:
+  GO_VERSION: "1.26"
+
+steps:
+  # Test on Linux (amd64)
+  test-linux-amd64:
+    image: golang:1.26
+    commands:
+      - go fmt ./...
+      - go vet ./...
+      - go test -v -race -count=1 ./...
+
+  # Check WASM build
+  test-wasm-build:
+    image: golang:1.26
+    commands:
+      - GOOS=js GOARCH=wasm go build -o /tmp/main.wasm ./cmd/wasm
+      - echo "WASM size: $(wc -c < /tmp/main.wasm) bytes"
+
+  # Lint with golangci-lint
+  lint:
+    image: golangci/golangci-lint:latest-alpine
+    commands:
+      - golangci-lint run ./...

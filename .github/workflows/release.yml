@@ -1,0 +1,113 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build for ${{ matrix.platform }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+            output: espbrew-linux-amd64
+          - goos: linux
+            goarch: arm64
+            output: espbrew-linux-arm64
+          - goos: linux
+            goarch: arm
+            output: espbrew-linux-arm
+          - goos: darwin
+            goarch: amd64
+            output: espbrew-darwin-amd64
+          - goos: darwin
+            goarch: arm64
+            output: espbrew-darwin-arm64
+          - goos: windows
+            goarch: amd64
+            output: espbrew-windows-amd64.exe
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+
+      - name: Get version
+        id: version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+      - name: Build
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: 0
+        run: |
+          go build \
+            -ldflags="-s -w -X main.Version=${{ steps.version.outputs.VERSION }}" \
+            -o ${{ matrix.output }} \
+            ./cmd/espbrew
+          chmod +x ${{ matrix.output }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: espbrew-${{ matrix.platform }}
+          path: ${{ matrix.output }}
+          retention-days: 7
+
+  wasm:
+    name: Build WASM UI
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+      - name: Build WASM
+        run: GOOS=js GOARCH=wasm go build -ldflags="-s -w" -o main.wasm ./cmd/wasm
+      - name: Upload WASM
+        uses: actions/upload-artifact@v4
+        with:
+          name: espbrew-wasm
+          path: main.wasm
+          retention-days: 7
+
+  release:
+    name: Create Release
+    needs: [build, wasm]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Prepare release files
+        run: |
+          mkdir -p release
+          find artifacts -type f -exec cp {} release/ \;
+          cd release
+          sha256sum * > SHA256SUMS
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/*
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

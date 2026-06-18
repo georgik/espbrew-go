@@ -1,0 +1,59 @@
+when:
+  event: tag
+  tag: v*
+
+variables:
+  GO_VERSION: "1.26"
+  VERSION: "${CI_TAG_TAG}"
+
+steps:
+  # Build for Linux platforms (cross-build works on Linux)
+  # Linux amd64 with CGO for camera support, others without
+  build-linux-amd64:
+    image: golang:1.26
+    commands:
+      - apt-get update && apt-get install -y gcc libc6-dev
+      - GOOS=linux GOARCH=amd64 CGO_ENABLED=1 go build -ldflags="-s -w -X main.Version=${VERSION}" -o espbrew-linux-amd64 ./cmd/espbrew
+      - chmod +x espbrew-linux-amd64
+
+  build-linux-arm64:
+    image: golang:1.26
+    commands:
+      - GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -ldflags="-s -w -X main.Version=${VERSION}" -o espbrew-linux-arm64 ./cmd/espbrew
+      - chmod +x espbrew-linux-arm64
+
+  build-linux-arm:
+    image: golang:1.26
+    commands:
+      - GOOS=linux GOARCH=arm CGO_ENABLED=0 go build -ldflags="-s -w -X main.Version=${VERSION}" -o espbrew-linux-arm ./cmd/espbrew
+      - chmod +x espbrew-linux-arm
+
+  # Build WASM
+  build-wasm:
+    image: golang:1.26
+    commands:
+      - GOOS=js GOARCH=wasm go build -ldflags="-s -w" -o espbrew-wasm.wasm ./cmd/wasm
+
+  # Generate checksums
+  checksums:
+    image: alpine:latest
+    commands:
+      - apk add --no-cache go
+      - for f in espbrew-*; do sha256sum "$f" >> SHA256SUMS; done
+
+  # Create release on Codeberg
+  release:
+    image: plugins/gitea-release
+    settings:
+      base_url: https://codeberg.org
+      files:
+        - espbrew-linux-amd64
+        - espbrew-linux-arm64
+        - espbrew-linux-arm
+        - espbrew-wasm.wasm
+        - SHA256SUMS
+      note: |
+        ## ESPBrew ${VERSION}
+
+        Linux binaries are built here on Codeberg CI.
+        macOS and Windows binaries are available on GitHub: https://github.com/georgik/espbrew-go/releases/tag/${VERSION}
