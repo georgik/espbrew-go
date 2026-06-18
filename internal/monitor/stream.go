@@ -12,22 +12,24 @@ import (
 )
 
 type StreamConfig struct {
-	Port     string
-	BaudRate int
-	ExitOn   string
-	Timeout  time.Duration
+	Port       string
+	BaudRate   int
+	ExitOn     string
+	Timeout    time.Duration
+	TimeoutCtx context.Context // Parent context for timeout
 }
 
 type StreamSession struct {
-	id      string
-	config  StreamConfig
-	port    serial.Port
-	dataCh  chan []byte
-	errorCh chan error
-	control chan *ControlMessage
-	mu      sync.RWMutex
-	ctx     context.Context
-	cancel  context.CancelFunc
+	id        string
+	config    StreamConfig
+	port      serial.Port
+	dataCh    chan []byte
+	errorCh   chan error
+	control   chan *ControlMessage
+	mu        sync.RWMutex
+	ctx       context.Context
+	cancel    context.CancelFunc
+	parentCtx context.Context // Parent context for timeout
 }
 
 type ControlMessage struct {
@@ -37,14 +39,19 @@ type ControlMessage struct {
 
 func NewStreamSession(id string, cfg StreamConfig) *StreamSession {
 	ctx, cancel := context.WithCancel(context.Background())
+	parentCtx := cfg.TimeoutCtx
+	if parentCtx == nil {
+		parentCtx = context.Background()
+	}
 	return &StreamSession{
-		id:      id,
-		config:  cfg,
-		dataCh:  make(chan []byte, 256),
-		errorCh: make(chan error, 1),
-		control: make(chan *ControlMessage, 10),
-		ctx:     ctx,
-		cancel:  cancel,
+		id:        id,
+		config:    cfg,
+		dataCh:    make(chan []byte, 256),
+		errorCh:   make(chan error, 1),
+		control:   make(chan *ControlMessage, 10),
+		ctx:       ctx,
+		cancel:    cancel,
+		parentCtx: parentCtx,
 	}
 }
 
@@ -79,6 +86,8 @@ func (s *StreamSession) readLoop() {
 	for {
 		select {
 		case <-s.ctx.Done():
+			return
+		case <-s.parentCtx.Done():
 			return
 		default:
 			n, err := s.port.Read(buf)

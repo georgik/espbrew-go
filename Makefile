@@ -1,6 +1,6 @@
 # ESPBrew Makefile
 
-.PHONY: all build wasm clean test fmt vet lint run
+.PHONY: all build wasm clean test fmt vet lint run e2e
 
 # Default target builds everything
 all: build
@@ -29,6 +29,16 @@ clean:
 test:
 	@echo "Running tests..."
 	@go test -v -race -count=1 ./...
+
+# Run E2E tests (requires hardware device)
+e2e:
+	@echo "Running E2E tests..."
+	@go test -tags=e2e -v -count=1 ./cmd/espbrew
+
+# Run E2E tests in short mode (skip flash)
+e2e-short:
+	@echo "Running E2E tests (short mode)..."
+	@go test -tags=e2e -short -v -count=1 ./cmd/espbrew
 
 # Format code
 fmt:
@@ -84,6 +94,8 @@ help:
 	@echo "  make wasm         - Build WASM UI only"
 	@echo "  make clean        - Remove build artifacts"
 	@echo "  make test         - Run tests"
+	@echo "  make e2e          - Run E2E tests (requires hardware)"
+	@echo "  make e2e-short    - Run E2E tests short mode (no flash)"
 	@echo "  make fmt          - Format code"
 	@echo "  make vet          - Run go vet"
 	@echo "  make lint         - Run golangci-lint"

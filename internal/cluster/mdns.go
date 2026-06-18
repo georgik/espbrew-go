@@ -3,12 +3,14 @@ package cluster
 import (
 	"context"
 	"fmt"
+	"io"
+	"log"
 	"net"
 	"sync"
 	"time"
 
 	"github.com/hashicorp/mdns"
-	"github.com/rs/zerolog/log"
+	"github.com/rs/zerolog"
 )
 
 const (
@@ -57,7 +59,7 @@ func NewmDNSService(nodeID, role string, httpPort int) *mDNSService {
 }
 
 func (m *mDNSService) Start() error {
-	log.Info().Str("node_id", m.nodeID).Str("role", m.role).
+	zerolog.Ctx(m.ctx).Info().Str("node_id", m.nodeID).Str("role", m.role).
 		Msg("Starting mDNS service")
 
 	// Start announcer
@@ -104,6 +106,7 @@ func (m *mDNSService) announce() {
 	defer ticker.Stop()
 
 	announced := false
+	logger := zerolog.Ctx(m.ctx)
 
 	info := []string{
 		fmt.Sprintf("node_id=%s", m.nodeID),
@@ -120,7 +123,7 @@ func (m *mDNSService) announce() {
 		// Get local IP
 		ip, err := m.getLocalIP()
 		if err != nil {
-			log.Warn().Err(err).Msg("Failed to get local IP for mDNS announcement")
+			logger.Warn().Err(err).Msg("Failed to get local IP for mDNS announcement")
 			time.Sleep(5 * time.Second)
 			continue
 		}
@@ -135,25 +138,26 @@ func (m *mDNSService) announce() {
 			info,
 		)
 		if err != nil {
-			log.Error().Err(err).Msg("Failed to create mDNS service")
+			logger.Error().Err(err).Msg("Failed to create mDNS service")
 			return
 		}
 
 		server, err := mdns.NewServer(&mdns.Config{Zone: service})
 		if err != nil {
-			log.Error().Err(err).Msg("Failed to start mDNS server")
+			logger.Error().Err(err).Msg("Failed to start mDNS server")
 			return
 		}
 
 		if !announced {
-			log.Info().Str("ip", ip.String()).Int("port", m.httpPort).
+			logger.Info().Str("ip", ip.String()).Int("port", m.httpPort).
 				Msg("mDNS announcement sent")
 			announced = true
 		}
 
 		// Announce once, then wait for ticker
 		<-time.After(1 * time.Second)
-		server.Shutdown()
+		// Suppress mdns library internal logging during shutdown
+		suppressStdLog(func() { server.Shutdown() })
 
 		select {
 		case <-m.ctx.Done():
@@ -182,7 +186,7 @@ func (m *mDNSService) discover() {
 		}
 
 		if err := mdns.Query(params); err != nil {
-			log.Debug().Err(err).Msg("mDNS query failed")
+			zerolog.Ctx(m.ctx).Debug().Err(err).Msg("mDNS query failed")
 			time.Sleep(5 * time.Second)
 			continue
 		}
@@ -190,6 +194,7 @@ func (m *mDNSService) discover() {
 }
 
 func (m *mDNSService) processEntries() {
+	logger := zerolog.Ctx(m.ctx)
 	for entry := range m.entries {
 		if len(entry.InfoFields) < 2 {
 			continue
@@ -220,7 +225,7 @@ func (m *mDNSService) processEntries() {
 		}
 		m.mu.Unlock()
 
-		log.Info().Str("peer", nodeID).Str("role", role).
+		logger.Info().Str("peer", nodeID).Str("role", role).
 			Str("address", entry.AddrV4.String()).Msg("Peer discovered")
 	}
 }
@@ -245,13 +250,14 @@ func (m *mDNSService) cleanupStale() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	logger := zerolog.Ctx(m.ctx)
 	now := time.Now()
 	timeout := 2 * time.Minute
 
 	for id, peer := range m.peers {
 		if now.Sub(peer.LastSeen) > timeout {
 			delete(m.peers, id)
-			log.Info().Str("peer", id).Msg("Peer timed out")
+			logger.Info().Str("peer", id).Msg("Peer timed out")
 		}
 	}
 }
@@ -271,4 +277,15 @@ func (m *mDNSService) getLocalIP() (net.IP, error) {
 	}
 
 	return nil, fmt.Errorf("no local IP found")
+}
+
+// suppressStdLog temporarily redirects standard log output to suppress noise
+// from third-party libraries (e.g., hashicorp/mdns) during cleanup.
+func suppressStdLog(f func()) {
+	// Save original log output
+	original := log.Writer()
+	// Redirect to dev null
+	log.SetOutput(io.Discard)
+	defer log.SetOutput(original)
+	f()
 }

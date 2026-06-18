@@ -25,13 +25,15 @@ var upgrader = websocket.Upgrader{
 }
 
 type Server struct {
-	addr    string
-	node    cluster.Node
-	router  *mux.Router
-	server  *http.Server
-	api     *APIHandler
-	monitor *MonitorServer
-	hub     *ProgressHub
+	addr       string
+	node       cluster.Node
+	router     *mux.Router
+	server     *http.Server
+	api        *APIHandler
+	monitor    *MonitorServer
+	hub        *ProgressHub
+	devMode    bool
+	shutdownCh chan struct{}
 
 	// WebSocket clients
 	clients map[*websocket.Conn]bool
@@ -125,6 +127,11 @@ func (s *Server) setupRoutes(store *persistence.Store) {
 
 	// V1 HTML interface
 	s.router.PathPrefix("/v1/").Handler(s.handleV1Static())
+
+	// Developer mode shutdown endpoint
+	if s.devMode {
+		s.router.HandleFunc("/api/v1/dev/shutdown", s.handleDevShutdown).Methods("POST")
+	}
 }
 
 func (s *Server) GetProgressCallback() func(string, int, string) {
@@ -136,12 +143,22 @@ func (s *Server) GetProgressCallback() func(string, int, string) {
 	}
 }
 
+// SetDevMode enables developer mode features (unsafe for production)
+func (s *Server) SetDevMode(enabled bool) {
+	s.devMode = enabled
+	if enabled && s.router != nil {
+		s.router.HandleFunc("/api/v1/dev/shutdown", s.handleDevShutdown).Methods("POST")
+		log.Warn().Msg("Developer mode enabled - shutdown endpoint exposed")
+	}
+}
+
 func (s *Server) Start(ctx context.Context) error {
+	s.shutdownCh = make(chan struct{})
 	s.server = &http.Server{
 		Addr:         s.addr,
 		Handler:      s.router,
-		ReadTimeout:  10 * time.Second,
-		WriteTimeout: 10 * time.Second,
+		ReadTimeout:  30 * time.Second,
+		WriteTimeout: 120 * time.Second, // Long timeout for snap/flash operations
 		IdleTimeout:  60 * time.Second,
 	}
 
@@ -156,7 +173,10 @@ func (s *Server) Start(ctx context.Context) error {
 	go s.broadcastState()
 
 	go func() {
-		<-ctx.Done()
+		select {
+		case <-ctx.Done():
+		case <-s.shutdownCh:
+		}
 		log.Info().Msg("HTTP server shutting down")
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 		defer cancel()
@@ -165,6 +185,16 @@ func (s *Server) Start(ctx context.Context) error {
 	}()
 
 	return nil
+}
+
+// handleDevShutdown handles developer mode shutdown request
+func (s *Server) handleDevShutdown(w http.ResponseWriter, r *http.Request) {
+	log.Warn().Msg("Developer mode shutdown requested")
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
+		"status": "shutting_down",
+	})
+	close(s.shutdownCh)
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {

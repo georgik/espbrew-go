@@ -156,7 +156,7 @@ func (h *SnapAPI) handleSnap(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, SnapResponse{
 		SnapID: result.Metadata.SnapID,
 		Status: string(result.Metadata.Status),
-		Result: result.ToMap(),
+		Result: result.ToMap(true), // Include logs for client-side saving
 	})
 }
 
@@ -339,15 +339,25 @@ func (h *SnapAPI) forwardSnapRequest(w http.ResponseWriter, r *http.Request, dev
 	}
 	defer resp.Body.Close()
 
-	// Copy response headers and status
+	// Read response body
+	body, readErr := io.ReadAll(resp.Body)
+	if readErr != nil {
+		return fmt.Errorf("read response body: %w", readErr)
+	}
+
+	// Write status and copy headers
 	for k, v := range resp.Header {
 		w.Header()[k] = v
 	}
+	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(resp.StatusCode)
 
-	// Copy response body
-	_, err = io.Copy(w, resp.Body)
-	return err
+	// Write response body
+	if _, err := w.Write(body); err != nil {
+		return fmt.Errorf("write response body: %w", err)
+	}
+
+	return nil
 }
 
 // forwardHashCheckRequest forwards a hash check request to the peer node that owns the device.
@@ -387,15 +397,25 @@ func (h *SnapAPI) forwardHashCheckRequest(w http.ResponseWriter, r *http.Request
 	}
 	defer resp.Body.Close()
 
-	// Copy response headers and status
+	// Read response body
+	body, readErr := io.ReadAll(resp.Body)
+	if readErr != nil {
+		return fmt.Errorf("read response body: %w", readErr)
+	}
+
+	// Write status and copy headers
 	for k, v := range resp.Header {
 		w.Header()[k] = v
 	}
+	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(resp.StatusCode)
 
-	// Copy response body
-	_, err = io.Copy(w, resp.Body)
-	return err
+	// Write response body
+	if _, err := w.Write(body); err != nil {
+		return fmt.Errorf("write response body: %w", err)
+	}
+
+	return nil
 }
 
 // executeHashCheck performs the actual hash check operation on the local node.
@@ -519,9 +539,48 @@ func (h *SnapAPI) executeSnap(ctx context.Context, devicePath string, req *SnapR
 	duration := time.Duration(req.Duration) * time.Second
 	executor := snap.NewExecutor(devicePath, duration)
 
+	// Determine camera ID from device-to-camera mapping if not specified
+	cameraID := req.CameraID
+	if cameraID == "" {
+		// Try to get device_id from cluster state
+		var deviceID string
+		if h.leader != nil {
+			state := h.leader.State()
+			for path, dev := range state.Devices {
+				if path == devicePath {
+					deviceID = dev.DeviceID
+					break
+				}
+			}
+		}
+
+		// Look up camera mapping for this device
+		if deviceID != "" && h.leader != nil {
+			mappings, err := h.store.ListBoundingBoxesForDevice(deviceID)
+			if err == nil && len(mappings) > 0 {
+				// Get the camera UUID from mapping
+				cameraUUID := mappings[0].CameraID
+
+				// Resolve camera UUID to camera path from cluster state
+				state := h.leader.State()
+				for _, cam := range state.Cameras {
+					if cam.ID == cameraUUID {
+						cameraID = cam.Path // Use actual device path (e.g., /dev/video0)
+						log.Info().
+							Str("device_id", deviceID).
+							Str("camera_uuid", cameraUUID).
+							Str("camera_path", cameraID).
+							Msg("Using camera from device mapping")
+						break
+					}
+				}
+			}
+		}
+	}
+
 	// Configure executor
-	if req.CameraID != "" {
-		executor.SetCameraID(req.CameraID)
+	if cameraID != "" {
+		executor.SetCameraID(cameraID)
 	}
 	if req.SkipCapture {
 		executor.SetNoCapture(true)

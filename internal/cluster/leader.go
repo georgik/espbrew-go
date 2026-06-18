@@ -47,7 +47,7 @@ type LeaderConfig struct {
 	DisableWatcher     bool          // For testing
 	DisableMaintenance bool          // For testing - skips maintenance loop
 	DisableVirtual     bool          // For testing - skips virtual device registration
-	DiscoveryDuration  time.Duration // How long to stay in discovery mode (default 30s)
+	DiscoveryDuration  time.Duration // How long to stay in discovery mode (default 5s)
 	InitialMode        string        // Starting mode (default "discovery")
 }
 
@@ -128,7 +128,7 @@ func (l *LeaderNode) Start(ctx context.Context) error {
 	if l.mode == protocol.ModeDiscovery {
 		duration := l.config.DiscoveryDuration
 		if duration == 0 {
-			duration = 30 * time.Second // Default 30s
+			duration = 5 * time.Second // Default 5s
 		}
 		l.startDiscoveryTimer(duration)
 	}
@@ -1454,7 +1454,7 @@ func (l *LeaderNode) SetMode(mode protocol.OperationMode) error {
 		// Set timer to auto-switch to operational mode
 		duration := l.config.DiscoveryDuration
 		if duration == 0 {
-			duration = 30 * time.Second // Default 30s
+			duration = 5 * time.Second // Default 5s
 		}
 		l.startDiscoveryTimer(duration)
 

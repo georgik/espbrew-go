@@ -76,7 +76,7 @@ func (h *Handler) writeJSON(result *SnapResult) error {
 
 	encoder := json.NewEncoder(h.output)
 	encoder.SetIndent("", "  ")
-	return encoder.Encode(result.ToMap())
+	return encoder.Encode(result.ToMap(true)) // Include logs for local output
 }
 
 // writeText outputs human-readable formatted sections.

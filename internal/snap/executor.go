@@ -290,22 +290,23 @@ func (e *Executor) monitorPhysical(ctx context.Context) error {
 		Dur("duration", e.duration).
 		Msg("Starting physical serial monitor")
 
+	// Create context with timeout FIRST
+	monitorCtx, cancel := context.WithTimeout(ctx, e.duration)
+	defer cancel()
+
 	// Create monitor session
 	sessionID := uuid.New().String()
 	session := monitor.NewStreamSession(sessionID, monitor.StreamConfig{
-		Port:     e.device,
-		BaudRate: e.baudRate,
-		Timeout:  e.duration,
+		Port:       e.device,
+		BaudRate:   e.baudRate,
+		Timeout:    e.duration,
+		TimeoutCtx: monitorCtx,
 	})
 
 	if err := session.Start(); err != nil {
 		return fmt.Errorf("start monitor: %w", err)
 	}
 	defer session.Close()
-
-	// Create context with timeout
-	monitorCtx, cancel := context.WithTimeout(ctx, e.duration)
-	defer cancel()
 
 	// Buffer for incomplete lines
 	var lineBuffer []byte

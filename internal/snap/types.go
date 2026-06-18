@@ -77,10 +77,14 @@ type SnapResult struct {
 }
 
 // ToMap converts SnapResult to a map for JSON serialization.
-func (r *SnapResult) ToMap() map[string]interface{} {
+// For cluster operations, set includeLogs=false to reduce response size.
+func (r *SnapResult) ToMap(includeLogs bool) map[string]interface{} {
 	m := map[string]interface{}{
 		"metadata": r.Metadata,
-		"logs":     r.Logs,
+	}
+
+	if includeLogs {
+		m["logs"] = r.Logs
 	}
 
 	if r.ImageBase64 != "" {

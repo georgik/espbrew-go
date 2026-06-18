@@ -292,7 +292,7 @@ func TestSnapResult_Empty(t *testing.T) {
 			name:   "ToMap with empty result",
 			result: SnapResult{},
 			check: func(t *testing.T, r SnapResult) {
-				m := r.ToMap()
+				m := r.ToMap(true)
 				if len(m) != 2 {
 					t.Errorf("ToMap() length = %v, want 2", len(m))
 				}
@@ -310,7 +310,7 @@ func TestSnapResult_Empty(t *testing.T) {
 				ImageBase64: "base64encodeddata",
 			},
 			check: func(t *testing.T, r SnapResult) {
-				m := r.ToMap()
+				m := r.ToMap(true)
 				if len(m) != 3 {
 					t.Errorf("ToMap() length = %v, want 3", len(m))
 				}

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -56,7 +57,7 @@ func init() {
 	snapCmd.Flags().BoolVar(&snapOpts.skipFlash, "skip-flash", false, "Skip flashing step")
 	snapCmd.Flags().BoolVar(&snapOpts.noCapture, "no-capture", false, "Skip image capture (flash only)")
 	snapCmd.Flags().BoolVar(&snapOpts.noMonitor, "no-monitor", false, "Skip serial monitor after flash")
-	snapCmd.Flags().StringVar(&snapOpts.saveDir, "save-dir", "", "Directory to save captured images")
+	snapCmd.Flags().StringVar(&snapOpts.saveDir, "save-dir", "", "Directory to save snap results (default: ./snap/TIMESTAMP)")
 	snapCmd.Flags().StringVar(&snapOpts.leader, "leader", os.Getenv("ESPBREW_LEADER"), "Leader address for cluster mode")
 	snapCmd.Flags().StringVar(&snapOpts.jobID, "job-id", "", "Job ID for resuming operations")
 	snapCmd.Flags().BoolVar(&snapOpts.displayPreset, "display-preset", false, "Apply display photography preset (Linux only)")
@@ -125,16 +126,50 @@ func runLocalSnap() error {
 		return fmt.Errorf("internal error: nil result from executor")
 	}
 
-	// Create output handler based on --output flag
-	handler, outputErr := createSnapOutputHandler()
-	if outputErr != nil {
-		return fmt.Errorf("failed to create output handler: %w", outputErr)
+	// Get snap directory (create default if not specified)
+	snapDir, err := getSnapDir()
+	if err != nil {
+		log.Warn().Err(err).Msg("Failed to create snap directory")
 	}
 
-	// Write result using handler
-	if writeErr := handler.Write(result); writeErr != nil {
-		log.Warn().Err(writeErr).Msg("Failed to write output")
-		return writeErr
+	// Save logs to file
+	if snapDir != "" && len(result.Logs) > 0 {
+		if err := saveSnapLogs(result.Metadata.SnapID, result.Logs, snapDir); err != nil {
+			log.Warn().Err(err).Msg("Failed to save logs")
+		}
+	}
+
+	// Create output handler with snap directory
+	if snapDir != "" {
+		handler := snap.NewHandler(snap.OutputFormatText, os.Stdout, snapDir)
+		if writeErr := handler.Write(result); writeErr != nil {
+			log.Warn().Err(writeErr).Msg("Failed to write output")
+		}
+
+		// Print saved file paths
+		imagePath := fmt.Sprintf("%s/snap-%s.jpg", snapDir, result.Metadata.SnapID)
+		metaPath := fmt.Sprintf("%s/snap-%s.json", snapDir, result.Metadata.SnapID)
+		logsPath := fmt.Sprintf("%s/snap-%s.log", snapDir, result.Metadata.SnapID)
+
+		if len(result.ImageData) > 0 {
+			fmt.Printf("Saved image:    %s\n", imagePath)
+		}
+		fmt.Printf("Saved metadata: %s\n", metaPath)
+		if len(result.Logs) > 0 {
+			fmt.Printf("Saved logs:     %s\n", logsPath)
+		}
+		fmt.Printf("Snap directory: %s\n", snapDir)
+	} else {
+		// Create output handler based on --output flag
+		handler, outputErr := createSnapOutputHandler()
+		if outputErr != nil {
+			return fmt.Errorf("failed to create output handler: %w", outputErr)
+		}
+
+		// Write result using handler
+		if writeErr := handler.Write(result); writeErr != nil {
+			log.Warn().Err(writeErr).Msg("Failed to write output")
+		}
 	}
 
 	// Log result summary
@@ -145,14 +180,6 @@ func runLocalSnap() error {
 		Int("log_count", len(result.Logs)).
 		Int("image_size", len(result.ImageData)).
 		Msg("Snapshot completed")
-
-	// Print saved file paths if save-dir was used
-	if snapOpts.saveDir != "" && len(result.ImageData) > 0 {
-		imagePath := fmt.Sprintf("%s/snap-%s.jpg", snapOpts.saveDir, result.Metadata.SnapID)
-		metaPath := fmt.Sprintf("%s/snap-%s.json", snapOpts.saveDir, result.Metadata.SnapID)
-		fmt.Printf("Saved image: %s\n", imagePath)
-		fmt.Printf("Saved metadata: %s\n", metaPath)
-	}
 
 	// Return appropriate exit code based on result status
 	if result.Metadata.Status == snap.SnapStatusFailed {
@@ -374,17 +401,37 @@ func runClusterSnap() error {
 		return fmt.Errorf("snap failed: %s", snapResp.Error)
 	}
 
-	// Save image if --save-dir specified and image data is available
-	if snapOpts.saveDir != "" && snapResp.ImageData != nil && len(snapResp.ImageData) > 0 {
-		imagePath := fmt.Sprintf("%s/snap-%s.jpg", snapOpts.saveDir, snapResp.SnapID)
+	// Get snap directory (create default if not specified)
+	snapDir, err := getSnapDir()
+	if err != nil {
+		log.Warn().Err(err).Msg("Failed to create snap directory")
+	}
+
+	// Save image if available
+	if snapDir != "" && snapResp.ImageData != nil && len(snapResp.ImageData) > 0 {
+		imagePath := filepath.Join(snapDir, fmt.Sprintf("snap-%s.jpg", snapResp.SnapID))
 		if err := os.WriteFile(imagePath, snapResp.ImageData, 0644); err != nil {
 			log.Warn().Err(err).Msg("Failed to save image")
 		} else {
-			fmt.Printf("Saved image: %s\n", imagePath)
+			fmt.Printf("Saved image:    %s\n", imagePath)
 		}
+	}
 
-		// Save metadata
-		metaPath := fmt.Sprintf("%s/snap-%s.json", snapOpts.saveDir, snapResp.SnapID)
+	// Save logs if available
+	if snapDir != "" && snapResp.Logs != nil && len(snapResp.Logs) > 0 {
+		// Convert cluster logs to snap logs format
+		snapLogs := convertClusterLogsToSnapLogs(snapResp.Logs)
+		if err := saveSnapLogs(snapResp.SnapID, snapLogs, snapDir); err != nil {
+			log.Warn().Err(err).Msg("Failed to save logs")
+		} else {
+			logPath := filepath.Join(snapDir, fmt.Sprintf("snap-%s.log", snapResp.SnapID))
+			fmt.Printf("Saved logs:     %s (%d entries)\n", logPath, len(snapResp.Logs))
+		}
+	}
+
+	// Save metadata if available
+	if snapDir != "" && snapResp.Metadata != nil {
+		metaPath := filepath.Join(snapDir, fmt.Sprintf("snap-%s.json", snapResp.SnapID))
 		metaData, err := json.MarshalIndent(snapResp.Metadata, "", "  ")
 		if err != nil {
 			log.Warn().Err(err).Msg("Failed to marshal metadata")
@@ -395,10 +442,9 @@ func runClusterSnap() error {
 				fmt.Printf("Saved metadata: %s\n", metaPath)
 			}
 		}
-	}
 
-	// Print log summary if available
-	if snapResp.Metadata != nil && snapResp.Metadata.LogEntryCount > 0 {
+		fmt.Printf("Snap directory: %s\n", snapDir)
+	} else if snapResp.Metadata != nil && snapResp.Metadata.LogEntryCount > 0 {
 		fmt.Printf("Log entries: %d\n", snapResp.Metadata.LogEntryCount)
 	}
 
@@ -544,4 +590,78 @@ func isFormatOnly(output string) bool {
 	default:
 		return false
 	}
+}
+
+// getSnapDir returns the snap directory, creating default if not specified.
+// If --save-dir is specified, uses that directly.
+// Otherwise, creates timestamped directory under ./snap/.
+func getSnapDir() (string, error) {
+	if snapOpts.saveDir != "" {
+		// User specified directory, use as-is
+		return snapOpts.saveDir, nil
+	}
+
+	// Create default snap directory structure in working directory
+	baseDir := "snap"
+	if err := os.MkdirAll(baseDir, 0755); err != nil {
+		return "", fmt.Errorf("create snap base directory: %w", err)
+	}
+
+	// Create timestamped subdirectory
+	timestamp := time.Now().Format("2006-01-02_15-04-05")
+	snapDir := filepath.Join(baseDir, timestamp)
+
+	if err := os.MkdirAll(snapDir, 0755); err != nil {
+		return "", fmt.Errorf("create snap directory: %w", err)
+	}
+
+	return snapDir, nil
+}
+
+// saveSnapLogs saves serial log entries to a text file.
+func saveSnapLogs(snapID string, logs []snap.SerialLogEntry, snapDir string) error {
+	if len(logs) == 0 {
+		return nil
+	}
+
+	logPath := filepath.Join(snapDir, fmt.Sprintf("snap-%s.log", snapID))
+	file, err := os.Create(logPath)
+	if err != nil {
+		return fmt.Errorf("create log file: %w", err)
+	}
+	defer file.Close()
+
+	// Write logs with timestamps
+	for _, entry := range logs {
+		timestamp := entry.Timestamp.Format("15:04:05.000")
+		line := fmt.Sprintf("[%s] ", timestamp)
+		if entry.Level != "" {
+			line += fmt.Sprintf("[%s] ", entry.Level)
+		}
+		line += entry.Message + "\n"
+
+		if _, err := file.WriteString(line); err != nil {
+			return fmt.Errorf("write log entry: %w", err)
+		}
+	}
+
+	return nil
+}
+
+// convertClusterLogsToSnapLogs converts cluster SerialLogEntry to snap SerialLogEntry.
+func convertClusterLogsToSnapLogs(clusterLogs []cluster.SerialLogEntry) []snap.SerialLogEntry {
+	if clusterLogs == nil {
+		return nil
+	}
+
+	snapLogs := make([]snap.SerialLogEntry, len(clusterLogs))
+	for i, log := range clusterLogs {
+		snapLogs[i] = snap.SerialLogEntry{
+			Timestamp: log.Timestamp,
+			Message:   log.Message,
+			Level:     log.Level,
+			Source:    log.Source,
+		}
+	}
+	return snapLogs
 }

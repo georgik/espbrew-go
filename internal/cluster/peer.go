@@ -41,7 +41,7 @@ type PeerConfig struct {
 	HTTPPort          int
 	DisablemDNS       bool          // For testing
 	DisableWatcher    bool          // For testing
-	DiscoveryDuration time.Duration // How long to stay in discovery mode (default 10s)
+	DiscoveryDuration time.Duration // How long to stay in discovery mode (default 5s)
 	InitialMode       string        // Starting mode (default "discovery")
 }
 
@@ -101,7 +101,7 @@ func (p *PeerNode) Start(ctx context.Context) error {
 	if p.mode == protocol.ModeDiscovery {
 		duration := p.config.DiscoveryDuration
 		if duration == 0 {
-			duration = 10 * time.Second // Default 10s
+			duration = 5 * time.Second // Default 5s
 		}
 		p.startDiscoveryTimer(duration)
 	}
@@ -403,7 +403,7 @@ func (p *PeerNode) SetMode(mode protocol.OperationMode) error {
 		// Set timer to auto-switch to operational mode
 		duration := p.config.DiscoveryDuration
 		if duration == 0 {
-			duration = 10 * time.Second // Default 10s
+			duration = 5 * time.Second // Default 5s
 		}
 		p.startDiscoveryTimer(duration)
 

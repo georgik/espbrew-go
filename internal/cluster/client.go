@@ -3,6 +3,7 @@ package cluster
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -543,11 +544,20 @@ type SnapRequest struct {
 
 // SnapResponse represents the response from a cluster snap operation.
 type SnapResponse struct {
-	SnapID    string        `json:"snap_id"`  // Unique snapshot identifier
-	Status    string        `json:"status"`   // Operation status (success, partial, failed)
-	Error     string        `json:"error"`    // Error message if failed
-	ImageData []byte        `json:"-"`        // Raw image data (not in JSON)
-	Metadata  *SnapMetadata `json:"metadata"` // Snapshot metadata
+	SnapID    string           `json:"snap_id"`  // Unique snapshot identifier
+	Status    string           `json:"status"`   // Operation status (success, partial, failed)
+	Error     string           `json:"error"`    // Error message if failed
+	ImageData []byte           `json:"-"`        // Raw image data (not in JSON)
+	Metadata  *SnapMetadata    `json:"metadata"` // Snapshot metadata
+	Logs      []SerialLogEntry `json:"-"`        // Serial log entries (not in JSON)
+}
+
+// SerialLogEntry represents a single line from the serial monitor.
+type SerialLogEntry struct {
+	Timestamp time.Time `json:"timestamp"`        // When the log entry was received
+	Message   string    `json:"message"`          // The log message content
+	Level     string    `json:"level,omitempty"`  // Log level (info, warn, error, debug)
+	Source    string    `json:"source,omitempty"` // Source of the log entry
 }
 
 // SnapMetadata contains descriptive information about a cluster snapshot.
@@ -605,6 +615,14 @@ func (c *Client) ExecuteSnap(req SnapRequest) (*SnapResponse, error) {
 				return nil, fmt.Errorf("status %d: %s", resp.StatusCode, string(bodyBytes))
 			}
 
+			// Read entire response body to ensure connection is properly closed
+			bodyBytes, readErr := io.ReadAll(resp.Body)
+			if readErr != nil {
+				resp.Body.Close()
+				return nil, fmt.Errorf("read response body: %w", readErr)
+			}
+			resp.Body.Close()
+
 			// Decode response
 			var snapResp struct {
 				SnapID string                 `json:"snap_id"`
@@ -612,11 +630,9 @@ func (c *Client) ExecuteSnap(req SnapRequest) (*SnapResponse, error) {
 				Error  string                 `json:"error,omitempty"`
 				Result map[string]interface{} `json:"result,omitempty"`
 			}
-			if err := json.NewDecoder(resp.Body).Decode(&snapResp); err != nil {
-				resp.Body.Close()
+			if err := json.Unmarshal(bodyBytes, &snapResp); err != nil {
 				return nil, fmt.Errorf("decode response: %w", err)
 			}
-			resp.Body.Close()
 
 			// Build response
 			response := &SnapResponse{
@@ -625,9 +641,11 @@ func (c *Client) ExecuteSnap(req SnapRequest) (*SnapResponse, error) {
 				Error:  snapResp.Error,
 			}
 
-			// Extract metadata from result if available
+			// Extract metadata, image data, and logs from result if available
 			if snapResp.Result != nil {
 				response.Metadata = extractSnapMetadata(snapResp.Result)
+				response.ImageData = extractSnapImageData(snapResp.Result)
+				response.Logs = extractSnapLogs(snapResp.Result)
 			}
 
 			return response, nil
@@ -698,6 +716,54 @@ func extractSnapMetadata(result map[string]interface{}) *SnapMetadata {
 	}
 
 	return metadata
+}
+
+// extractSnapImageData extracts and decodes base64 image data from result map.
+func extractSnapImageData(result map[string]interface{}) []byte {
+	if imgB64, ok := result["image_base64"].(string); ok && imgB64 != "" {
+		// Decode base64 image data
+		data, err := base64.StdEncoding.DecodeString(imgB64)
+		if err != nil {
+			log.Debug().Err(err).Msg("Failed to decode base64 image data")
+			return nil
+		}
+		return data
+	}
+	return nil
+}
+
+// extractSnapLogs extracts serial log entries from result map.
+func extractSnapLogs(result map[string]interface{}) []SerialLogEntry {
+	if logsRaw, ok := result["logs"].([]interface{}); ok && logsRaw != nil {
+		logs := make([]SerialLogEntry, 0, len(logsRaw))
+		for _, logEntry := range logsRaw {
+			if entryMap, ok := logEntry.(map[string]interface{}); ok {
+				entry := SerialLogEntry{}
+
+				// Extract timestamp
+				if ts, ok := entryMap["timestamp"].(string); ok {
+					entry.Timestamp, _ = time.Parse(time.RFC3339, ts)
+				}
+
+				// Extract message
+				if msg, ok := entryMap["message"].(string); ok {
+					entry.Message = msg
+				}
+
+				// Extract optional fields
+				if level, ok := entryMap["level"].(string); ok {
+					entry.Level = level
+				}
+				if source, ok := entryMap["source"].(string); ok {
+					entry.Source = source
+				}
+
+				logs = append(logs, entry)
+			}
+		}
+		return logs
+	}
+	return nil
 }
 
 // FlashHashCheckRequest represents a flash hash check request.

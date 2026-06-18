@@ -33,6 +33,7 @@ var cfg struct {
 	cfgFile     string
 	workers     int
 	disablemDNS bool
+	devMode     bool
 }
 
 func init() {
@@ -56,6 +57,7 @@ func init() {
 	clusterCmd.Flags().StringVar(&cfg.logLevel, "log-level", "info", "Log level: debug, info, warn, error")
 	clusterCmd.Flags().IntVar(&cfg.workers, "workers", 2, "Number of flash workers")
 	clusterCmd.Flags().BoolVar(&cfg.disablemDNS, "no-mdns", false, "Disable mDNS discovery")
+	clusterCmd.Flags().BoolVar(&cfg.devMode, "dev-mode", false, "Enable developer mode (unsafe for production)")
 }
 
 func main() {
@@ -171,6 +173,11 @@ func runServer(cmd *cobra.Command, args []string) error {
 	}
 
 	srv := httpserver.NewServer(addr, node, store)
+
+	// Enable developer mode if requested
+	if cfg.devMode {
+		srv.SetDevMode(true)
+	}
 
 	// Start executor with progress callback for leader nodes
 	if l, ok := node.(*cluster.LeaderNode); ok {

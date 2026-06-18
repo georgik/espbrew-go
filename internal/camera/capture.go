@@ -95,7 +95,23 @@ func (c *Capturer) Capture(ctx context.Context, req *CaptureRequest) (*CaptureRe
 	// Determine device ID for capture (path preferred, fallback to storage ID)
 	captureID := req.DevicePath
 	if captureID == "" {
-		captureID = storageID
+		// If we have a discovered camera, use its Path directly for V4L2
+		if storageID != "default" && storageID != "" {
+			cameras, err := c.discoverer.Discover()
+			if err == nil && len(cameras) > 0 {
+				// Find the camera by ID and use its Path
+				for _, cam := range cameras {
+					if cam.ID == storageID {
+						captureID = cam.Path // Use /dev/video0 directly
+						break
+					}
+				}
+			}
+		}
+		// Fallback to storage ID if path not found
+		if captureID == "" {
+			captureID = storageID
+		}
 	}
 
 	log.Info().

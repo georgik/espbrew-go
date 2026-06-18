@@ -42,7 +42,7 @@ espbrew snap [flags]
 | `--skip-flash` | bool | false | Skip flashing step entirely |
 | `--no-capture` | bool | false | Skip image capture (flash + monitor only) |
 | `--no-monitor` | bool | false | Skip serial monitor after flash |
-| `--save-dir` | string | (empty) | Directory to save captured images |
+| `--save-dir` | string | (empty) | Directory to save snap results (default: ./snap/TIMESTAMP/) |
 | `--leader` | string | (empty) | Leader address for cluster mode (deprecated: use --cluster) |
 | `--job-id` | string | (empty) | Job ID for resuming operations |
 
@@ -232,20 +232,31 @@ snap-20240602-123456 success 28453ms /dev/ttyUSB0 esp32-s3 build/app.bin monitor
 
 ### File Saving
 
-Use `--save-dir` to save captured images and metadata:
+Snap results are automatically saved to timestamped directories in the current working directory:
 
 ```bash
-espbrew snap --save-dir ./snapshots
+espbrew snap
 ```
 
-Creates:
-- `./snapshots/snap-{id}.jpg` - Captured image
-- `./snapshots/snap-{id}.json` - Result metadata
+Creates `./snap/YYYY-MM-DD_HH-MM-SS/` with:
+- `snap-{id}.jpg` - Captured image
+- `snap-{id}.json` - Result metadata
+- `snap-{id}.log` - Serial monitor logs
 
 Example output:
 ```
-Saved image: ./snapshots/snap-20240602-123456.jpg
-Saved metadata: ./snapshots/snap-20240602-123456.json
+Snap ID:  f7b4d141-d0ed-42fe-a11c-67d8c12e8c71
+Status:   success
+Saved image:    snap/2026-06-18_08-59-58/snap-f7b4d141-d0ed-42fe-a11c-67d8c12e8c71.jpg
+Saved logs:     snap/2026-06-18_08-59-58/snap-f7b4d141-d0ed-42fe-a11c-67d8c12e8c71.log (1 entries)
+Saved metadata: snap/2026-06-18_08-59-58/snap-f7b4d141-d0ed-42fe-a11c-67d8c12e8c71.json
+Snap directory: snap/2026-06-18_08-59-58
+```
+
+Use `--save-dir` to specify a custom location:
+
+```bash
+espbrew snap --save-dir ./snapshots
 ```
 
 ## Integration with FlashHash

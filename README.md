@@ -953,7 +953,43 @@ go test -cover ./...
 
 # Build all
 go build ./...
+
+# Run E2E tests (requires hardware)
+make e2e
+
+# Run E2E tests in short mode (skip flash)
+make e2e-short
 ```
+
+### End-to-End Tests
+
+E2E tests validate the complete snap workflow against a real cluster server with actual hardware:
+
+```bash
+# Via Makefile (recommended)
+make e2e              # Full E2E test with flash
+make e2e-short        # Skip flash, faster testing
+
+# Via go test
+go test -tags=e2e -v -run TestE2E_SnapWithCluster ./cmd/espbrew
+go test -tags=e2e -short -v ./cmd/espbrew
+```
+
+**Prerequisites:**
+- ESP32-S3-Box-3 device connected via USB
+- Project firmware built (from test project or your own)
+- Device available at `/dev/ttyACM0` or `/dev/ttyUSB0`
+
+**Test Coverage:**
+- Server startup with dev mode enabled
+- Health check endpoint validation
+- Device discovery and selection
+- Snap with skip-flash (5s duration)
+- Optional snap with flash (full workflow)
+- Response validation (snap_id, status, duration)
+- Server shutdown via API
+
+**Test Project:** By default uses `/home/georgik/projects/esp32-conways-game-of-life-rs/esp32-s3-box-3`. Modify `e2eProjectDir` in `cmd/espbrew/snap_e2e_test.go` for your setup.
 
 ### Stub Loaders
 
