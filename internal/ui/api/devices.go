@@ -9,6 +9,11 @@ import (
 
 // GetDevices retrieves the list of devices
 func GetDevices(callback func([]Device, error)) {
+	if DemoModeEnabled() {
+		callback(mockDevices(), nil)
+		return
+	}
+
 	DefaultAsyncClient.Get("/devices", func(result js.Value, err error) {
 		if err != nil {
 			callback(nil, err)
@@ -77,6 +82,11 @@ func parseDevice(v js.Value) Device {
 
 // GetDevice retrieves a single device by ID
 func GetDevice(deviceID string, callback func(*Device, error)) {
+	if DemoModeEnabled() {
+		callback(mockDevice(deviceID), nil)
+		return
+	}
+
 	DefaultAsyncClient.Get("/devices/"+deviceID, func(result js.Value, err error) {
 		if err != nil {
 			callback(nil, err)
@@ -95,6 +105,11 @@ func GetDevice(deviceID string, callback func(*Device, error)) {
 
 // ProtectDevice protects a device from flashing
 func ProtectDevice(deviceID string, callback func(error)) {
+	if DemoModeEnabled() {
+		callback(nil)
+		return
+	}
+
 	DefaultAsyncClient.Post("/devices/"+deviceID+"/protect", nil, func(result js.Value, err error) {
 		callback(err)
 	})
@@ -102,6 +117,11 @@ func ProtectDevice(deviceID string, callback func(error)) {
 
 // UnprotectDevice unprotects a device
 func UnprotectDevice(deviceID string, callback func(error)) {
+	if DemoModeEnabled() {
+		callback(nil)
+		return
+	}
+
 	DefaultAsyncClient.Post("/devices/"+deviceID+"/unprotect", nil, func(result js.Value, err error) {
 		callback(err)
 	})
@@ -109,6 +129,11 @@ func UnprotectDevice(deviceID string, callback func(error)) {
 
 // DeleteDevice deletes a device
 func DeleteDevice(deviceID string, callback func(bool, error)) {
+	if DemoModeEnabled() {
+		callback(true, nil)
+		return
+	}
+
 	DefaultAsyncClient.Delete("/devices/"+deviceID, func(result js.Value, err error) {
 		if err != nil {
 			callback(false, err)
@@ -121,6 +146,11 @@ func DeleteDevice(deviceID string, callback func(bool, error)) {
 
 // DisableDevice disables a device
 func DisableDevice(deviceID string, callback func(error)) {
+	if DemoModeEnabled() {
+		callback(nil)
+		return
+	}
+
 	DefaultAsyncClient.Post("/devices/"+deviceID+"/disable", nil, func(result js.Value, err error) {
 		callback(err)
 	})
@@ -128,6 +158,11 @@ func DisableDevice(deviceID string, callback func(error)) {
 
 // EnableDevice enables a device
 func EnableDevice(deviceID string, callback func(error)) {
+	if DemoModeEnabled() {
+		callback(nil)
+		return
+	}
+
 	DefaultAsyncClient.Post("/devices/"+deviceID+"/enable", nil, func(result js.Value, err error) {
 		callback(err)
 	})
@@ -135,6 +170,11 @@ func EnableDevice(deviceID string, callback func(error)) {
 
 // UpdateDevice updates device attributes
 func UpdateDevice(deviceID string, attrs map[string]interface{}, callback func(bool, error)) {
+	if DemoModeEnabled() {
+		callback(true, nil)
+		return
+	}
+
 	DefaultAsyncClient.Patch("/devices/"+deviceID, attrs, func(result js.Value, err error) {
 		if err != nil {
 			callback(false, err)
@@ -155,6 +195,11 @@ func UpdateDevice(deviceID string, attrs map[string]interface{}, callback func(b
 
 // SetBackendConfig updates device backend configuration
 func SetBackendConfig(deviceID string, backend string, backendConfig map[string]interface{}, callback func(bool, error)) {
+	if DemoModeEnabled() {
+		callback(true, nil)
+		return
+	}
+
 	req := map[string]interface{}{
 		"backend":        backend,
 		"backend_config": backendConfig,
@@ -179,6 +224,24 @@ func SetBackendConfig(deviceID string, backend string, backendConfig map[string]
 
 // ProbeDevice probes a device by path to identify it
 func ProbeDevice(path string, callback func(bool, string, string, error)) {
+	if DemoModeEnabled() {
+		// Mock probe response for common paths
+		var success bool
+		var deviceID, chipType string
+		switch path {
+		case "/dev/ttyUSB0":
+			success, deviceID, chipType = true, "esp32-devkit-a", "ESP32"
+		case "/dev/ttyUSB1":
+			success, deviceID, chipType = true, "esp32-cam-001", "ESP32"
+		case "/dev/ttyUSB2":
+			success, deviceID, chipType = true, "esp8266-generic", "ESP8266"
+		default:
+			success, deviceID, chipType = false, "", ""
+		}
+		callback(success, deviceID, chipType, nil)
+		return
+	}
+
 	req := map[string]interface{}{
 		"path": path,
 	}
@@ -200,6 +263,11 @@ func ProbeDevice(path string, callback func(bool, string, string, error)) {
 
 // ForgetDevice removes an unidentified device from cluster state by path
 func ForgetDevice(path string, callback func(bool, error)) {
+	if DemoModeEnabled() {
+		callback(true, nil)
+		return
+	}
+
 	DefaultAsyncClient.Delete("/devices/forgot/"+path, func(result js.Value, err error) {
 		if err != nil {
 			callback(false, err)

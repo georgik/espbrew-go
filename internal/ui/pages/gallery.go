@@ -531,7 +531,7 @@ func createDeviceCaptureCard(dc api.DeviceCaptureInfo) *dom.Element {
 
 	// Thumbnail
 	thumbnail := doc.CreateElement("img")
-	thumbnail.SetAttribute("src", "/captures/"+dc.Subimage)
+	thumbnail.SetAttribute("src", getImageSrc(dc.Subimage))
 	thumbnail.SetStyle("width", "100%")
 	thumbnail.SetStyle("height", "100px")
 	thumbnail.SetStyle("object-fit", "cover")
@@ -571,7 +571,7 @@ func showDeviceCaptureDetail(dc api.DeviceCaptureInfo) {
 
 	// Image
 	image := doc.CreateElement("img")
-	image.SetAttribute("src", "/captures/"+dc.Subimage)
+	image.SetAttribute("src", getImageSrc(dc.Subimage))
 	image.SetStyle("max-width", "100%")
 	image.SetStyle("max-height", "70vh")
 	image.SetStyle("object-fit", "contain")
@@ -929,6 +929,16 @@ func escapePathID(path string) string {
 		}
 	}
 	return result
+}
+
+// getImageSrc returns the appropriate src attribute for an image path
+// If the path is already a full URL (starts with http), return it as-is
+// Otherwise, prepend with "/captures/" for relative paths
+func getImageSrc(path string) string {
+	if len(path) >= 4 && (path[:4] == "http" || path[:4] == "HTTP") {
+		return path
+	}
+	return "/captures/" + path
 }
 
 // createPaginationControls creates the pagination UI with Previous/Next buttons and page info

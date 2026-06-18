@@ -66,6 +66,61 @@ The WASM interface (V2) provides a modern, responsive web UI for ESPBrew. It run
 - Display preferences
 - Camera properties configuration
 
+### Demo Mode
+
+Demo mode allows the WASM interface to run without a backend server by using mock data. This is useful for:
+
+- Static hosting (GitHub Pages, cloud storage)
+- Presentations and demonstrations
+- UI development and testing
+- Feature previews
+
+#### Activation
+
+Demo mode activates via URL parameter:
+
+- `http://localhost:8080/v2/?demo=true`
+- `http://localhost:8080/v2/?demo=1`
+- `http://localhost:8080/v2/#demo`
+
+#### Demo Features
+
+**Mock Data**
+- Devices: ESP32, ESP8266, ESP32-S3, ESP32-C3, ESP32-S2 (ESP family only)
+- Cameras: HD Webcam, ESP32-CAM with status indicators
+- Captures: SVG placeholder images with metadata
+- Device mappings: Pre-configured device-camera associations
+- Flash operations: Simulated firmware upload with progress
+
+**Serial Monitor**
+- Realistic ESP32-S3 boot sequence streaming
+- Generic boot logs with proper timing
+- Periodic activity messages after boot completion
+- Local echo for sent commands
+
+**Camera Preview**
+- SVG placeholder images for camera feeds
+- Different colors for variety
+- No network requests required
+
+**Visual Indicator**
+- Purple gradient banner at top of page
+- "DEMO MODE" badge clearly visible
+- "Exit Demo" link to return to live mode
+- All mock data clearly indicated
+
+#### Technical Implementation
+
+Demo mode is implemented in `internal/ui/api/demo.go`:
+
+- `InitDemoMode()` - Detects demo mode from URL
+- `DemoModeEnabled()` - Checks if demo mode is active
+- Mock data generators for all API endpoints
+- SVG image generation for placeholders
+- WebSocket simulation for serial monitor
+
+All API functions check `DemoModeEnabled()` first and return mock data when active.
+
 ### Components
 
 The WASM UI uses reusable Go components:

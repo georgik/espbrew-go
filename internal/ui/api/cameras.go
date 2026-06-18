@@ -10,6 +10,11 @@ import (
 
 // GetCameras retrieves the list of cameras
 func GetCameras(callback func([]Camera, error)) {
+	if DemoModeEnabled() {
+		callback(mockCameras(), nil)
+		return
+	}
+
 	DefaultAsyncClient.Get("/cameras", func(result js.Value, err error) {
 		if err != nil {
 			callback(nil, err)
@@ -53,6 +58,11 @@ func parseCamera(v js.Value) Camera {
 
 // CaptureImage requests a new image capture
 func CaptureImage(req CaptureRequest, callback func(*CaptureResponse, error)) {
+	if DemoModeEnabled() {
+		callback(mockCaptureResponse(), nil)
+		return
+	}
+
 	DefaultAsyncClient.Post("/cameras/capture", req, func(result js.Value, err error) {
 		if err != nil {
 			callback(nil, err)
@@ -71,6 +81,13 @@ func CaptureImage(req CaptureRequest, callback func(*CaptureResponse, error)) {
 
 // CapturePreview captures a preview image and returns the blob URL
 func CapturePreview(req CaptureRequest, callback func(string, error)) {
+	if DemoModeEnabled() {
+		// In demo mode, return a mock preview image
+		previewURL := mockImageURL("/camera-preview/" + req.CameraID)
+		callback(previewURL, nil)
+		return
+	}
+
 	url := DefaultAsyncClient.baseURL + "/cameras/capture"
 
 	// Create request body

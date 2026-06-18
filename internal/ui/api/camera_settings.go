@@ -9,6 +9,11 @@ import (
 
 // GetCameraControls retrieves available controls for a camera
 func GetCameraControls(cameraID string, callback func(*CameraControlsResponse, error)) {
+	if DemoModeEnabled() {
+		callback(mockCameraControls(cameraID), nil)
+		return
+	}
+
 	DefaultAsyncClient.Get("/camera/"+cameraID+"/controls", func(result js.Value, err error) {
 		if err != nil {
 			callback(nil, err)
@@ -85,6 +90,11 @@ func parseControlRanges(v js.Value, target map[string]ControlRange) {
 
 // ApplyCameraSettings applies settings to a camera
 func ApplyCameraSettings(cameraID string, settings *CameraSettingsRequest, callback func(bool, error)) {
+	if DemoModeEnabled() {
+		callback(true, nil)
+		return
+	}
+
 	DefaultAsyncClient.Post("/camera/settings/"+cameraID+"/apply", settings, func(result js.Value, err error) {
 		if err != nil {
 			callback(false, err)
@@ -119,6 +129,11 @@ func ApplyCameraSettings(cameraID string, settings *CameraSettingsRequest, callb
 
 // GetCameraSettings retrieves saved settings for a camera
 func GetCameraSettings(cameraID string, callback func(*CameraSettings, error)) {
+	if DemoModeEnabled() {
+		callback(mockCameraSettings(cameraID), nil)
+		return
+	}
+
 	DefaultAsyncClient.Get("/camera/settings/"+cameraID, func(result js.Value, err error) {
 		if err != nil {
 			callback(nil, err)
@@ -137,6 +152,11 @@ func GetCameraSettings(cameraID string, callback func(*CameraSettings, error)) {
 
 // SaveCameraSettings saves settings for a camera
 func SaveCameraSettings(cameraID string, settings *CameraSettingsRequest, callback func(error)) {
+	if DemoModeEnabled() {
+		callback(nil)
+		return
+	}
+
 	DefaultAsyncClient.Post("/camera/settings/"+cameraID, settings, func(result js.Value, err error) {
 		callback(err)
 	})
@@ -144,6 +164,11 @@ func SaveCameraSettings(cameraID string, settings *CameraSettingsRequest, callba
 
 // UpdateCameraSettings updates specific camera settings (like name)
 func UpdateCameraSettings(cameraID string, settings map[string]interface{}, callback func(bool, error)) {
+	if DemoModeEnabled() {
+		callback(true, nil)
+		return
+	}
+
 	DefaultAsyncClient.Put("/camera/settings/"+cameraID, settings, func(result js.Value, err error) {
 		if err != nil {
 			callback(false, err)

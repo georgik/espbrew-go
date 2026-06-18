@@ -9,6 +9,11 @@ import (
 
 // GetCameraMappings retrieves mappings for a camera
 func GetCameraMappings(cameraID string, callback func(*CameraMappingsResponse, error)) {
+	if DemoModeEnabled() {
+		callback(mockCameraMappings(cameraID), nil)
+		return
+	}
+
 	DefaultAsyncClient.Get("/cameras/"+cameraID+"/boxes", func(result js.Value, err error) {
 		if err != nil {
 			callback(nil, err)
@@ -27,6 +32,11 @@ func GetCameraMappings(cameraID string, callback func(*CameraMappingsResponse, e
 
 // CreateBoundingBox creates a new bounding box mapping
 func CreateBoundingBox(mapping DeviceBoundingBoxMapping, callback func(*DeviceBoundingBoxMapping, error)) {
+	if DemoModeEnabled() {
+		callback(mockBoundingBox("new-mapping"), nil)
+		return
+	}
+
 	DefaultAsyncClient.Post("/bounding_boxes", mapping, func(result js.Value, err error) {
 		if err != nil {
 			callback(nil, err)
@@ -45,6 +55,11 @@ func CreateBoundingBox(mapping DeviceBoundingBoxMapping, callback func(*DeviceBo
 
 // UpdateBoundingBox updates an existing bounding box mapping
 func UpdateBoundingBox(mappingID string, update map[string]interface{}, callback func(*DeviceBoundingBoxMapping, error)) {
+	if DemoModeEnabled() {
+		callback(mockBoundingBox(mappingID), nil)
+		return
+	}
+
 	DefaultAsyncClient.Put("/bounding_boxes/"+mappingID, update, func(result js.Value, err error) {
 		if err != nil {
 			callback(nil, err)
@@ -63,6 +78,11 @@ func UpdateBoundingBox(mappingID string, update map[string]interface{}, callback
 
 // DeleteBoundingBox deletes a bounding box mapping
 func DeleteBoundingBox(mappingID string, callback func(error)) {
+	if DemoModeEnabled() {
+		callback(nil)
+		return
+	}
+
 	DefaultAsyncClient.Delete("/bounding_boxes/"+mappingID, func(result js.Value, err error) {
 		callback(err)
 	})
@@ -70,6 +90,11 @@ func DeleteBoundingBox(mappingID string, callback func(error)) {
 
 // GetCalibration retrieves calibration for a camera
 func GetCalibration(cameraID string, callback func(*CalibrationInfo, error)) {
+	if DemoModeEnabled() {
+		callback(mockCalibration(cameraID), nil)
+		return
+	}
+
 	DefaultAsyncClient.Get("/cameras/"+cameraID+"/calibration", func(result js.Value, err error) {
 		if err != nil {
 			callback(nil, err)
@@ -88,6 +113,11 @@ func GetCalibration(cameraID string, callback func(*CalibrationInfo, error)) {
 
 // CreateCalibration creates a new calibration version
 func CreateCalibration(cameraID, description string, callback func(*CalibrationInfo, error)) {
+	if DemoModeEnabled() {
+		callback(mockCalibration(cameraID), nil)
+		return
+	}
+
 	req := map[string]interface{}{
 		"description": description,
 	}
@@ -110,6 +140,11 @@ func CreateCalibration(cameraID, description string, callback func(*CalibrationI
 
 // CreateMapping creates a new device mapping (simplified version)
 func CreateMapping(req CreateMappingRequest, callback func(*CreateMappingResponse, error)) {
+	if DemoModeEnabled() {
+		callback(mockCreateMappingResponse(), nil)
+		return
+	}
+
 	mapping := DeviceBoundingBoxMapping{
 		DeviceID:   req.DeviceID,
 		CameraID:   req.CameraID,

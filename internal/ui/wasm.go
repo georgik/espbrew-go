@@ -7,6 +7,7 @@ import (
 	"syscall/js"
 
 	"codeberg.org/georgik/espbrew-go/internal/ui/api"
+	"codeberg.org/georgik/espbrew-go/internal/ui/components"
 	"codeberg.org/georgik/espbrew-go/internal/ui/layout"
 	"codeberg.org/georgik/espbrew-go/internal/ui/pages"
 )
@@ -38,6 +39,15 @@ func Main() {
 }
 
 func initialize() {
+	// Initialize demo mode detection FIRST (before any API calls)
+	api.InitDemoMode()
+
+	// Show demo banner if demo mode is active
+	if api.DemoModeEnabled() {
+		components.ShowDemoBanner()
+		println("Demo mode enabled - using mock data")
+	}
+
 	// Create app shell
 	app = layout.NewApp()
 
@@ -47,13 +57,22 @@ func initialize() {
 	// Export navigation function for tab clicks
 	exportAPI()
 
-	// Check connection status
-	checkConnection()
+	// Check connection status (skip in demo mode)
+	if !api.DemoModeEnabled() {
+		checkConnection()
+	} else {
+		// In demo mode, show as connected
+		app.UpdateConnectionStatus(true)
+	}
 
 	// Load initial page (dashboard)
 	pages.Load("dashboard")
 
-	println("ESPBrew V2 WASM UI initialized")
+	mode := "live"
+	if api.DemoModeEnabled() {
+		mode = "demo"
+	}
+	println("ESPBrew V2 WASM UI initialized (" + mode + " mode)")
 }
 
 // exportAPI exports functions for JavaScript interop

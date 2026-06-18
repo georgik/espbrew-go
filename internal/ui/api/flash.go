@@ -47,6 +47,11 @@ type FlashProgressCallback func(progress *FlashProgress)
 
 // UploadFirmware uploads a firmware file
 func UploadFirmware(file js.Value, callback func(response *FlashUploadResponse, err error)) {
+	if DemoModeEnabled() {
+		callback(mockFlashUploadResponse(), nil)
+		return
+	}
+
 	if file.IsUndefined() || file.IsNull() {
 		callback(nil, &NetworkError{Message: "No file provided"})
 		return
@@ -102,6 +107,11 @@ func UploadFirmware(file js.Value, callback func(response *FlashUploadResponse, 
 
 // SubmitFlashJob submits a flash job
 func SubmitFlashJob(req *FlashJobRequest, callback func(response *FlashJobResponse, err error)) {
+	if DemoModeEnabled() {
+		callback(mockFlashJobResponse(), nil)
+		return
+	}
+
 	DefaultAsyncClient.Post("/flash", req, func(result js.Value, err error) {
 		if err != nil {
 			callback(nil, err)
@@ -119,6 +129,12 @@ func SubmitFlashJob(req *FlashJobRequest, callback func(response *FlashJobRespon
 
 // WatchFlashProgress watches flash progress via polling (WebSocket alternative for WASM)
 func WatchFlashProgress(jobID string, callback FlashProgressCallback) {
+	if DemoModeEnabled() {
+		// In demo mode, immediately return completed progress
+		callback(mockFlashProgress(jobID))
+		return
+	}
+
 	pollProgress(jobID, 0, callback)
 }
 

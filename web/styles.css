@@ -451,3 +451,46 @@ body {
     background: rgba(255, 255, 255, 0.1);
     color: #fff;
 }
+
+/* Demo banner */
+.demo-banner {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    z-index: 10000;
+    padding: 8px 16px;
+    font-size: 13px;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+}
+
+.demo-banner-content {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    max-width: 1200px;
+    margin: 0 auto;
+}
+
+.demo-banner-icon {
+    background: rgba(255, 255, 255, 0.2);
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-weight: 600;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.demo-banner-exit {
+    color: white;
+    text-decoration: underline;
+    margin-left: auto;
+    cursor: pointer;
+}
+
+.demo-banner-exit:hover {
+    opacity: 0.8;
+}

@@ -11,6 +11,7 @@ import (
 // MonitorWebSocket manages a WebSocket connection to the serial monitor
 type MonitorWebSocket struct {
 	conn      js.Value
+	mock      *mockMonitorWebSocket
 	onMessage func(data string)
 	onError   func(err error)
 	onClose   func()
@@ -27,6 +28,16 @@ type MonitorConfig struct {
 
 // NewMonitorWebSocket creates a new monitor WebSocket connection
 func NewMonitorWebSocket(config *MonitorConfig) *MonitorWebSocket {
+	// In demo mode, return mock monitor
+	if DemoModeEnabled() {
+		mockWS := NewMockMonitorWebSocket(config)
+		return &MonitorWebSocket{
+			conn:      js.Value{},
+			mock:      mockWS,
+			connected: true,
+		}
+	}
+
 	mw := &MonitorWebSocket{}
 
 	// Build WebSocket URL
@@ -100,16 +111,28 @@ func NewMonitorWebSocket(config *MonitorConfig) *MonitorWebSocket {
 
 // SetMessageHandler sets the message handler
 func (mw *MonitorWebSocket) SetMessageHandler(handler func(string)) {
+	if mw.mock != nil {
+		mw.mock.SetMessageHandler(handler)
+		return
+	}
 	mw.onMessage = handler
 }
 
 // SetErrorHandler sets the error handler
 func (mw *MonitorWebSocket) SetErrorHandler(handler func(error)) {
+	if mw.mock != nil {
+		mw.mock.SetErrorHandler(handler)
+		return
+	}
 	mw.onError = handler
 }
 
 // SetCloseHandler sets the close handler
 func (mw *MonitorWebSocket) SetCloseHandler(handler func()) {
+	if mw.mock != nil {
+		mw.mock.SetCloseHandler(handler)
+		return
+	}
 	mw.onClose = handler
 }
 
@@ -118,12 +141,23 @@ func (mw *MonitorWebSocket) Send(data string) error {
 	if !mw.connected {
 		return &MonitorError{Message: "Not connected"}
 	}
+
+	if mw.mock != nil {
+		return mw.mock.Send(data)
+	}
+
 	mw.conn.Call("send", data)
 	return nil
 }
 
 // Close closes the WebSocket connection
 func (mw *MonitorWebSocket) Close() {
+	if mw.mock != nil {
+		mw.mock.Close()
+		mw.connected = false
+		return
+	}
+
 	if !mw.conn.IsNull() && !mw.conn.IsUndefined() {
 		mw.conn.Call("close")
 	}

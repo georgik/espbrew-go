@@ -14,6 +14,12 @@ func GetCaptures(callback func([]Capture, error)) {
 
 // GetCapturesPaginated retrieves captures with pagination
 func GetCapturesPaginated(page, limit int, callback func([]Capture, error)) {
+	if DemoModeEnabled() {
+		captures, _, _ := mockCapturesPaginated(page, limit)
+		callback(captures, nil)
+		return
+	}
+
 	url := "/captures?page=" + js.Global().Get("encodeURIComponent").Invoke(js.ValueOf(page)).String()
 	url += "&limit=" + js.Global().Get("encodeURIComponent").Invoke(js.ValueOf(limit)).String()
 
@@ -36,6 +42,12 @@ func GetCapturesPaginated(page, limit int, callback func([]Capture, error)) {
 
 // GetCapturesMeta retrieves captures with pagination metadata
 func GetCapturesMeta(page, limit int, callback func([]Capture, int, int, error)) {
+	if DemoModeEnabled() {
+		captures, total, totalPages := mockCapturesPaginated(page, limit)
+		callback(captures, total, totalPages, nil)
+		return
+	}
+
 	url := "/captures?page=" + js.Global().Get("encodeURIComponent").Invoke(js.ValueOf(page)).String()
 	url += "&limit=" + js.Global().Get("encodeURIComponent").Invoke(js.ValueOf(limit)).String()
 
@@ -87,6 +99,11 @@ func parseCapture(v js.Value) Capture {
 // The endpoint is DELETE /captures/{path} where path is the relative path within captures directory
 // Full paths like "/captures/2026-06-15/file.jpg" should have "/captures/" stripped first
 func DeleteCapture(path string, callback func(error)) {
+	if DemoModeEnabled() {
+		callback(nil)
+		return
+	}
+
 	// Strip /captures/ prefix if present
 	strippedPath := path
 	if len(strippedPath) > 10 && strippedPath[:10] == "/captures/" {
@@ -105,6 +122,11 @@ func DeleteCapture(path string, callback func(error)) {
 
 // GetDeviceCaptures retrieves captures for a specific device
 func GetDeviceCaptures(deviceID string, callback func([]Capture, error)) {
+	if DemoModeEnabled() {
+		callback(mockDeviceCaptures(deviceID), nil)
+		return
+	}
+
 	DefaultAsyncClient.Get("/devices/"+deviceID+"/captures", func(result js.Value, err error) {
 		if err != nil {
 			callback(nil, err)
@@ -124,6 +146,11 @@ func GetDeviceCaptures(deviceID string, callback func([]Capture, error)) {
 
 // GetCaptureDeviceCaptures retrieves device-specific subimages for a full capture
 func GetCaptureDeviceCaptures(capturePath string, callback func([]DeviceCaptureInfo, error)) {
+	if DemoModeEnabled() {
+		callback(mockCaptureDeviceCaptures(capturePath), nil)
+		return
+	}
+
 	DefaultAsyncClient.Get("/captures/"+capturePath+"/devices", func(result js.Value, err error) {
 		if err != nil {
 			callback(nil, err)

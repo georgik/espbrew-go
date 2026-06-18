@@ -11,6 +11,11 @@ import (
 
 // GetMode retrieves the current operational mode
 func GetMode(callback func(mode OperationMode, err error)) {
+	if DemoModeEnabled() {
+		callback(ModeOperational, nil)
+		return
+	}
+
 	DefaultAsyncClient.Get("/mode", func(result js.Value, err error) {
 		if err != nil {
 			callback("", err)
@@ -24,6 +29,11 @@ func GetMode(callback func(mode OperationMode, err error)) {
 
 // SetMode sets the operational mode
 func SetMode(mode OperationMode, callback func(success bool, err error)) {
+	if DemoModeEnabled() {
+		callback(true, nil)
+		return
+	}
+
 	req := ModeRequest{Mode: mode}
 	DefaultAsyncClient.Put("/mode", req, func(result js.Value, err error) {
 		if err != nil {
@@ -36,6 +46,11 @@ func SetMode(mode OperationMode, callback func(success bool, err error)) {
 
 // RefreshDiscovery forces a device re-scan in discovery mode
 func RefreshDiscovery(callback func(success bool, err error)) {
+	if DemoModeEnabled() {
+		callback(true, nil)
+		return
+	}
+
 	DefaultAsyncClient.Post("/discovery/refresh", nil, func(result js.Value, err error) {
 		if err != nil {
 			callback(false, err)
@@ -47,6 +62,11 @@ func RefreshDiscovery(callback func(success bool, err error)) {
 
 // GetStatus retrieves cluster status including mode
 func GetStatus(callback func(status *StatusResponse, err error)) {
+	if DemoModeEnabled() {
+		callback(mockStatus(), nil)
+		return
+	}
+
 	DefaultAsyncClient.Get("/status", func(result js.Value, err error) {
 		if err != nil {
 			callback(nil, err)
