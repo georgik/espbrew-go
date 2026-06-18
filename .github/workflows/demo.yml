@@ -62,7 +62,6 @@ jobs:
           cp web/styles.css demo/v2/
           cp web/wasm_exec.js demo/v2/
           cp web/main.wasm demo/v2/
-          cp -r web/static demo/v2/
           cp web/demo/index.html demo/
 
       - name: Upload artifact
