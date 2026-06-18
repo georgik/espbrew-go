@@ -66,6 +66,7 @@ func TestProgressHandler_WebSocket(t *testing.T) {
 	master := cluster.NewLeaderNode("test-master", &cluster.LeaderConfig{
 		DisablemDNS:        true,
 		DisableMaintenance: true,
+		InitialMode:        "operational",
 	}, store)
 
 	hub := NewProgressHub()
@@ -142,6 +143,7 @@ func TestProgressHandler_JobNotFound(t *testing.T) {
 	master := cluster.NewLeaderNode("test-master", &cluster.LeaderConfig{
 		DisablemDNS:        true,
 		DisableMaintenance: true,
+		InitialMode:        "operational",
 	}, store)
 
 	hub := NewProgressHub()
@@ -168,6 +170,7 @@ func TestProgressHandler_MultipleSubscribers(t *testing.T) {
 	master := cluster.NewLeaderNode("test-master", &cluster.LeaderConfig{
 		DisablemDNS:        true,
 		DisableMaintenance: true,
+		InitialMode:        "operational",
 	}, store)
 
 	hub := NewProgressHub()
@@ -181,7 +184,13 @@ func TestProgressHandler_MultipleSubscribers(t *testing.T) {
 		Status: "available",
 	})
 
-	job, _ := master.EnqueueJob("test.bin", "/dev/ttyUSB0")
+	job, err := master.EnqueueJob("test.bin", "/dev/ttyUSB0")
+	if err != nil {
+		t.Fatalf("failed to enqueue job: %v", err)
+	}
+	if job == nil {
+		t.Fatal("enqueueJob returned nil job")
+	}
 
 	// Create test server with gorilla/mux
 	router := mux.NewRouter()
@@ -233,6 +242,7 @@ func TestClient_ProgressStream(t *testing.T) {
 	master := cluster.NewLeaderNode("test-master", &cluster.LeaderConfig{
 		DisablemDNS:        true,
 		DisableMaintenance: true,
+		InitialMode:        "operational",
 	}, store)
 
 	hub := NewProgressHub()

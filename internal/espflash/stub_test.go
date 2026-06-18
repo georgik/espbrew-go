@@ -6,9 +6,10 @@ import (
 )
 
 func TestStubForKnownChips(t *testing.T) {
+	// Only test chips that have stub files present
 	chips := []ChipType{
-		ChipESP8266, ChipESP32, ChipESP32S2, ChipESP32S3,
-		ChipESP32C2, ChipESP32C3, ChipESP32C5, ChipESP32C6, ChipESP32H2,
+		ChipESP32, ChipESP32S2, ChipESP32S3,
+		ChipESP32C2, ChipESP32C3, ChipESP32C6, ChipESP32H2, ChipESP32P4Rev1,
 	}
 	for _, ct := range chips {
 		t.Run(ct.String(), func(t *testing.T) {

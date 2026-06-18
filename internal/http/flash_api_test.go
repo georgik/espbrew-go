@@ -28,6 +28,7 @@ func TestFlashHandler_handleUpload(t *testing.T) {
 	master := cluster.NewLeaderNode("test-master", &cluster.LeaderConfig{
 		DisablemDNS:        true,
 		DisableMaintenance: true,
+		InitialMode:        "operational",
 	}, store)
 
 	handler := NewFlashHandler(master, os.TempDir(), nil)
@@ -87,6 +88,7 @@ func TestFlashHandler_handleUpload_NoFile(t *testing.T) {
 	master := cluster.NewLeaderNode("test-master", &cluster.LeaderConfig{
 		DisablemDNS:        true,
 		DisableMaintenance: true,
+		InitialMode:        "operational",
 	}, store)
 
 	handler := NewFlashHandler(master, os.TempDir(), nil)
@@ -113,6 +115,7 @@ func TestFlashHandler_handleFlashSubmit(t *testing.T) {
 	master := cluster.NewLeaderNode("test-master", &cluster.LeaderConfig{
 		DisablemDNS:        true,
 		DisableMaintenance: true,
+		InitialMode:        "operational",
 	}, store)
 
 	// Register a test device
@@ -193,6 +196,7 @@ func TestFlashHandler_handleFlashSubmit_DeviceNotFound(t *testing.T) {
 	master := cluster.NewLeaderNode("test-master", &cluster.LeaderConfig{
 		DisablemDNS:        true,
 		DisableMaintenance: true,
+		InitialMode:        "operational",
 	}, store)
 
 	handler := NewFlashHandler(master, os.TempDir(), nil)
@@ -244,6 +248,7 @@ func TestFlashHandler_handleEraseSubmit(t *testing.T) {
 	master := cluster.NewLeaderNode("test-master", &cluster.LeaderConfig{
 		DisablemDNS:        true,
 		DisableMaintenance: true,
+		InitialMode:        "operational",
 	}, store)
 
 	master.RegisterDevice(&protocol.DeviceInfo{
@@ -302,6 +307,7 @@ func TestFlashHandler_handleEraseSubmit_DeviceNotFound(t *testing.T) {
 	master := cluster.NewLeaderNode("test-master", &cluster.LeaderConfig{
 		DisablemDNS:        true,
 		DisableMaintenance: true,
+		InitialMode:        "operational",
 	}, store)
 
 	handler := NewFlashHandler(master, os.TempDir(), nil)
@@ -335,6 +341,7 @@ func TestFlashHandler_handleEraseSubmit_RegionErase(t *testing.T) {
 	master := cluster.NewLeaderNode("test-master", &cluster.LeaderConfig{
 		DisablemDNS:        true,
 		DisableMaintenance: true,
+		InitialMode:        "operational",
 	}, store)
 
 	master.RegisterDevice(&protocol.DeviceInfo{
