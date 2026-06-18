@@ -11,18 +11,18 @@ permissions:
 jobs:
   build:
     name: Build for ${{ matrix.platform }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
     strategy:
       matrix:
         include:
-          - goos: linux
-            goarch: amd64
+          - platform: linux-amd64
+            runner: ubuntu-latest
             output: espbrew-linux-amd64
-          - goos: darwin
-            goarch: arm64
+          - platform: darwin-arm64
+            runner: macos-latest
             output: espbrew-darwin-arm64
-          - goos: windows
-            goarch: amd64
+          - platform: windows-amd64
+            runner: windows-latest
             output: espbrew-windows-amd64.exe
 
     steps:
@@ -37,18 +37,15 @@ jobs:
       - name: Get version
         id: version
         run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+        shell: bash
 
       - name: Build
-        env:
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.goarch }}
-          CGO_ENABLED: 0
         run: |
           go build \
             -ldflags="-s -w -X main.Version=${{ steps.version.outputs.VERSION }}" \
             -o ${{ matrix.output }} \
             ./cmd/espbrew
-          chmod +x ${{ matrix.output }}
+        shell: bash
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7
