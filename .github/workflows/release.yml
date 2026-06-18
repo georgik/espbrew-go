@@ -60,7 +60,7 @@ jobs:
           chmod +x ${{ matrix.output }}
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: espbrew-${{ matrix.platform }}
           path: ${{ matrix.output }}
@@ -77,7 +77,7 @@ jobs:
       - name: Build WASM
         run: GOOS=js GOARCH=wasm go build -ldflags="-s -w" -o main.wasm ./cmd/wasm
       - name: Upload WASM
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: espbrew-wasm
           path: main.wasm
