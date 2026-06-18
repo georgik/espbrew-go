@@ -219,15 +219,27 @@ func createDeviceRow(dev api.Device) *dom.Element {
 			},
 		})
 		actionsDiv.Append(forgetBtn.Element)
-	} else if dev.AccessError != "" {
-		// Show warning icon for access error
-		warningSpan := doc.CreateElement("span")
-		warningSpan.SetTextContent("!")
-		warningSpan.SetStyle("cursor", "help")
-		warningSpan.SetAttribute("title", dev.AccessError)
-		actionsDiv.Append(warningSpan)
 	} else {
-		// Edit button
+		// Device has ID - check if it's a fallback (unprobed) device
+		isFallbackDevice := strings.HasPrefix(dev.DeviceID, "unprobed-")
+
+		// Show warning for fallback devices or access errors
+		if isFallbackDevice || dev.AccessError != "" {
+			warningBtn := components.NewButton(components.ButtonConfig{
+				Text:  "⚠",
+				Class: "btn-sm btn-warning",
+				OnClick: func(_ *dom.Event) {
+					if isFallbackDevice {
+						js.Global().Get("window").Call("alert", "Device probe failed. Set Chip Type in Edit to enable device.")
+					} else {
+						js.Global().Get("window").Call("alert", dev.AccessError)
+					}
+				},
+			})
+			actionsDiv.Append(warningBtn.Element)
+		}
+
+		// Edit button - always show for devices with ID (including fallback)
 		editBtn := components.NewButton(components.ButtonConfig{
 			Text:    "Edit",
 			Class:   "btn-sm btn-secondary",

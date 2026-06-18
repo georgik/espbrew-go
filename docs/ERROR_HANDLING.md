@@ -127,6 +127,59 @@ Jobs in any terminal state are cleaned:
 - `cancelled`
 - `timeout`
 
+## Unprobed Devices and Fallback IDs
+
+When a device is detected but automatic probe fails (e.g., due to USB issues, non-ESP device, or unresponsive device), the system creates a fallback device ID to allow manual configuration.
+
+### Detection
+
+Devices that fail probe are identified by:
+- Device ID starting with `unprobed-` prefix (e.g., `unprobed-10c4:ea60`)
+- Chip type set to `Unknown`
+- Warning icon displayed in the web UI
+
+### Fallback ID Format
+
+```
+unprobed-<VID>:<PID>
+```
+
+Example: `unprobed-10c4:ea60`
+
+The VID and PID are extracted from the USB device descriptor.
+
+### User Actions
+
+For unprobed devices, the web UI provides:
+- **Edit button**: Configure device manually
+- **Warning button**: Shows probe failure message
+
+To recover an unprobed device:
+1. Click Edit on the device
+2. Select appropriate Chip Type
+3. Save to update device configuration
+
+### Persistence
+
+Fallback devices are persisted across restarts, allowing:
+- Device identification after reconnection
+- Manual configuration at any time
+- Tracking of problematic devices
+
+### Common Causes
+
+1. **USB hardware issues**: Flaky connection, damaged cable
+2. **Device not responding**: Device stuck in bootloader, powered off
+3. **Non-ESP device**: USB serial adapter without ESP connected
+4. **Permission denied**: User lacks device access permissions
+5. **Driver issues**: Missing or incorrect USB drivers
+
+### Logs
+
+```
+WARN Device probe failed, created fallback ID for manual configuration path=/dev/ttyUSB0 fallback_id=unprobed-10c4:ea60
+```
+
 ## Orphaned Device Recovery
 
 Devices marked as `busy` without an active job are automatically recovered.

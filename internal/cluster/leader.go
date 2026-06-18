@@ -617,7 +617,36 @@ func (l *LeaderNode) probeDeviceQuickAsync(dev *protocol.DeviceInfo) {
 			dev.AccessError = "Permission denied: cannot access device. Check user permissions."
 			l.mu.Unlock()
 			log.Warn().Str("path", dev.Path).Msg("Device access denied (permission issue)")
+			return
 		}
+
+		// Generate fallback ID from VID:PID for unprobed devices
+		// This allows user to manually configure device via Edit
+		fallbackID := fmt.Sprintf("unprobed-%04x:%04x", dev.VID, dev.PID)
+
+		l.mu.Lock()
+		dev.DeviceID = fallbackID
+		dev.ChipType = "Unknown"
+		l.mu.Unlock()
+
+		// Save to persistence with minimal info
+		now := time.Now()
+		record := &persistence.DeviceRecord{
+			DeviceID:  fallbackID,
+			ChipType:  "",
+			FirstSeen: now,
+			LastSeen:  now,
+			LastPath:  dev.Path,
+			NodeID:    l.id,
+		}
+		if err := l.store.SaveDevice(record); err != nil {
+			log.Warn().Err(err).Msg("Failed to save unprobed device to persistence")
+		}
+
+		log.Warn().
+			Str("path", dev.Path).
+			Str("fallback_id", fallbackID).
+			Msg("Device probe failed, created fallback ID for manual configuration")
 		return
 	}
 

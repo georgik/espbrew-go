@@ -1,3 +1,0 @@
-[submodule "vendor/espflash"]
-	path = vendor/espflash
-	url = https://github.com/esp-rs/espflash.git
