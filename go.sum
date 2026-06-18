@@ -100,8 +100,8 @@ github.com/vladimirvivien/go4vl v0.5.0/go.mod h1:iWUNl4OswQ/oekJXIS6S8MN5inoPOsb
 github.com/wlynxg/anet v0.0.5 h1:J3VJGi1gvo0JwZ/P1/Yc/8p63SoW98B5dHkYDmpgvvU=
 github.com/wlynxg/anet v0.0.5/go.mod h1:eay5PRQr7fIVAMbTbchTnO9gG65Hg/uYGdc7mguHxoA=
 github.com/yuin/goldmark v1.4.13/go.mod h1:6yULJ656Px+3vBD8DxQVa3kxgyrAnzto9xy5taEt/CY=
-go.bug.st/serial v1.7.0 h1:Svs5xR0s4JF+KIg+1d9QE4iXqEIJvTr5vESFUjSu7mE=
-go.bug.st/serial v1.7.0/go.mod h1:PZfOSahry47TWtrd0tvoKZvmVa7FGrc/1xG9q8Ho3xU=
+go.bug.st/serial v1.7.1 h1:5aP8wYL0UjEYOVs3oPAGscjaSfRQLHtCvBFXNN/rwtc=
+go.bug.st/serial v1.7.1/go.mod h1:d0MmS16Qt9b1m06yoYRNUXhRRTJV5Qg2S5EKqQtnayQ=
 go.etcd.io/bbolt v1.4.3 h1:dEadXpI6G79deX5prL3QRNP6JB8UxVkqo4UPnHaNXJo=
 go.etcd.io/bbolt v1.4.3/go.mod h1:tKQlpPaYCVFctUIgFKFnAlvbmB3tpy1vkTnDWohtc0E=
 go.yaml.in/yaml/v3 v3.0.4 h1:tfq32ie2Jv2UxXFdLJdh3jXuOzWiL1fo0bu/FbuKpbc=
