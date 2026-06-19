@@ -23,6 +23,7 @@ type FlashUploadResponse struct {
 type FlashJobRequest struct {
 	DevicePath string                 `json:"device_path"`
 	FileID     string                 `json:"file_id"`
+	Offset     int                    `json:"offset,omitempty"`
 	Options    map[string]interface{} `json:"options,omitempty"`
 }
 
@@ -61,9 +62,10 @@ func UploadFirmware(file js.Value, callback func(response *FlashUploadResponse, 
 	formData := js.Global().Get("FormData").New()
 	formData.Call("append", "firmware", file)
 
-	// Create fetch options
+	// Create fetch options with body
 	opts := js.Global().Get("Object").New()
 	opts.Set("method", "POST")
+	opts.Set("body", formData)
 
 	// Make fetch call
 	url := DefaultAsyncClient.baseURL + "/flash/upload"
@@ -151,7 +153,8 @@ func pollProgress(jobID string, attempt int, callback FlashProgressCallback) {
 }
 
 func fetchProgress(jobID string, callback FlashProgressCallback, doneCallback func(bool)) {
-	url := DefaultAsyncClient.baseURL + "/flash/" + jobID + "/progress"
+	// Use jobs endpoint with query parameter
+	url := DefaultAsyncClient.baseURL + "/jobs?id=" + jobID
 	opts := js.Global().Get("Object").New()
 	opts.Set("method", "GET")
 
@@ -173,27 +176,41 @@ func fetchProgress(jobID string, callback FlashProgressCallback, doneCallback fu
 				return nil
 			}
 
-			// Get JSON response
+			// Get JSON response - returns array of jobs
 			jsonPromise := result.Call("json")
-			jsonPromise.Call("then", js.FuncOf(func(this js.Value, args []js.Value) interface{} {
-				if len(args) > 0 && !args[0].IsUndefined() {
-					var progress FlashProgress
-					if err := ParseJSONValue(args[0], &progress); err != nil {
-						// Parse error, might be SSE or different format
-						callback(&FlashProgress{
+			jsonPromise.Call("then", js.FuncOf(func(this js.Value, args2 []js.Value) interface{} {
+				if len(args2) > 0 && !args2[0].IsUndefined() {
+					arrVal := args2[0]
+					// Check if it's an array
+					if arrVal.Get("length").Int() > 0 {
+						firstJob := arrVal.Index(0)
+						// Map job status to FlashProgress
+						status := firstJob.Get("status").String()
+						progress := firstJob.Get("progress").Int()
+
+						progressObj := &FlashProgress{
 							JobID:    jobID,
-							Status:   "running",
-							Progress: 0,
-						})
-						doneCallback(false)
-					} else {
-						callback(&progress)
+							Status:   status,
+							Progress: progress,
+							Message:  "", // Could be added from job data if available
+						}
+
+						callback(progressObj)
+
 						// Stop polling if complete or error
-						if progress.Status == "completed" || progress.Status == "error" || progress.Status == "failed" {
+						if status == "completed" || status == "succeeded" || status == "error" || status == "failed" {
 							doneCallback(true)
 						} else {
 							doneCallback(false)
 						}
+					} else {
+						// Empty array - job not found
+						callback(&FlashProgress{
+							JobID:  jobID,
+							Status: "error",
+							Error:  "Job not found",
+						})
+						doneCallback(true)
 					}
 				}
 				return nil
