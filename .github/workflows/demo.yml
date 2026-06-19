@@ -44,18 +44,16 @@ jobs:
 
       - name: Copy wasm_exec.js
         run: |
-          # Try old location first
+          # Try GOROOT locations first
           if [ -f "$(go env GOROOT)/misc/wasm/wasm_exec.js" ]; then
             cp "$(go env GOROOT)/misc/wasm/wasm_exec.js" web/
-          # Try new location (Go 1.21+)
           elif [ -f "$(go env GOROOT)/src/crypto/tls/wasm/wasm_exec.js" ]; then
             cp "$(go env GOROOT)/src/crypto/tls/wasm/wasm_exec.js" web/
-          # Try alternative Go 1.22+ location
           elif [ -f "$(go env GOROOT)/src/syscall/js/wasm_exec.js" ]; then
             cp "$(go env GOROOT)/src/syscall/js/wasm_exec.js" web/
-          # Download from Go 1.20 (known working version)
+          # Download from Go 1.21 release branch
           else
-            curl -sSL https://raw.githubusercontent.com/golang/go/v1.20.14/misc/wasm/wasm_exec.js -o web/wasm_exec.js
+            curl -sSL https://raw.githubusercontent.com/golang/go/release-branch.go1.21/misc/wasm/wasm_exec.js -o web/wasm_exec.js
           fi
 
       - name: Create demo package
