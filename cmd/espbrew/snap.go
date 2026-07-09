@@ -236,37 +236,44 @@ func runClusterSnap() error {
 		devicePath = snapOpts.port
 	}
 
-	// Detect firmware if not specified
+	// Detect build artifacts if not specified
+	var artifacts *project.BuildArtifacts
 	if snapOpts.firmware == "" && !snapOpts.skipFlash {
-		fw, err := detectFirmware()
+		var err error
+		artifacts, err = detectBuildArtifacts()
 		if err != nil {
-			log.Warn().Err(err).Msg("Could not auto-detect firmware")
+			log.Warn().Err(err).Msg("Could not auto-detect build artifacts")
 			return fmt.Errorf("please specify --firmware or --skip-flash")
 		}
-		snapOpts.firmware = fw
-		log.Info().Str("firmware", snapOpts.firmware).Msg("Auto-detected firmware")
+		// Use app as firmware for hash check compatibility
+		snapOpts.firmware = artifacts.App
+		log.Info().
+			Str("bootloader", artifacts.Bootloader).
+			Str("partitions", artifacts.Partitions).
+			Str("app", artifacts.App).
+			Msg("Auto-detected build artifacts")
+	}
+
+	// Resolve device ID once for hash check and snap request
+	var resolvedDeviceID string
+	if snapOpts.deviceID != "" {
+		inv, err := inventory.NewInventory()
+		if err != nil {
+			return fmt.Errorf("load inventory: %w", err)
+		}
+		dev, err := findDevice(inv, snapOpts.deviceID)
+		if err != nil {
+			return fmt.Errorf("resolve device ID: %w", err)
+		}
+		resolvedDeviceID = dev.DeviceID
+	} else {
+		// Use device path as ID if no inventory device specified
+		resolvedDeviceID = devicePath
 	}
 
 	// Step 1: Check flash hash if firmware is specified and not skipping flash
 	flashNeeded := false
 	if !snapOpts.skipFlash && snapOpts.firmware != "" {
-		// Resolve device ID for hash check
-		var resolvedDeviceID string
-		if snapOpts.deviceID != "" {
-			inv, err := inventory.NewInventory()
-			if err != nil {
-				return fmt.Errorf("load inventory: %w", err)
-			}
-			dev, err := findDevice(inv, snapOpts.deviceID)
-			if err != nil {
-				return fmt.Errorf("resolve device ID: %w", err)
-			}
-			resolvedDeviceID = dev.DeviceID
-		} else {
-			// Use device path as ID if no inventory device specified
-			resolvedDeviceID = devicePath
-		}
-
 		log.Info().
 			Str("device_id", resolvedDeviceID).
 			Str("firmware", snapOpts.firmware).
@@ -297,56 +304,98 @@ func runClusterSnap() error {
 		}
 	}
 
-	// Step 2: Flash if needed
-	if !snapOpts.skipFlash && snapOpts.firmware != "" && (flashNeeded || snapOpts.forceFlash) {
-		log.Info().Str("cluster", snapOpts.clusterURL).Str("device", devicePath).Msg("Uploading firmware to cluster")
-
-		uploadResp, err := client.UploadFirmware(snapOpts.firmware)
-		if err != nil {
-			return fmt.Errorf("upload firmware: %w", err)
+	// Step 2: Multi-image flash if needed
+	if !snapOpts.skipFlash && (flashNeeded || snapOpts.forceFlash) {
+		// Determine which images to flash
+		type imageToFlash struct {
+			name   string
+			path   string
+			offset int
 		}
+		var images []imageToFlash
 
-		log.Info().Str("file_id", uploadResp.FileID).Int64("size", uploadResp.Size).Msg("Firmware uploaded")
-
-		// Submit flash job
-		submitReq := cluster.FlashSubmitRequest{
-			DevicePath: devicePath,
-			FileID:     uploadResp.FileID,
-			ClientID:   "espbrew-snap",
-		}
-
-		flashResp, err := client.SubmitFlash(submitReq)
-		if err != nil {
-			return fmt.Errorf("submit flash: %w", err)
-		}
-
-		log.Info().Str("job_id", flashResp.JobID).Msg("Flash job submitted")
-
-		// Wait for flash completion
-		progressClient, err := client.ConnectProgress(flashResp.JobID)
-		if err != nil {
-			return fmt.Errorf("connect progress: %w", err)
-		}
-		defer progressClient.Close()
-
-		completed := false
-		err = progressClient.Stream(func(msg cluster.ProgressMessage) {
-			switch msg.Type {
-			case "progress":
-				displaySnapProgressBar(msg.Progress, msg.Status)
-			case "complete":
-				completed = true
-				if msg.Status == "completed" {
-					log.Info().Msg("Flash completed successfully")
-				} else {
-					log.Error().Str("error", msg.Error).Msg("Flash failed")
-				}
+		// If artifacts detected, use multi-image mode
+		if artifacts != nil {
+			if artifacts.Bootloader != "" {
+				images = append(images, imageToFlash{name: "bootloader", path: artifacts.Bootloader, offset: 0x0})
 			}
-		})
-
-		if err != nil || !completed {
-			return fmt.Errorf("flash did not complete successfully")
+			if artifacts.Partitions != "" {
+				images = append(images, imageToFlash{name: "partitions", path: artifacts.Partitions, offset: 0x8000})
+			}
+			if artifacts.App != "" {
+				images = append(images, imageToFlash{name: "app", path: artifacts.App, offset: 0x10000})
+			}
+		} else if snapOpts.firmware != "" {
+			// Single firmware mode
+			images = append(images, imageToFlash{name: "firmware", path: snapOpts.firmware, offset: 0x10000})
 		}
+
+		if len(images) == 0 {
+			return fmt.Errorf("no images to flash")
+		}
+
+		log.Info().Int("images", len(images)).Str("device", devicePath).Msg("Multi-image flash via cluster")
+
+		// Flash each image sequentially
+		for i, img := range images {
+			log.Info().
+				Str("image", img.name).
+				Str("path", img.path).
+				Int("offset", img.offset).
+				Int("index", i+1).
+				Int("total", len(images)).
+				Msg("Uploading to cluster")
+
+			uploadResp, err := client.UploadFirmware(img.path)
+			if err != nil {
+				return fmt.Errorf("upload %s: %w", img.name, err)
+			}
+
+			log.Info().Str("image", img.name).Str("job_id", uploadResp.FileID).Msg("Flash job submitted")
+
+			// Submit flash job with offset
+			submitReq := cluster.FlashSubmitRequest{
+				DevicePath: devicePath,
+				FileID:     uploadResp.FileID,
+				ClientID:   "espbrew-snap",
+				Offset:     img.offset,
+			}
+
+			flashResp, err := client.SubmitFlash(submitReq)
+			if err != nil {
+				return fmt.Errorf("submit flash %s: %w", img.name, err)
+			}
+
+			log.Info().Str("image", img.name).Str("job_id", flashResp.JobID).Msg("Flash job submitted")
+
+			// Wait for completion
+			progressClient, err := client.ConnectProgress(flashResp.JobID)
+			if err != nil {
+				return fmt.Errorf("connect progress: %w", err)
+			}
+
+			completed := false
+			err = progressClient.Stream(func(msg cluster.ProgressMessage) {
+				switch msg.Type {
+				case "progress":
+					displaySnapProgressBar(msg.Progress, msg.Status)
+				case "complete":
+					completed = true
+					if msg.Status == "completed" {
+						log.Info().Str("image", img.name).Msg("Flash completed successfully")
+					} else {
+						log.Error().Str("error", msg.Error).Msg("Flash failed")
+					}
+				}
+			})
+			progressClient.Close()
+
+			if err != nil || !completed {
+				return fmt.Errorf("%s flash did not complete successfully", img.name)
+			}
+		}
+
+		log.Info().Msg("All images flashed successfully")
 	}
 
 	// Skip capture if requested
@@ -355,24 +404,7 @@ func runClusterSnap() error {
 		return nil
 	}
 
-	// Resolve device ID for snap request
-	var resolvedDeviceID string
-	if snapOpts.deviceID != "" {
-		inv, err := inventory.NewInventory()
-		if err != nil {
-			return fmt.Errorf("load inventory: %w", err)
-		}
-		dev, err := findDevice(inv, snapOpts.deviceID)
-		if err != nil {
-			return fmt.Errorf("resolve device ID: %w", err)
-		}
-		resolvedDeviceID = dev.DeviceID
-	} else {
-		// Use device path as ID if no inventory device specified
-		resolvedDeviceID = devicePath
-	}
-
-	// Step 3: Snap (monitor+capture only)
+	// Step 3: Snap (monitor+capture only) - uses resolvedDeviceID from earlier
 	snapReq := cluster.SnapRequest{
 		DeviceID:  resolvedDeviceID,
 		Duration:  snapOpts.duration,
@@ -458,33 +490,41 @@ func runClusterSnap() error {
 
 // detectFirmware auto-detects firmware path from current project
 func detectFirmware() (string, error) {
+	artifacts, err := detectBuildArtifacts()
+	if err != nil {
+		return "", err
+	}
+	if artifacts.App == "" {
+		return "", fmt.Errorf("no application binary found")
+	}
+	return artifacts.App, nil
+}
+
+// detectBuildArtifacts auto-detects all build artifacts from current project
+func detectBuildArtifacts() (*project.BuildArtifacts, error) {
 	cwd, err := os.Getwd()
 	if err != nil {
-		return "", fmt.Errorf("get working directory: %w", err)
+		return nil, fmt.Errorf("get working directory: %w", err)
 	}
 
 	projType, detector := projectRegistry.Detect(cwd)
 	if projType == project.ProjectTypeNone {
-		return "", fmt.Errorf("no supported project detected")
+		return nil, fmt.Errorf("no supported project detected")
 	}
 
 	log.Info().Str("type", string(projType)).Str("dir", cwd).Msg("Detected project")
 
 	buildDir, err := detector.FindBuildDir(cwd)
 	if err != nil {
-		return "", fmt.Errorf("find build directory: %w", err)
+		return nil, fmt.Errorf("find build directory: %w", err)
 	}
 
 	artifacts, err := detector.GetArtifacts(buildDir)
 	if err != nil {
-		return "", fmt.Errorf("get artifacts: %w", err)
+		return nil, fmt.Errorf("get artifacts: %w", err)
 	}
 
-	if artifacts.App == "" {
-		return "", fmt.Errorf("no application binary found")
-	}
-
-	return artifacts.App, nil
+	return artifacts, nil
 }
 
 // resolveSnapDevice resolves device identifier to port path using inventory for snap command
