@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Camera access for display photography -->
+    <key>com.apple.security.device.camera</key>
+    <true/>
+
+    <!-- Microphone access (required by AVFoundation even if not used) -->
+    <key>com.apple.security.device.microphone</key>
+    <true/>
+
+    <!-- Network access for cluster communication -->
+    <key>com.apple.security.network.client</key>
+    <true/>
+    <key>com.apple.security.network.server</key>
+    <true/>
+
+    <!-- USB device access for ESP32 flashing -->
+    <key>com.apple.security.device.usb</key>
+    <true/>
+
+    <!-- File system access (read/write for firmware files) -->
+    <key>com.apple.security.files.user-selected.read-write</key>
+    <true/>
+</dict>
+</plist>

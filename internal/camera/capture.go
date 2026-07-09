@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"image"
 	"image/jpeg"
-	"os"
-	"os/exec"
 	"runtime"
 	"time"
 
@@ -119,9 +117,11 @@ func (c *Capturer) Capture(ctx context.Context, req *CaptureRequest) (*CaptureRe
 		Str("device_path", captureID).
 		Uint32("width", req.Width).
 		Uint32("height", req.Height).
+		Str("platform", runtime.GOOS).
 		Msg("Capturing image")
 
 	// Capture using platform-specific tool
+	log.Info().Str("platform", runtime.GOOS).Msg("Calling capturePlatformSpecific")
 	data, width, height, err := c.capturePlatformSpecific(ctx, captureID, req.Width, req.Height, req.Quality)
 	if err != nil {
 		return nil, fmt.Errorf("capture: %w", err)
@@ -175,96 +175,6 @@ func (c *Capturer) capturePlatformSpecific(ctx context.Context, cameraID string,
 	default:
 		return nil, 0, 0, fmt.Errorf("unsupported platform: %s", runtime.GOOS)
 	}
-}
-
-// captureMacOS captures using imagesnap
-func (c *Capturer) captureMacOS(ctx context.Context, cameraID string, width, height uint32, quality int) ([]byte, int, int, error) {
-	// Check if imagesnap is available
-	if _, err := exec.LookPath("imagesnap"); err != nil {
-		return nil, 0, 0, fmt.Errorf("imagesnap not found: install with 'brew install imagesnap'")
-	}
-
-	// Create temp file for capture with unique name
-	tmpFile := fmt.Sprintf("/tmp/espbrew-capture-%d.jpg", time.Now().UnixNano())
-
-	// Build command - imagesnap uses default camera when no device specified
-	cmd := exec.CommandContext(ctx, "imagesnap", tmpFile)
-	if output, err := cmd.CombinedOutput(); err != nil {
-		return nil, 0, 0, fmt.Errorf("imagesnap failed: %w, output: %s", err, output)
-	}
-
-	// Read captured file
-	data, err := os.ReadFile(tmpFile)
-	if err != nil {
-		return nil, 0, 0, fmt.Errorf("read capture file: %w", err)
-	}
-
-	// Clean up temp file
-	_ = os.Remove(tmpFile)
-
-	// Decode to get dimensions
-	img, err := jpeg.Decode(bytes.NewReader(data))
-	if err != nil {
-		return data, 0, 0, nil // Return data even if decode fails
-	}
-	bounds := img.Bounds()
-	return data, bounds.Dx(), bounds.Dy(), nil
-}
-
-// captureLinux captures using fswebcam
-func (c *Capturer) captureLinux(ctx context.Context, cameraID string, width, height uint32, quality int) ([]byte, int, int, error) {
-	// Check if fswebcam is available
-	if _, err := exec.LookPath("fswebcam"); err != nil {
-		return nil, 0, 0, fmt.Errorf("fswebcam not found: install with 'sudo apt install fswebcam'")
-	}
-
-	// Create temp file for capture with unique name
-	tmpFile := fmt.Sprintf("/tmp/espbrew-capture-%d.jpg", time.Now().UnixNano())
-
-	// Build command - specify device if provided
-	args := []string{
-		"-r", fmt.Sprintf("%dx%d", width, height),
-		"--jpeg", fmt.Sprintf("%d", quality),
-		"-q",       // Skip banner
-		"-S", "10", // Skip frames for stability
-	}
-
-	// Add device argument if cameraID is specified and not "default"
-	if cameraID != "" && cameraID != "default" {
-		// Convert pion camera ID to V4L2 path if needed
-		v4l2Path := extractV4L2Path(cameraID)
-		args = append([]string{"-d", v4l2Path}, args...)
-	}
-	args = append(args, tmpFile)
-
-	cmd := exec.CommandContext(ctx, "fswebcam", args...)
-	if output, err := cmd.CombinedOutput(); err != nil {
-		return nil, 0, 0, fmt.Errorf("fswebcam failed: %w, output: %s", err, output)
-	}
-
-	// Read captured file
-	data, err := os.ReadFile(tmpFile)
-	if err != nil {
-		return nil, 0, 0, fmt.Errorf("read capture file: %w", err)
-	}
-
-	// Clean up temp file
-	_ = os.Remove(tmpFile)
-
-	// Decode to get dimensions
-	img, err := jpeg.Decode(bytes.NewReader(data))
-	if err != nil {
-		return data, 0, 0, nil // Return data even if decode fails
-	}
-	bounds := img.Bounds()
-	return data, bounds.Dx(), bounds.Dy(), nil
-}
-
-// captureWindows captures using PowerShell
-func (c *Capturer) captureWindows(ctx context.Context, cameraID string, width, height uint32, quality int) ([]byte, int, int, error) {
-	// Windows capture using PowerShell and Windows.Media.Capture
-	// This is a placeholder - actual implementation would use PowerShell script
-	return nil, 0, 0, fmt.Errorf("Windows capture not yet implemented - consider using ffmpeg")
 }
 
 // frameToJPEG converts an image to JPEG bytes

@@ -119,14 +119,8 @@ func (s *Server) setupRoutes(store *persistence.Store) {
 	// Favicon
 	s.router.HandleFunc("/favicon.ico", s.handleFavicon).Methods("GET")
 
-	// Redirect root to v2 (must be before PathPrefix handlers)
-	s.router.HandleFunc("/", s.handleRootRedirect).Methods("GET")
-
-	// WASM UI (v2)
-	s.router.PathPrefix("/v2/").Handler(s.handleWasmUI())
-
-	// V1 HTML interface
-	s.router.PathPrefix("/v1/").Handler(s.handleV1Static())
+	// WASM UI (served at root)
+	s.router.PathPrefix("/").Handler(s.handleWasmUI())
 
 	// Developer mode shutdown endpoint
 	if s.devMode {
@@ -205,9 +199,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *Server) handleRootRedirect(w http.ResponseWriter, r *http.Request) {
-	http.Redirect(w, r, "/v2/", http.StatusMovedPermanently)
-}
+// handleRootRedirect removed - WASM now served at root
 
 func (s *Server) handleMonitor(w http.ResponseWriter, r *http.Request) {
 	if dashboard.HasMonitor() {
@@ -240,42 +232,24 @@ func (s *Server) handleStatic() http.Handler {
 	})
 }
 
-func (s *Server) handleV1Static() http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Strip /v1/ prefix
-		path := r.URL.Path[4:] // Remove "/v1"
-		if path == "" || path == "/" {
-			path = "/"
-		}
-
-		// Create a new request with the modified path
-		r = r.Clone(r.Context())
-		r.URL.Path = path
-
-		if path == "/" {
-			if dashboard.HasDashboard() {
-				w.Header().Set("Content-Type", "text/html")
-				w.Write(dashboard.IndexHTML())
-			} else {
-				w.Header().Set("Content-Type", "text/html")
-				w.Write([]byte(fallbackDashboard))
-			}
-			return
-		}
-		http.FileServer(dashboard.StaticFS()).ServeHTTP(w, r)
-	})
-}
+// handleV1Static removed - old HTML interface deprecated
 
 func (s *Server) handleWasmUI() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Strip /v2/ prefix
-		path := r.URL.Path[4:] // Remove "/v2"
+		// Root path serves index.html
+		path := r.URL.Path
 		if path == "" || path == "/" {
-			path = "index.html"
+			path = "/index.html"
+		}
+
+		// Strip leading slash for file path
+		filePath := path[1:]
+		if filePath == "" {
+			filePath = "index.html"
 		}
 
 		// Determine full file path
-		fullPath := "web/" + path
+		fullPath := "web/" + filePath
 
 		// Open the file
 		f, err := os.Open(fullPath)

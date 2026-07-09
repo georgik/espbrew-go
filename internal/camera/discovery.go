@@ -180,13 +180,23 @@ func deviceToCameraInfo(dm mediadevices.MediaDeviceInfo) (*CameraInfo, error) {
 		}
 
 	} else {
-		// Non-Linux: use DeviceID (may be UUID or platform-specific ID)
-		cameraID = dm.DeviceID
+		// Non-Linux (macOS, Windows): dm.Label is the actual platform UID
+		// dm.DeviceID is pion's random UUID (changes each discovery - don't use)
+		cameraID = dm.Label
+		devicePath = dm.Label
+	}
+
+	// Get friendly name (on macOS, dm.Label is UUID, so use AVFoundation)
+	cameraName := dm.Label
+	if runtime.GOOS == "darwin" {
+		if friendlyName := getMacOSCameraName(dm.Label); friendlyName != "" {
+			cameraName = friendlyName
+		}
 	}
 
 	info := &CameraInfo{
 		ID:      cameraID,
-		Name:    dm.Label,
+		Name:    cameraName,
 		Path:    devicePath,
 		Backend: DetectBackend(dm.DeviceID),
 	}

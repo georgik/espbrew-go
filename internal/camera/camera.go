@@ -86,8 +86,9 @@ func DetectBackend(deviceID string) Backend {
 		return BackendV4L2
 	}
 
-	// macOS AVFoundation - typically has UUID-like IDs or specific names
-	if strings.HasPrefix(id, "0x") || strings.Contains(id, "facetime") || strings.Contains(id, "facetimehd") {
+	// macOS AVFoundation - UUID-like IDs or specific names
+	// On darwin, assume AVFoundation for any device that doesn't match other patterns
+	if runtime.GOOS == "darwin" {
 		return BackendAVFoundation
 	}
 

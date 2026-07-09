@@ -379,6 +379,15 @@ func loadCameraProperties(cameraID string) {
 
 	// Load camera controls
 	api.GetCameraControls(cameraID, func(resp *api.CameraControlsResponse, err error) {
+		// Enable preview refresh button regardless of control availability
+		refreshBtn := doc.GetElementByID("refresh-preview-button")
+		if refreshBtn != nil {
+			refreshBtn.SetDisabled(false)
+		}
+
+		// Capture initial preview
+		capturePreview(cameraID)
+
 		if platformInfo != nil {
 			if err != nil {
 				platformInfo.SetTextContent("Failed to load camera controls")
@@ -426,15 +435,6 @@ func loadCameraProperties(cameraID string) {
 		if saveBtn != nil {
 			saveBtn.SetDisabled(false)
 		}
-
-		// Enable and trigger preview refresh
-		refreshBtn := doc.GetElementByID("refresh-preview-button")
-		if refreshBtn != nil {
-			refreshBtn.SetDisabled(false)
-		}
-
-		// Capture initial preview
-		capturePreview(cameraID)
 	})
 }
 

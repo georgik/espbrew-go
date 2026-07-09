@@ -70,12 +70,24 @@ func Load(name string) {
 
 // NavigateTo changes the current page
 func NavigateTo(name string) {
-	// Update tab bar if available
+	// Check if already on this page
+	currentHash := js.Global().Get("window").Get("location").Get("hash").String()
+	targetHash := "#/" + name
+	if currentHash == targetHash {
+		// Already on this page, just activate tab
+		if tabbar := app.GetTabBar(); tabbar != nil {
+			tabbar.ActivateTab(name)
+		}
+		return
+	}
+
+	// Update URL hash for deeplinking (triggers hashchange → loadPageFromHash)
+	js.Global().Get("window").Get("location").Set("hash", targetHash)
+
+	// Update tab bar immediately (will also be updated by loadPageFromHash)
 	if tabbar := app.GetTabBar(); tabbar != nil {
 		tabbar.ActivateTab(name)
 	}
-	// Load the page
-	Load(name)
 }
 
 // Register is not implemented with lazy routes

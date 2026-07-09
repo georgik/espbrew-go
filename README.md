@@ -6,7 +6,7 @@ ESP32 cluster flashing tool written in Go. Manages multiple ESP32 devices across
 
 Try ESPBrew in your browser without installation:
 
-**[Live Demo](https://georgik.github.io/espbrew-go/v2/?demo=true)** - WebAssembly interface running in demo mode
+**[Live Demo](https://georgik.github.io/espbrew-go/?demo=true)** - WebAssembly interface running in demo mode
 
 The demo showcases the full WASM UI with mock data for devices, cameras, captures, and serial monitoring.
 
@@ -277,17 +277,13 @@ curl -X PUT http://localhost:8080/api/v1/devices/{id}/backend \
 
 ESPBrew provides two web interfaces:
 
-### V1 HTML Interface
+### WASM Interface
 
-The legacy HTML interface at `/` provides full functionality with server-rendered pages.
-
-### V2 WASM Interface
-
-A modern WebAssembly-based interface at `/v2/` built entirely in Go with no external JavaScript dependencies.
+A modern WebAssembly-based interface at `/` built entirely in Go with no external JavaScript dependencies.
 
 **Access:**
 ```
-http://localhost:8080/v2/
+http://localhost:8080/
 ```
 
 **Features:**
@@ -507,6 +503,13 @@ Send data: `{type: "data", data: "character"}`
 ```
 
 ### Camera
+
+The `cameras` command lists available cameras with platform-specific IDs and backend information:
+
+```bash
+./espbrew cameras                                  # List available cameras (local)
+./espbrew --cluster http://leader:8080 cameras    # List cameras on cluster node
+```
 
 The `capture` command provides camera discovery and image capture functionality:
 
@@ -868,30 +871,99 @@ ESPBrew can discover and capture images from connected cameras, useful for HMI d
 
 ### Platform Support
 
-Camera support uses platform-specific tools:
+Camera support uses native platform APIs:
 
-| Platform | Capture Tool | Installation |
-|----------|-------------|--------------|
-| macOS    | imagesnap   | `brew install imagesnap` |
-| Linux    | fswebcam    | `sudo apt install fswebcam` |
-| Windows  | (planned)   | - |
+| Platform | Backend | Installation |
+|----------|---------|--------------|
+| macOS    | AVFoundation | Built-in (no external tools required) |
+| Linux    | V4L2/fswebcam | `sudo apt install fswebcam` |
+| Windows  | DirectShow | Planned |
 
-### Discovery
+### Camera Discovery
 
-Camera discovery uses pion/mediadevices library. Note that on some platforms (especially macOS), camera access requires permissions and may not work from CLI. The capture command will attempt to use the system default camera if discovery fails.
+List available cameras with friendly names and backend information:
 
 ```bash
-espbrew capture --list
+espbrew cameras
 ```
+
+Output example:
+```
+Found 2 camera(s):
+
+1. FaceTime HD Camera
+   ID:     EAB7A68F-EC2B-4487-AADF-D8A91C1CB782
+   Backend: avfoundation
+   Path:   EAB7A68F-EC2B-4487-AADF-D8A91C1CB782
+
+2. UVC CAM1
+   ID:     0x1134000303a8000
+   Backend: avfoundation
+   Path:   0x1134000303a8000
+```
+
+Camera discovery uses pion/mediadevices library with native platform backends:
+- **macOS**: AVFoundation for device enumeration and capture (no external tools)
+- **Linux**: V4L2 for device discovery, fswebcam for capture
+- **Windows**: DirectShow (planned)
+
+### ESP32-S3-EYE as USB Camera
+
+The ESP32-S3-EYE development board can be used as a USB camera when running appropriate firmware. This enables using ESP32 hardware as part of your camera setup for HMI testing, device monitoring, and automated capture workflows.
+
+**Hardware Setup:**
+
+- ESP32-S3-EYE devkit (includes built-in camera module and USB support)
+- Documentation: [ESP32-S3-EYE Getting Started Guide](https://github.com/espressif/esp-who/blob/master/docs/en/get-started/ESP32-S3-EYE_Getting_Started_Guide.md)
+
+**Firmware:**
+
+Use the USB webcam firmware from Espressif's IoT solutions:
+
+- Repository: [esp-iot-solution](https://github.com/espressif/esp-iot-solution)
+- Firmware path: `examples/usb/device/usb_webcam`
+- Build and flash using ESP-IDF
+
+```bash
+# Clone repository
+git clone https://github.com/espressif/esp-iot-solution.git
+cd esp-iot-solution/examples/usb/device/usb_webcam
+
+# Build with ESP-IDF
+idf.py set-target esp32s3
+idf.py build
+
+# Flash to ESP32-S3-EYE
+idf.py flash
+```
+
+**Using ESP32-S3-EYE with ESPBrew:**
+
+After flashing the webcam firmware:
+1. Connect ESP32-S3-EYE via USB
+2. It appears as a standard USB camera (UVC device)
+3. Use `espbrew cameras` to verify detection
+4. Capture images normally
+
+```bash
+espbrew cameras                    # Should show ESP32-S3-EYE as UVC device
+espbrew capture --camera-id <ID>   # Capture from ESP32-S3-EYE
+```
+
+**Advantages:**
+- Low-cost camera solution using ESP32 hardware
+- Direct USB connection, no network setup required
+- Integrates with existing ESPBrew workflows
+- Useful for multi-device testing setups
 
 ### Capture
 
 Capture images to `~/.espbrew/captures/` with timestamped filenames:
 
 ```bash
-espbrew capture                                          # Use defaults
+espbrew capture                                          # Use defaults (1280x720, JPEG 85%)
 espbrew capture --width 1920 --height 1080 --quality 90  # Specify parameters
-espbrew capture --camera-id cam-001                    # Specific camera
+espbrew capture --camera-id 0x1134000303a8000          # Specific camera (use ID from cameras command)
 espbrew capture output.jpg                              # Custom output path
 ```
 

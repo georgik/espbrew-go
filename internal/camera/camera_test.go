@@ -1,6 +1,7 @@
 package camera
 
 import (
+	"runtime"
 	"testing"
 )
 
@@ -9,6 +10,7 @@ func TestDetectBackend(t *testing.T) {
 		name     string
 		deviceID string
 		want     Backend
+		platform string // if set, only run on this platform
 	}{
 		{
 			name:     "Linux V4L2 device",
@@ -19,16 +21,19 @@ func TestDetectBackend(t *testing.T) {
 			name:     "Linux V4L2 with video in name",
 			deviceID: "usb-0000:00:14.0-1",
 			want:     BackendUnknown,
+			platform: "linux",
 		},
 		{
 			name:     "macOS Facetime",
 			deviceID: "0x8020000005ac8514",
 			want:     BackendAVFoundation,
+			platform: "darwin",
 		},
 		{
 			name:     "Generic USB device (unknown platform)",
 			deviceID: "usb-1234567890",
 			want:     BackendUnknown,
+			platform: "linux",
 		},
 		{
 			name:     "Windows DirectShow GUID",
@@ -41,14 +46,26 @@ func TestDetectBackend(t *testing.T) {
 			want:     BackendDirectShow,
 		},
 		{
-			name:     "Unknown device",
+			name:     "Unknown device on macOS",
+			deviceID: "unknown-device-id",
+			want:     BackendAVFoundation,
+			platform: "darwin",
+		},
+		{
+			name:     "Unknown device on Linux",
 			deviceID: "unknown-device-id",
 			want:     BackendUnknown,
+			platform: "linux",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			// Skip if test is platform-specific and we're on wrong platform
+			if tt.platform != "" && tt.platform != runtime.GOOS {
+				t.Skipf("test requires %s platform, running on %s", tt.platform, runtime.GOOS)
+			}
+
 			got := DetectBackend(tt.deviceID)
 			if got != tt.want {
 				t.Errorf("DetectBackend() = %v, want %v", got, tt.want)

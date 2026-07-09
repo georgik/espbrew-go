@@ -619,7 +619,8 @@ func (h *APIHandler) handleCameraCapture(w http.ResponseWriter, r *http.Request)
 		Str("camera_id", req.CameraID).
 		Uint32("width", req.Width).
 		Uint32("height", req.Height).
-		Msg("Camera capture request")
+		Bool("preview", req.Preview).
+		Msg("Camera capture request received")
 
 	// Find camera - if no ID specified, use first available
 	state := h.leader.State()

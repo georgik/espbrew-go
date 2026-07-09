@@ -9,6 +9,10 @@ all: build
 build: wasm
 	@echo "Building ESPBrew server..."
 	@go build -o espbrew ./cmd/espbrew
+	@if [ "$$(uname)" = "Darwin" ]; then \
+		echo "Applying macOS ad-hoc signing with camera entitlements..."; \
+		codesign --sign - --entitlements macos/espbrew.entitlements --force ./espbrew 2>/dev/null || echo "Note: Code signing requires Xcode command line tools"; \
+	fi
 	@echo "Build complete: ./espbrew"
 	@echo "WASM size: $$(wc -c < web/main.wasm) bytes"
 
@@ -70,7 +74,20 @@ run-port:
 install: wasm
 	@echo "Installing ESPBrew..."
 	@go install ./cmd/espbrew
-	@echo "Installed: $$(which espweb)"
+	@if [ "$$(uname)" = "Darwin" ]; then \
+		codesign --sign - --entitlements macos/espbrew.entitlements --force "$$(which espbrew)" 2>/dev/null || true; \
+	fi
+	@echo "Installed: $$(which espbrew)"
+
+# macOS-specific build with proper code signing
+macos-build: wasm
+	@echo "Building ESPBrew for macOS with camera permissions..."
+	@go build -o espbrew ./cmd/espbrew
+	@echo "Applying ad-hoc code signing with entitlements..."
+	@codesign --sign - --entitlements macos/espbrew.entitlements --force --deep ./espbrew
+	@codesign --display --entitlements - ./espbrew
+	@echo "Build complete: ./espbrew"
+	@echo "Note: First run will prompt for camera permission in System Preferences"
 
 # Development: build and run with file watching (requires air)
 dev:
@@ -86,13 +103,13 @@ dev:
 demo: wasm
 	@echo "Creating demo package..."
 	@rm -rf demo
-	@mkdir -p demo/v2
-	@cp web/index.html demo/v2/
-	@cp web/styles.css demo/v2/
-	@cp web/wasm_exec.js demo/v2/
-	@cp web/main.wasm demo/v2/
-	@cp -r web/static demo/v2/
-	@cp web/demo/index.html demo/
+	@mkdir -p demo
+	@cp web/index.html demo/
+	@cp web/styles.css demo/
+	@cp web/wasm_exec.js demo/
+	@cp web/main.wasm demo/
+	@cp -r web/static demo/
+	@cp web/demo/index.html demo/demo.html
 	@echo "Demo package ready: demo/"
 	@echo "  Size: $$(du -sh demo | cut -f1)"
 	@echo ""
@@ -100,7 +117,7 @@ demo: wasm
 	@echo "  make demo-serve"
 	@echo ""
 	@echo "Demo URL with demo mode enabled:"
-	@echo "  https://georgik.github.io/espbrew-go/v2/?demo=true"
+	@echo "  https://georgik.github.io/espbrew-go/?demo=true"
 
 # Serve demo package locally for testing
 demo-serve: demo
@@ -114,6 +131,7 @@ help:
 	@echo ""
 	@echo "  make              - Build everything (WASM + server)"
 	@echo "  make build        - Same as above"
+	@echo "  make macos-build  - macOS build with camera entitlements"
 	@echo "  make wasm         - Build WASM UI only"
 	@echo "  make clean        - Remove build artifacts"
 	@echo "  make test         - Run tests"
@@ -131,7 +149,11 @@ help:
 	@echo "  make demo         - Build demo package for static hosting"
 	@echo "  make demo-serve   - Serve demo locally on port 8000"
 	@echo ""
+	@echo "macOS Camera Permissions:"
+	@echo "  On macOS, camera access requires code signing with entitlements."
+	@echo "  Use 'make macos-build' for local development (ad-hoc signing)."
+	@echo "  For releases, use proper signing with your Apple Developer certificate."
+	@echo ""
 	@echo "Access:"
-	@echo "  http://localhost:8080/  - Legacy HTML UI"
-	@echo "  http://localhost:8080/v2/ - WASM UI"
-	@echo "  http://localhost:8080/v2/?demo=true - WASM UI demo mode"
+	@echo "  http://localhost:8080/  - WASM UI"
+	@echo "  http://localhost:8080/?demo=true - WASM UI demo mode"
