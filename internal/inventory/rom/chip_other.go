@@ -189,6 +189,72 @@ func (c *ESP32C6Chip) ReadRevision(conn *Connection) (uint8, uint8, error) {
 	return major, minor, nil
 }
 
+// ESP32C5Chip implements Chip interface for ESP32-C5
+type ESP32C5Chip struct{}
+
+func (c *ESP32C5Chip) Name() string {
+	return "ESP32-C5"
+}
+
+func (c *ESP32C5Chip) BaseAddress() uint32 {
+	return 0x600B0000 + 0x044
+}
+
+func (c *ESP32C5Chip) MACRegister() uint32 {
+	return 0x44
+}
+
+func (c *ESP32C5Chip) ReadMAC(conn *Connection) (string, error) {
+	mac0, err := conn.ReadReg(c.BaseAddress() + 0x44)
+	if err != nil {
+		return "", fmt.Errorf("read MAC0: %w", err)
+	}
+	mac1, err := conn.ReadReg(c.BaseAddress() + 0x48)
+	if err != nil {
+		return "", fmt.Errorf("read MAC1: %w", err)
+	}
+	macBytes := make([]byte, 6)
+	macBytes[0] = byte(mac0)
+	macBytes[1] = byte(mac0 >> 8)
+	macBytes[2] = byte(mac0 >> 16)
+	macBytes[3] = byte(mac0 >> 24)
+	macBytes[4] = byte(mac1)
+	macBytes[5] = byte(mac1 >> 8)
+	return formatMAC(macBytes), nil
+}
+
+func (c *ESP32C5Chip) ReadPSRAM(conn *Connection) (uint32, string, error) {
+	return 0, "", nil
+}
+
+func (c *ESP32C5Chip) ReadFlash(conn *Connection) (uint32, error) {
+	word4, err := conn.ReadReg(c.BaseAddress() + 4*4)
+	if err != nil {
+		return 0, fmt.Errorf("read flash word4: %w", err)
+	}
+	cap := word4 & 0x07
+	sizeMap := map[uint32]uint32{
+		0: 0,
+		1: 8 * 1024 * 1024,
+		2: 4 * 1024 * 1024,
+	}
+	size, ok := sizeMap[cap]
+	if !ok {
+		size = 0
+	}
+	return size, nil
+}
+
+func (c *ESP32C5Chip) ReadRevision(conn *Connection) (uint8, uint8, error) {
+	word3, err := conn.ReadReg(c.BaseAddress() + 4*3)
+	if err != nil {
+		return 0, 0, fmt.Errorf("read revision word3: %w", err)
+	}
+	major := uint8((word3 >> 22) & 0x03)
+	minor := uint8((word3 >> 18) & 0x0F)
+	return major, minor, nil
+}
+
 // ESP32H2Chip implements Chip interface for ESP32-H2
 type ESP32H2Chip struct{}
 

@@ -146,7 +146,7 @@ func createMonitorControls() *dom.Element {
 		Text:  "Reset Device",
 		Class: "btn-secondary",
 		OnClick: func(_ *dom.Event) {
-			resetDevice()
+			resetMonitorDevice()
 		},
 	})
 	resetBtn.SetID("monitor-reset-btn")
@@ -543,7 +543,7 @@ func intToString(n int) string {
 	return string(digits)
 }
 
-func resetDevice() {
+func resetMonitorDevice() {
 	if monitorWS == nil || !monitorWS.IsConnected() {
 		showMonitorError("Not connected")
 		return

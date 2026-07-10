@@ -18,9 +18,9 @@ The demo showcases the full WASM UI with mock data for devices, cameras, capture
 - **Project Detection**: Automatically detects ESP-IDF, TinyGo, and Rust no_std projects and populates flash paths
 - **ESP-IDF Integration**: Read flash_args directly from build directory
 - **Cluster Mode**: Leader/peer architecture for distributed flashing
-- **Device Discovery**: Automatic ESP device detection via USB serial
+- **Device Discovery**: Automatic ESP device detection via USB serial with stable /dev/serial/by-id paths on Linux
 - **Device Persistence**: Device information survives cluster restart
-- **Device Management**: View, edit, and delete device records via web UI
+- **Device Management**: View, edit, and delete device records via web UI and CLI
 - **Device Disabling**: Administratively disable devices to prevent accidental flashing
 - **Device Protection**: Flash read-only mode for production devices while allowing serial monitoring
 - **Camera Support**: Discover and capture images from connected cameras
@@ -34,7 +34,7 @@ The demo showcases the full WASM UI with mock data for devices, cameras, capture
 - **Remote Monitor**: Serial monitor over WebSocket with pattern matching
 - **Web Dashboard**: Real-time status monitoring via HTTP
 - **mDNS**: Automatic node discovery on local network
-- **Boot Log Capture**: Reset device to observe startup messages
+- **Boot Log Capture**: Reset device to observe startup messages with port busy retry
 - **Cross-Platform**: Support for Windows, Linux, and macOS with automatic COM port detection on Windows
 - **Simulator Backends**: Wokwi simulator integration for testing without hardware (QEMU planned)
 
@@ -402,6 +402,16 @@ Note: Windows users should use `espbrew.exe` instead of `./espbrew` in the examp
 ./espbrew devices              # List all serial devices
 ./espbrew devices --esp        # List only ESP devices
 ./espbrew devices --json       # Output as JSON
+```
+
+### Device Management (Cluster)
+
+```bash
+# List all cluster devices with detailed information
+./espbrew --cluster http://leader:8080 device list
+
+# Delete a device record
+./espbrew --cluster http://leader:8080 device delete /dev/serial/by-id/usb-Espressif_...
 ```
 
 ### Flash

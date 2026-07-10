@@ -5,6 +5,7 @@ import (
 	"os"
 	"text/tabwriter"
 
+	"codeberg.org/georgik/espbrew-go/internal/cluster"
 	"codeberg.org/georgik/espbrew-go/internal/inventory"
 	"codeberg.org/georgik/espbrew-go/internal/inventory/rom"
 	"github.com/rs/zerolog/log"
@@ -73,6 +74,7 @@ type deviceFlags struct {
 }
 
 var deviceOpts deviceFlags
+var deviceClusterAddr string
 
 func init() {
 	rootCmd.AddCommand(deviceCmd)
@@ -83,6 +85,9 @@ func init() {
 	deviceCmd.AddCommand(deviceAliasCmd)
 	deviceCmd.AddCommand(deviceTagCmd)
 	deviceCmd.AddCommand(deviceSetCmd)
+
+	// Cluster flag (global for device command)
+	deviceCmd.PersistentFlags().StringVar(&deviceClusterAddr, "cluster", "", "Cluster URL (e.g., localhost:8080)")
 
 	// Alias flags
 	deviceAliasCmd.Flags().StringSliceVar(&deviceOpts.aliasAdd, "add", nil, "Add alias")
@@ -99,6 +104,10 @@ func init() {
 }
 
 func runDeviceList(cmd *cobra.Command, args []string) error {
+	if deviceClusterAddr != "" {
+		return runDeviceListCluster(deviceClusterAddr)
+	}
+
 	inv, err := inventory.NewInventory()
 	if err != nil {
 		return err
@@ -125,6 +134,39 @@ func runDeviceList(cmd *cobra.Command, args []string) error {
 		tags := joinLimit(dev.Tags, ",", 3)
 		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 			dev.DeviceID, dev.ChipType, dev.ChipRev, psram, flash, aliases, tags)
+	}
+	tw.Flush()
+
+	return nil
+}
+
+func runDeviceListCluster(clusterAddr string) error {
+	client := cluster.NewClient(clusterAddr)
+	devices, err := client.ListDevices()
+	if err != nil {
+		return fmt.Errorf("list devices from cluster: %w", err)
+	}
+
+	if len(devices) == 0 {
+		log.Info().Msg("No devices on cluster")
+		return nil
+	}
+
+	tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "DEVICE ID\tPATH\tCHIP\tSTATUS\tNODE\tALIASES\tTAGS")
+	for _, dev := range devices {
+		path := dev.Path
+		if dev.RealPath != "" && dev.RealPath != dev.Path {
+			path = fmt.Sprintf("%s (%s)", dev.Path, dev.RealPath)
+		}
+		status := string(dev.State)
+		if !dev.Connected {
+			status += " (disconnected)"
+		}
+		aliases := joinLimit(dev.Aliases, ",", 2)
+		tags := joinLimit(dev.Tags, ",", 2)
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			dev.DeviceID, path, dev.ChipType, status, dev.NodeID, aliases, tags)
 	}
 	tw.Flush()
 
@@ -229,6 +271,10 @@ func runDeviceProbe(cmd *cobra.Command, args []string) error {
 }
 
 func runDeviceDelete(cmd *cobra.Command, args []string) error {
+	if deviceClusterAddr != "" {
+		return runDeviceDeleteCluster(deviceClusterAddr, args[0])
+	}
+
 	inv, err := inventory.NewInventory()
 	if err != nil {
 		return err
@@ -250,6 +296,25 @@ func runDeviceDelete(cmd *cobra.Command, args []string) error {
 	}
 
 	log.Info().Str("device_id", deviceID).Msg("Device deleted")
+	return nil
+}
+
+func runDeviceDeleteCluster(clusterAddr, deviceID string) error {
+	// Confirm deletion
+	fmt.Printf("Delete device %s from cluster? (y/N): ", deviceID)
+	var response string
+	fmt.Scanln(&response)
+	if response != "y" && response != "Y" {
+		log.Info().Msg("Cancelled")
+		return nil
+	}
+
+	client := cluster.NewClient(clusterAddr)
+	if err := client.DeleteDevice(deviceID); err != nil {
+		return fmt.Errorf("delete device from cluster: %w", err)
+	}
+
+	log.Info().Str("device_id", deviceID).Msg("Device deleted from cluster")
 	return nil
 }
 

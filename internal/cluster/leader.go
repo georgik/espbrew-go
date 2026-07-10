@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"codeberg.org/georgik/espbrew-go/internal/camera"
+	"codeberg.org/georgik/espbrew-go/internal/config"
 	"codeberg.org/georgik/espbrew-go/internal/device"
 	"codeberg.org/georgik/espbrew-go/internal/flashhash"
 	"codeberg.org/georgik/espbrew-go/internal/inventory"
@@ -21,34 +22,36 @@ import (
 
 // LeaderNode coordinates the cluster, discovers local devices, and aggregates state from peers.
 type LeaderNode struct {
-	id         string
-	config     *LeaderConfig
-	state      *ClusterState
-	queue      *JobQueue
-	executor   *JobExecutor
-	devices    *DeviceRegistry
-	store      *persistence.Store
-	mu         sync.RWMutex
-	ctx        context.Context
-	cancel     context.CancelFunc
-	wg         sync.WaitGroup
-	mdns       *mDNSService
-	watcher    *device.Watcher
-	mode       protocol.OperationMode
-	modeTimer  *time.Timer
-	modeCancel context.CancelFunc
+	id          string
+	config      *LeaderConfig
+	state       *ClusterState
+	queue       *JobQueue
+	executor    *JobExecutor
+	devices     *DeviceRegistry
+	store       *persistence.Store
+	mu          sync.RWMutex
+	ctx         context.Context
+	cancel      context.CancelFunc
+	wg          sync.WaitGroup
+	mdns        *mDNSService
+	watcher     *device.Watcher
+	mode        protocol.OperationMode
+	modeTimer   *time.Timer
+	modeCancel  context.CancelFunc
+	staticPeers *StaticPeerRegistry
 }
 
 type LeaderConfig struct {
 	HeartbeatInterval  time.Duration
 	NodeTimeout        time.Duration
 	HTTPPort           int
-	DisablemDNS        bool          // For testing
-	DisableWatcher     bool          // For testing
-	DisableMaintenance bool          // For testing - skips maintenance loop
-	DisableVirtual     bool          // For testing - skips virtual device registration
-	DiscoveryDuration  time.Duration // How long to stay in discovery mode (default 5s)
-	InitialMode        string        // Starting mode (default "discovery")
+	DisablemDNS        bool                      // For testing
+	DisableWatcher     bool                      // For testing
+	DisableMaintenance bool                      // For testing - skips maintenance loop
+	DisableVirtual     bool                      // For testing - skips virtual device registration
+	DiscoveryDuration  time.Duration             // How long to stay in discovery mode (default 5s)
+	StaticPeers        []config.StaticPeerConfig // Static peer configuration
+	InitialMode        string                    // Starting mode (default "discovery")
 }
 
 func NewLeaderNode(id string, cfg *LeaderConfig, store *persistence.Store) *LeaderNode {
@@ -99,6 +102,14 @@ func (l *LeaderNode) Start(ctx context.Context) error {
 		go l.runMaintenanceLoop()
 	}
 
+	// Start static peer registry if configured
+	if len(l.config.StaticPeers) > 0 {
+		l.staticPeers = NewStaticPeerRegistry(l.config.StaticPeers, l)
+		if err := l.staticPeers.Start(ctx); err != nil {
+			log.Warn().Err(err).Msg("Static peer registry failed to start")
+		}
+	}
+
 	// Start camera registry (handles discovery and watching)
 	camera.GetRegistry().Start()
 
@@ -141,6 +152,9 @@ func (l *LeaderNode) Start(ctx context.Context) error {
 func (l *LeaderNode) Stop() error {
 	if l.cancel != nil {
 		l.cancel()
+	}
+	if l.staticPeers != nil {
+		l.staticPeers.Stop()
 	}
 	if l.watcher != nil {
 		l.watcher.Close()
@@ -253,6 +267,11 @@ func (l *LeaderNode) RegisterNode(node *protocol.NodeInfo) {
 	node.LastSeen = time.Now()
 	l.state.Nodes[node.ID] = node
 	log.Info().Str("node_id", node.ID).Msg("Node registered")
+
+	// Record metrics
+	// SetNodeUp(node.ID, node.Role, 1)
+	// SetNodeCount(float64(len(l.state.Nodes)))
+	// RecordHeartbeatSuccess(node.ID, "receive")
 }
 
 func (l *LeaderNode) UnregisterNode(nodeID string) {
@@ -281,6 +300,7 @@ func (l *LeaderNode) UpdateHeartbeat(nodeID string, payload *protocol.HeartbeatP
 		}
 		log.Debug().Str("node_id", nodeID).Time("last_seen", node.LastSeen).
 			Msg("Heartbeat received, LastSeen updated")
+		// RecordHeartbeatSuccess(nodeID, "receive")
 	} else {
 		log.Warn().Str("node_id", nodeID).
 			Msg("Heartbeat received from unknown node - not registered")
@@ -551,6 +571,7 @@ func (l *LeaderNode) handleDeviceEvent(event device.DeviceEvent) {
 			}
 			dev := &protocol.DeviceInfo{
 				Path:            event.Path,
+				RealPath:        event.RealPath,
 				DeviceID:        persisted.DeviceID,
 				ChipType:        persisted.ChipType,
 				SerialNumber:    persisted.MACAddress,
@@ -576,11 +597,13 @@ func (l *LeaderNode) handleDeviceEvent(event device.DeviceEvent) {
 
 		// Truly new device - create fresh entry
 		dev := &protocol.DeviceInfo{
-			Path:   event.Path,
-			VID:    event.VID,
-			PID:    event.PID,
-			NodeID: l.id,
-			Status: "available",
+			Path:         event.Path,
+			RealPath:     event.RealPath,
+			VID:          event.VID,
+			PID:          event.PID,
+			SerialNumber: event.Serial,
+			NodeID:       l.id,
+			Status:       "available",
 		}
 		l.state.Devices[event.Path] = dev
 		l.devices.Register(event.Path)
@@ -620,9 +643,16 @@ func (l *LeaderNode) probeDeviceQuickAsync(dev *protocol.DeviceInfo) {
 			return
 		}
 
-		// Generate fallback ID from VID:PID for unprobed devices
-		// This allows user to manually configure device via Edit
-		fallbackID := fmt.Sprintf("unprobed-%04x:%04x", dev.VID, dev.PID)
+		// Generate fallback ID using serial (from /dev/by-id) for uniqueness
+		// VID:PID alone is not unique - multiple devices can share same chip
+		var fallbackID string
+		if dev.SerialNumber != "" {
+			// Serial is the unique identifier from by-id (e.g. "14:C1:9F:D4:22:F0")
+			fallbackID = fmt.Sprintf("unprobed-%s", strings.ReplaceAll(dev.SerialNumber, ":", "_"))
+		} else {
+			// Fallback to VID:PID if serial unavailable (not ideal, may collide)
+			fallbackID = fmt.Sprintf("unprobed-%04x:%04x", dev.VID, dev.PID)
+		}
 
 		l.mu.Lock()
 		dev.DeviceID = fallbackID
@@ -632,12 +662,15 @@ func (l *LeaderNode) probeDeviceQuickAsync(dev *protocol.DeviceInfo) {
 		// Save to persistence with minimal info
 		now := time.Now()
 		record := &persistence.DeviceRecord{
-			DeviceID:  fallbackID,
-			ChipType:  "",
-			FirstSeen: now,
-			LastSeen:  now,
-			LastPath:  dev.Path,
-			NodeID:    l.id,
+			DeviceID:     fallbackID,
+			ChipType:     "",
+			VID:          dev.VID,
+			PID:          dev.PID,
+			SerialNumber: dev.SerialNumber,
+			FirstSeen:    now,
+			LastSeen:     now,
+			LastPath:     dev.Path,
+			NodeID:       l.id,
 		}
 		if err := l.store.SaveDevice(record); err != nil {
 			log.Warn().Err(err).Msg("Failed to save unprobed device to persistence")
@@ -673,19 +706,27 @@ func (l *LeaderNode) probeDeviceQuickAsync(dev *protocol.DeviceInfo) {
 		record.LastSeen = now
 		record.LastPath = dev.Path
 		record.NodeID = l.id
+		record.VID = dev.VID
+		record.PID = dev.PID
+		if dev.SerialNumber != "" {
+			record.SerialNumber = dev.SerialNumber
+		}
 	} else {
 		// New record
 		record = &persistence.DeviceRecord{
-			DeviceID:   deviceID,
-			MACAddress: identity.MAC,
-			ChipType:   identity.Chip,
-			ChipRev:    fmt.Sprintf("%d.%d", identity.ChipMajor, identity.ChipMinor),
-			FlashSize:  identity.FlashSize,
-			PSRAMSize:  identity.PSRAMSize,
-			FirstSeen:  now,
-			LastSeen:   now,
-			LastPath:   dev.Path,
-			NodeID:     l.id,
+			DeviceID:     deviceID,
+			MACAddress:   identity.MAC,
+			ChipType:     identity.Chip,
+			ChipRev:      fmt.Sprintf("%d.%d", identity.ChipMajor, identity.ChipMinor),
+			FlashSize:    identity.FlashSize,
+			PSRAMSize:    identity.PSRAMSize,
+			VID:          dev.VID,
+			PID:          dev.PID,
+			SerialNumber: dev.SerialNumber,
+			FirstSeen:    now,
+			LastSeen:     now,
+			LastPath:     dev.Path,
+			NodeID:       l.id,
 		}
 	}
 
@@ -723,9 +764,12 @@ func isAccessError(errStr string) bool {
 
 // ProbeDevice manually probes a device using boot log monitoring
 func (l *LeaderNode) ProbeDevice(path string) (*protocol.DeviceInfo, error) {
+	log.Info().Str("path", path).Msg("Initiating device probe")
+
 	// Use boot log monitoring - resets device and reads boot messages
 	identity, err := inventory.ProbeFromBootLog(path)
 	if err != nil {
+		log.Error().Str("path", path).Err(err).Msg("Device probe failed")
 		return nil, fmt.Errorf("boot log probe failed: %w", err)
 	}
 
@@ -968,13 +1012,17 @@ func (l *LeaderNode) cleanupStaleNodes() {
 		if now.Sub(node.LastSeen) > l.config.NodeTimeout {
 			log.Warn().Str("node_id", id).Msg("Node timed out")
 			staleNodeIDs = append(staleNodeIDs, id)
+			// RecordPeerTimeout(id)
 		}
 	}
 
 	// Remove stale nodes
 	for _, id := range staleNodeIDs {
 		delete(l.state.Nodes, id)
+		// SetNodeUp(id, "peer", 0)
 	}
+
+	// SetNodeCount(float64(len(l.state.Nodes)))
 
 	// Remove devices belonging to stale nodes (collect paths first, then delete)
 	var pathsToDelete []string
@@ -1032,10 +1080,13 @@ func (l *LeaderNode) dispatchJobs() {
 	}
 
 	// Assign job to device
-	job := l.queue.Dequeue(l.id)
+	job := l.queue.Dequeue("")
 	if job == nil {
 		return
 	}
+
+	// Determine device ownership
+	ownerNodeID, isLocal := l.getDeviceOwner(job.DevicePath)
 
 	l.mu.Lock()
 	dev := l.state.Devices[job.DevicePath]
@@ -1043,16 +1094,97 @@ func (l *LeaderNode) dispatchJobs() {
 	l.state.Devices[job.DevicePath] = dev
 	l.mu.Unlock()
 
-	log.Info().Str("job_id", job.ID).Str("device", job.DevicePath).
+	log.Info().
+		Str("job_id", job.ID).
+		Str("device", job.DevicePath).
+		Str("owner", ownerNodeID).
+		Bool("local", isLocal).
 		Msg("Job assigned to device")
 
-	// Submit to executor
-	if l.executor != nil {
-		l.executor.Submit(job)
+	if isLocal {
+		// Local execution
+		if l.executor != nil {
+			l.executor.Submit(job)
+		} else {
+			// No executor, mark as running (for testing)
+			l.queue.UpdateProgress(job.ID, 50)
+		}
 	} else {
-		// No executor, mark as running (for testing)
-		l.queue.UpdateProgress(job.ID, 50)
+		// Remote execution on peer
+		l.dispatchJobToPeer(job, ownerNodeID)
 	}
+}
+
+// getDeviceOwner returns the node ID that owns the device and whether it's local.
+func (l *LeaderNode) getDeviceOwner(devicePath string) (nodeID string, isLocal bool) {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+
+	dev, exists := l.state.Devices[devicePath]
+	if !exists {
+		return l.id, true // Unknown device, treat as local
+	}
+
+	if dev.NodeID == "" || dev.NodeID == l.id {
+		return l.id, true
+	}
+
+	return dev.NodeID, false
+}
+
+// dispatchJobToPeer sends a job to a peer node for execution.
+func (l *LeaderNode) dispatchJobToPeer(job *Job, peerNodeID string) {
+	l.mu.RLock()
+	nodeInfo, exists := l.state.Nodes[peerNodeID]
+	l.mu.RUnlock()
+
+	if !exists {
+		log.Error().Str("peer_id", peerNodeID).Msg("Peer node not found")
+		l.queue.Complete(job.ID, fmt.Errorf("peer not found"))
+		l.ReleaseDevice(job.DevicePath)
+		return
+	}
+
+	// Build peer URL
+	peerURL := fmt.Sprintf("http://%s:%d", nodeInfo.Address, nodeInfo.Port)
+	client := NewPeerJobClient(peerURL, peerNodeID)
+
+	ctx, cancel := context.WithTimeout(l.ctx, 10*time.Minute)
+	defer cancel()
+
+	resp, err := client.AssignJob(ctx, job)
+	if err != nil {
+		log.Error().Err(err).Str("peer_id", peerNodeID).Str("job_id", job.ID).
+			Msg("Failed to dispatch job to peer")
+		l.queue.Complete(job.ID, err)
+		l.ReleaseDevice(job.DevicePath)
+		return
+	}
+
+	if resp != nil && resp.Status == "accepted" {
+		log.Info().Str("peer_id", peerNodeID).Str("job_id", job.ID).
+			Msg("Job accepted by peer")
+	} else {
+		log.Warn().Str("peer_id", peerNodeID).Str("job_id", job.ID).
+			Str("status", resp.Status).Msg("Job rejected by peer")
+		l.queue.Complete(job.ID, fmt.Errorf("job rejected by peer"))
+		l.ReleaseDevice(job.DevicePath)
+	}
+}
+
+// ReleaseDevice marks a device as available again.
+func (l *LeaderNode) ReleaseDevice(devicePath string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	if dev, exists := l.state.Devices[devicePath]; exists {
+		dev.Status = "available"
+		l.state.Devices[devicePath] = dev
+	}
+}
+
+func (l *LeaderNode) releaseDevice(devicePath string) {
+	l.ReleaseDevice(devicePath)
 }
 
 func (l *LeaderNode) runMaintenanceLoop() {
@@ -1261,17 +1393,30 @@ func (l *LeaderNode) UpdateDeviceInfo(path, deviceID, chipType, serialNumber str
 			record.LastSeen = time.Now()
 			record.LastPath = path
 			record.NodeID = l.id
+			// Preserve VID/PID/SerialNumber from in-memory device
+			if record.VID == 0 && dev.VID != 0 {
+				record.VID = dev.VID
+			}
+			if record.PID == 0 && dev.PID != 0 {
+				record.PID = dev.PID
+			}
+			if record.SerialNumber == "" && dev.SerialNumber != "" {
+				record.SerialNumber = dev.SerialNumber
+			}
 		} else {
 			// New record
 			now := time.Now()
 			record = &persistence.DeviceRecord{
-				DeviceID:   deviceID,
-				MACAddress: serialNumber,
-				ChipType:   chipType,
-				FirstSeen:  now,
-				LastSeen:   now,
-				LastPath:   path,
-				NodeID:     l.id,
+				DeviceID:     deviceID,
+				MACAddress:   serialNumber,
+				ChipType:     chipType,
+				VID:          dev.VID,
+				PID:          dev.PID,
+				SerialNumber: dev.SerialNumber,
+				FirstSeen:    now,
+				LastSeen:     now,
+				LastPath:     path,
+				NodeID:       l.id,
 			}
 		}
 

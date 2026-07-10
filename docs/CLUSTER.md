@@ -55,9 +55,26 @@ Peer nodes:
 
 ## Platform Support
 
-### Linux/macOS
+### Linux
 
-On Linux and macOS, devices are discovered at paths like `/dev/ttyUSB0`, `/dev/ttyACM0`, or `/dev/cu.usbserial-xxx`. These paths are used consistently throughout the cluster.
+On Linux, ESPBrew uses stable device identifiers via `/dev/serial/by-id/` symlinks for reliable device tracking across reconnections:
+
+- Primary path: `/dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_30:30:F9:5A:A3:A0-if00`
+- Reference path: `/dev/ttyACM0` (displayed as `real_path` in UI)
+- Device identity persists across USB reconnections
+- Multiple devices distinguished by serial number
+
+Example device listing:
+```
+Path:     /dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_30:30:F9:5A:A3:A0-if00
+RealPath: /dev/ttyACM0
+DeviceID: (assigned after probe)
+Status:   available
+```
+
+### macOS
+
+On macOS, devices are discovered at paths like `/dev/ttyUSB0`, `/dev/ttyACM0`, or `/dev/cu.usbserial-xxx`. These paths are used consistently throughout the cluster.
 
 ### Windows
 
@@ -180,6 +197,50 @@ Browser-based monitoring at `http://leader:8080/monitor`:
 
 Monitor buttons in dashboard device list for quick access.
 
+## Device Management
+
+List and manage devices across the cluster:
+
+```bash
+# List all cluster devices with detailed information
+./espbrew --cluster http://leader:8080 device list
+
+# List devices in JSON format for scripting
+./espbrew --cluster http://leader:8080 device list --json
+
+# Delete a device record (clears cached device information)
+./espbrew --cluster http://leader:8080 device delete /dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_30:30:F9:5A:A3:A0-if00
+
+# Delete by device ID
+./espbrew --cluster http://leader:8080 device delete esp-30:30:f9:5a:a3:a0
+```
+
+**Device Record Fields:**
+
+- `path`: Stable device identifier (by-id on Linux)
+- `real_path`: Actual device node (e.g., /dev/ttyACM0)
+- `device_id`: Unique identifier assigned after probe
+- `chip_type`: Detected chip type (ESP32, ESP32-S3, etc.)
+- `status`: Connection status (available, busy, offline)
+- `node_id`: Cluster node hosting the device
+
+**Manual Device Editing:**
+
+For devices that cannot be probed (port busy, incompatible device), manually configure via API:
+
+```bash
+# Edit device without probe (by path or device_id)
+curl -X PATCH http://leader:8080/api/v1/devices/{path_or_id} \
+  -H "Content-Type: application/json" \
+  -d '{
+    "chip_type": "ESP32-S3",
+    "mac_address": "30:30:f9:5a:a3:a0",
+    "description": "Production unit"
+  }'
+```
+
+This creates a persistent device record even when probe fails.
+
 ## Device Reservation
 
 Devices are automatically reserved during operations:
@@ -199,6 +260,84 @@ The dashboard shows:
 - Available devices per node
 - Active and queued jobs
 - Real-time job progress
+
+## Job Execution Flow
+
+The cluster implements a distributed job execution system where the leader routes jobs to the appropriate node based on device ownership.
+
+### Step-by-Step Process
+
+1. **Client submits job to leader**
+   ```
+   POST /api/v1/jobs
+   {
+     "firmware": "firmware.bin",
+     "device_path": "/dev/ttyUSB0"
+   }
+   ```
+   - Job is added to the leader's queue
+   - Job receives unique ID and status "pending"
+
+2. **Leader dispatches job**
+   - Dispatcher checks device ownership via `DeviceNodeID` field
+   - If device is local: executes directly
+   - If device is on peer: dispatches via HTTP
+
+3. **Peer receives job assignment**
+   ```
+   POST /api/v1/jobs/assign
+   {
+     "job_id": "abc-123",
+     "device_path": "/dev/ttyUSB0",
+     "type": "flash"
+   }
+   ```
+   - Peer validates device ownership
+   - Device status changes to "busy"
+   - Execution goroutine starts
+
+4. **Peer reports progress**
+   ```
+   POST /api/v1/nodes/{node_id}/jobs/{job_id}/progress
+   {
+     "job_id": "abc-123",
+     "status": "running",
+     "progress": 50,
+     "node_id": "peer-1"
+   }
+   ```
+   - Leader updates job progress in queue
+   - Clients can poll `/api/v1/jobs/{id}` for status
+
+5. **Job completion**
+   - Peer sends final status: `completed` or `failed`
+   - Leader marks job complete/failed
+   - Device status changes back to "available"
+   - Error message stored if failed
+
+### Error Handling
+
+- **Peer offline**: Job marked as failed, device released
+- **Device unavailable**: Peer rejects job (409), leader retries
+- **Execution timeout**: Job marked as timed out after 10 minutes
+- **Network failure**: Progress updates may be lost, job eventually times out
+
+### Client Polling
+
+Clients poll for job status:
+```bash
+# Check job status
+curl http://leader:8080/api/v1/jobs/{job_id}
+
+# Response
+{
+  "id": "abc-123",
+  "status": "running",
+  "progress": 75,
+  "device_path": "/dev/ttyUSB0",
+  "device_node": "peer-1"
+}
+```
 
 ## mDNS Discovery
 
@@ -290,3 +429,90 @@ To remove a device record permanently (allows fresh discovery on next connection
 # Via web UI: http://localhost:8080 → Devices → Delete device
 # Via API: DELETE /api/v1/devices/{device_id}
 ```
+
+## Observability
+
+### Prometheus Metrics
+
+All cluster nodes expose Prometheus metrics on the `/metrics` endpoint:
+
+```bash
+curl http://localhost:8080/metrics
+```
+
+**Available Metrics:**
+
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `espbrew_cluster_heartbeat_success_total` | Counter | node_id, direction | Total successful heartbeats |
+| `espbrew_cluster_heartbeat_latency_seconds` | Histogram | node_id, direction | Heartbeat latency distribution |
+| `espbrew_cluster_node_count` | Gauge | - | Current number of nodes |
+| `espbrew_cluster_node_up` | Gauge | node_id, role | Node availability (1=up, 0=down) |
+| `espbrew_cluster_jobs_queued_total` | Counter | - | Total jobs queued |
+| `espbrew_cluster_jobs_started_total` | Counter | - | Total jobs started |
+| `espbrew_cluster_jobs_completed_total` | Counter | status | Total jobs completed by status |
+| `espbrew_cluster_job_duration_seconds` | Histogram | status | Job execution duration |
+| `espbrew_cluster_queue_size` | Gauge | - | Current queue depth |
+| `espbrew_cluster_device_count` | Gauge | backend | Device count by backend type |
+| `espbrew_cluster_device_available` | Gauge | node_id | Available devices per node |
+| `espbrew_cluster_device_busy` | Gauge | node_id | Busy devices per node |
+| `espbrew_cluster_device_offline` | Gauge | node_id | Offline devices per node |
+| `espbrew_cluster_peer_rejoin_total` | Counter | node_id | Peer rejoins after timeout |
+| `espbrew_cluster_peer_recovery_success_total` | Counter | node_id | Successful peer recoveries |
+| `espbrew_cluster_peer_recovery_failure_total` | Counter | node_id, reason | Failed peer recoveries |
+| `espbrew_cluster_peer_timeout_total` | Counter | node_id | Peer timeout events |
+
+**Grafana Dashboard Example:**
+
+```promql
+# Cluster node availability
+espbrew_cluster_node_up
+
+# Job completion rate (last 5m)
+rate(espbrew_cluster_jobs_completed_total[5m])
+
+# Average job duration
+rate(espbrew_cluster_job_duration_seconds_sum[5m]) / rate(espbrew_cluster_job_duration_seconds_count[5m])
+
+# Queue depth over time
+espbrew_cluster_queue_size
+```
+
+## Static Peer Configuration
+
+For multi-subnet deployments or environments without mDNS, configure static peers:
+
+**Config file (`~/.espbrew/config.toml`):**
+
+```toml
+role = "leader"
+http_port = 8080
+
+[[static_peers]]
+id = "peer-station-1"
+address = "192.168.1.100"
+port = 8081
+
+[[static_peers]]
+id = "peer-station-2"
+address = "192.168.1.101"
+port = 8082
+```
+
+**Fields:**
+
+- `id`: Unique identifier for the peer
+- `address`: IP address or hostname
+- `port`: HTTP port where peer listens
+
+The leader will attempt to connect to static peers on startup and periodically retry unhealthy peers. Static peers coexist with mDNS discovery - peers discovered via mDNS are also registered.
+
+**Health Monitoring:**
+
+Static peer health is tracked via metrics:
+
+```bash
+curl http://localhost:8080/metrics | grep peer_health
+```
+
+Unhealthy peers are retried every 30 seconds.

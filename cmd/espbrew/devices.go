@@ -48,22 +48,46 @@ func runDevicesLocal() error {
 			return fmt.Errorf("scan ESP devices: %w", err)
 		}
 		for _, p := range espPorts {
-			ports = append(ports, map[string]interface{}{
-				"path": p.Path,
-				"vid":  fmt.Sprintf("0x%04x", p.VID),
-				"pid":  fmt.Sprintf("0x%04x", p.PID),
-				"type": "ESP",
-			})
+			portInfo := map[string]interface{}{
+				"path":   p.Path,
+				"vid":    fmt.Sprintf("0x%04x", p.VID),
+				"pid":    fmt.Sprintf("0x%04x", p.PID),
+				"type":   "ESP",
+				"serial": p.SerialNumber,
+			}
+			if p.Product != "" {
+				portInfo["product"] = p.Product
+			}
+			if p.Manufacturer != "" {
+				portInfo["manufacturer"] = p.Manufacturer
+			}
+			ports = append(ports, portInfo)
 		}
 	} else {
-		allPorts, err := scanner.Scan()
+		allPorts, err := scanner.ScanDetailed()
 		if err != nil {
 			return fmt.Errorf("scan ports: %w", err)
 		}
 		for _, p := range allPorts {
-			ports = append(ports, map[string]interface{}{
+			portInfo := map[string]interface{}{
 				"path": p.Path,
-			})
+			}
+			if p.VID != 0 {
+				portInfo["vid"] = fmt.Sprintf("0x%04x", p.VID)
+			}
+			if p.PID != 0 {
+				portInfo["pid"] = fmt.Sprintf("0x%04x", p.PID)
+			}
+			if p.SerialNumber != "" {
+				portInfo["serial"] = p.SerialNumber
+			}
+			if p.Product != "" {
+				portInfo["product"] = p.Product
+			}
+			if p.Manufacturer != "" {
+				portInfo["manufacturer"] = p.Manufacturer
+			}
+			ports = append(ports, portInfo)
 		}
 	}
 
@@ -106,6 +130,7 @@ func runDevicesRemote() error {
 	fmt.Printf("Devices from cluster %s:\n", devicesOpts.clusterURL)
 	for i, d := range devices {
 		fmt.Printf("[%d] %s\n", i, d.Path)
+		fmt.Printf("    Device ID: %s\n", d.DeviceID)
 		if d.VID != "" {
 			fmt.Printf("    VID: %s, PID: %s\n", d.VID, d.PID)
 		}

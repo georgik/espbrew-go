@@ -55,6 +55,7 @@ var flashOpts struct {
 	filterBoardModel string   // Filter by board model (e.g., "ESP32-S3-BOX")
 	filterTags       []string // Filter by tags (all must match)
 	filterChip       string   // Filter by chip type (e.g., "ESP32-S3")
+	filterAlias      string   // Filter by alias (e.g., "production-esp1")
 }
 
 func init() {
@@ -91,6 +92,7 @@ func init() {
 	flashCmd.Flags().StringVar(&flashOpts.filterBoardModel, "filter-board", "", "Filter devices by board model (e.g., ESP32-S3-BOX)")
 	flashCmd.Flags().StringSliceVar(&flashOpts.filterTags, "filter-tag", []string{}, "Filter devices by tags (can be specified multiple times, all must match)")
 	flashCmd.Flags().StringVar(&flashOpts.filterChip, "filter-chip", "", "Filter devices by chip type (e.g., ESP32-S3)")
+	flashCmd.Flags().StringVar(&flashOpts.filterAlias, "filter-alias", "", "Filter devices by alias (e.g., production-esp1)")
 
 	rootCmd.AddCommand(flashCmd)
 }
@@ -803,7 +805,7 @@ func runFlashRemoteMultiImage() error {
 // filterDevices filters devices based on CLI filter criteria
 func filterDevices(devices []cluster.DeviceInfo) ([]cluster.DeviceInfo, error) {
 	// If no filters specified, return all devices
-	if flashOpts.filterBoardModel == "" && len(flashOpts.filterTags) == 0 && flashOpts.filterChip == "" {
+	if flashOpts.filterBoardModel == "" && len(flashOpts.filterTags) == 0 && flashOpts.filterChip == "" && flashOpts.filterAlias == "" {
 		return devices, nil
 	}
 
@@ -811,6 +813,7 @@ func filterDevices(devices []cluster.DeviceInfo) ([]cluster.DeviceInfo, error) {
 		Str("board", flashOpts.filterBoardModel).
 		Strs("tags", flashOpts.filterTags).
 		Str("chip", flashOpts.filterChip).
+		Str("alias", flashOpts.filterAlias).
 		Msg("Filtering devices")
 
 	// Filter devices by matching against API-provided metadata
@@ -822,6 +825,7 @@ func filterDevices(devices []cluster.DeviceInfo) ([]cluster.DeviceInfo, error) {
 			log.Info().Str("device", d.Path).
 				Str("board", d.BoardModel).
 				Strs("tags", d.Tags).
+				Strs("aliases", d.Aliases).
 				Msg("Device matches filter")
 		}
 	}
@@ -845,6 +849,20 @@ func matchesFilters(d cluster.DeviceInfo) bool {
 	// Check chip type filter
 	if flashOpts.filterChip != "" && d.ChipType != flashOpts.filterChip {
 		return false
+	}
+
+	// Check alias filter (device must have the specified alias)
+	if flashOpts.filterAlias != "" {
+		found := false
+		for _, alias := range d.Aliases {
+			if alias == flashOpts.filterAlias {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
 	}
 
 	// Check tags filter (all specified tags must be present)

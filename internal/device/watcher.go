@@ -2,6 +2,7 @@ package device
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -20,7 +21,8 @@ type Watcher struct {
 	wg       sync.WaitGroup
 	platform platformWatcher
 	mu       sync.RWMutex
-	seen     map[string]*DeviceInfo
+	seen     map[string]*DeviceInfo // Key: serial+VID+PID for stable tracking
+	byPath   map[string]*DeviceInfo // Key: path -> device (for reverse lookup)
 	paused   bool
 }
 
@@ -31,6 +33,7 @@ func NewWatcher() *Watcher {
 		ctx:    ctx,
 		cancel: cancel,
 		seen:   make(map[string]*DeviceInfo),
+		byPath: make(map[string]*DeviceInfo),
 	}
 
 	scanner := NewScanner()
@@ -154,38 +157,74 @@ func (pw *pollingWatcher) scan() {
 	pw.watcher.mu.Lock()
 	defer pw.watcher.mu.Unlock()
 
+	// Build current device keys map
+	currentKeys := make(map[string]*DeviceInfo)
+	for _, port := range ports {
+		// Get device info to extract serial
+		info, err := pw.scanner.resolver.GetDeviceInfo(port.RealPath)
+		if err != nil {
+			log.Debug().Str("path", port.Path).Err(err).Msg("Failed to get device info")
+			continue
+		}
+
+		// Use scanner's paths as source of truth
+		// Path is the stable by-id path, RealPath is the actual device
+		info.Path = port.Path
+		info.RealPath = port.RealPath
+
+		// Create device key: serial + VID + PID for stable tracking
+		key := deviceKey(info)
+		currentKeys[key] = info
+	}
+
 	// Detect added devices
-	for path := range current {
-		if _, exists := pw.watcher.seen[path]; !exists {
+	for key, info := range currentKeys {
+		if _, exists := pw.watcher.seen[key]; !exists {
 			// New device
-			if pw.watcher.isLikelyESP(path) {
-				dev := DeviceInfo{
-					Path:         path,
-					VID:          ESP_VID,
-					PID:          ESP_PID_S3,
-					SerialNumber: "",
-				}
-				pw.watcher.seen[path] = &dev
+			pw.watcher.seen[key] = info
+			pw.watcher.byPath[info.Path] = info
+
+			if pw.watcher.isLikelyESP(info.Path) || IsESPDevice(info.VID, info.PID) {
 				pw.watcher.sendEvent(DeviceEvent{
-					Type: DeviceAdded,
-					Path: path,
-					VID:  ESP_VID,
-					PID:  ESP_PID_S3,
+					Type:     DeviceAdded,
+					Path:     info.Path,
+					RealPath: info.RealPath,
+					VID:      info.VID,
+					PID:      info.PID,
+					Serial:   info.SerialNumber,
 				})
-				log.Info().Str("path", path).Msg("Device added")
+				log.Info().
+					Str("path", info.Path).
+					Str("serial", info.SerialNumber).
+					Uint16("vid", info.VID).
+					Uint16("pid", info.PID).
+					Msg("Device added")
 			}
+		} else {
+			// Update path in case it changed (reconnected to different port)
+			pw.watcher.byPath[info.Path] = info
 		}
 	}
 
 	// Detect removed devices
-	for path := range pw.watcher.seen {
-		if _, exists := current[path]; !exists {
-			delete(pw.watcher.seen, path)
+	for key, info := range pw.watcher.seen {
+		if _, exists := currentKeys[key]; !exists {
+			// Device removed
+			delete(pw.watcher.seen, key)
+			delete(pw.watcher.byPath, info.Path)
+
 			pw.watcher.sendEvent(DeviceEvent{
-				Type: DeviceRemoved,
-				Path: path,
+				Type:     DeviceRemoved,
+				Path:     info.Path,
+				RealPath: info.RealPath,
+				VID:      info.VID,
+				PID:      info.PID,
+				Serial:   info.SerialNumber,
 			})
-			log.Info().Str("path", path).Msg("Device removed")
+			log.Info().
+				Str("path", info.Path).
+				Str("serial", info.SerialNumber).
+				Msg("Device removed")
 		}
 	}
 }
@@ -198,7 +237,9 @@ func (w *Watcher) isLikelyESP(path string) bool {
 	espPatterns := []string{
 		"usbmodem", "usbserial", "ttyUSB", "ttyACM", "tty.wchusb",
 		"SLAB", "CP21", "FTDI", "CH340",
-		"COM", // Windows COM ports
+		"COM",               // Windows COM ports
+		"usb",               // Generic USB serial
+		"Espressif", "303a", // Espressif VID
 	}
 
 	pathLower := strings.ToLower(path)
@@ -300,4 +341,14 @@ func deviceBaseName(path string) string {
 
 func containsPrefix(s, prefix string) bool {
 	return strings.HasPrefix(s, prefix)
+}
+
+// deviceKey creates a stable key for device tracking based on serial, VID, PID
+// This allows devices to maintain identity across reconnects with different paths
+func deviceKey(info *DeviceInfo) string {
+	if info.SerialNumber != "" {
+		return fmt.Sprintf("%s:0x%04x:0x%04x", info.SerialNumber, info.VID, info.PID)
+	}
+	// Fallback to path if no serial (less stable)
+	return info.Path
 }

@@ -220,3 +220,282 @@ func TestAPIHandler_HandleReserveDevice_NotFound(t *testing.T) {
 
 	assert.Equal(t, http.StatusNotFound, w.Code)
 }
+
+func TestAPIHandler_HandleNodeJobProgress(t *testing.T) {
+	store, err := persistence.Open(persistence.DefaultConfig(t.TempDir() + "/test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	master := cluster.NewLeaderNode("test", &cluster.LeaderConfig{
+		HTTPPort:           8080,
+		DisablemDNS:        true,
+		DisableMaintenance: true,
+		DisableWatcher:     true,
+		HeartbeatInterval:  time.Second,
+		NodeTimeout:        5 * time.Second,
+	}, store)
+	master.Start(context.Background())
+	defer master.Stop()
+
+	handler := NewAPIHandler(master, store)
+
+	// Create a test job
+	queue := master.GetJobQueue()
+	job := queue.EnqueueFlash("/path/to/firmware.bin", "/dev/ttyUSB0", 0, false)
+	job.DeviceNode = "test-peer-1"
+
+	// Test progress update
+	payload := `{
+		"job_id": "` + job.ID + `",
+		"status": "running",
+		"progress": 50,
+		"node_id": "test-peer-1"
+	}`
+
+	req := httptest.NewRequest("POST", "/api/v1/nodes/test-peer-1/jobs/"+job.ID+"/progress", strings.NewReader(payload))
+	req = mux.SetURLVars(req, map[string]string{"id": "test-peer-1", "job_id": job.ID})
+	w := httptest.NewRecorder()
+
+	handler.handleNodeJobProgress(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var resp map[string]interface{}
+	json.NewDecoder(w.Body).Decode(&resp)
+	assert.Equal(t, "ok", resp["status"])
+
+	// Verify progress was updated
+	updatedJob := queue.Get(job.ID)
+	assert.NotNil(t, updatedJob)
+	assert.Equal(t, 50, updatedJob.Progress)
+}
+
+func TestAPIHandler_HandleNodeJobProgress_Complete(t *testing.T) {
+	store, err := persistence.Open(persistence.DefaultConfig(t.TempDir() + "/test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	master := cluster.NewLeaderNode("test", &cluster.LeaderConfig{
+		HTTPPort:           8080,
+		DisablemDNS:        true,
+		DisableMaintenance: true,
+		DisableWatcher:     true,
+		HeartbeatInterval:  time.Second,
+		NodeTimeout:        5 * time.Second,
+	}, store)
+	master.Start(context.Background())
+	defer master.Stop()
+
+	// Register a test device
+	master.RegisterDevice(&protocol.DeviceInfo{
+		Path:   "/dev/ttyUSB0",
+		NodeID: "test-peer-1",
+		Status: "busy",
+	})
+
+	handler := NewAPIHandler(master, store)
+
+	// Create a test job
+	queue := master.GetJobQueue()
+	job := queue.EnqueueFlash("/path/to/firmware.bin", "/dev/ttyUSB0", 0, false)
+	job.DeviceNode = "test-peer-1"
+
+	// Test completion
+	payload := `{
+		"job_id": "` + job.ID + `",
+		"status": "completed",
+		"progress": 100,
+		"node_id": "test-peer-1"
+	}`
+
+	req := httptest.NewRequest("POST", "/api/v1/nodes/test-peer-1/jobs/"+job.ID+"/progress", strings.NewReader(payload))
+	req = mux.SetURLVars(req, map[string]string{"id": "test-peer-1", "job_id": job.ID})
+	w := httptest.NewRecorder()
+
+	handler.handleNodeJobProgress(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	// Verify job completed
+	updatedJob := queue.Get(job.ID)
+	assert.NotNil(t, updatedJob)
+	assert.Equal(t, cluster.JobStatus("completed"), updatedJob.Status)
+	assert.Equal(t, 100, updatedJob.Progress)
+
+	// Verify device released
+	state := master.State()
+	dev := state.Devices["/dev/ttyUSB0"]
+	assert.Equal(t, "available", dev.Status)
+}
+
+func TestAPIHandler_HandleNodeJobProgress_Failed(t *testing.T) {
+	store, err := persistence.Open(persistence.DefaultConfig(t.TempDir() + "/test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	master := cluster.NewLeaderNode("test", &cluster.LeaderConfig{
+		HTTPPort:           8080,
+		DisablemDNS:        true,
+		DisableMaintenance: true,
+		DisableWatcher:     true,
+		HeartbeatInterval:  time.Second,
+		NodeTimeout:        5 * time.Second,
+	}, store)
+	master.Start(context.Background())
+	defer master.Stop()
+
+	// Register a test device
+	master.RegisterDevice(&protocol.DeviceInfo{
+		Path:   "/dev/ttyUSB0",
+		NodeID: "test-peer-1",
+		Status: "busy",
+	})
+
+	handler := NewAPIHandler(master, store)
+
+	// Create a test job
+	queue := master.GetJobQueue()
+	job := queue.EnqueueFlash("/path/to/firmware.bin", "/dev/ttyUSB0", 0, false)
+	job.DeviceNode = "test-peer-1"
+
+	// Test failure
+	payload := `{
+		"job_id": "` + job.ID + `",
+		"status": "failed",
+		"progress": 75,
+		"node_id": "test-peer-1",
+		"error": "flash operation failed: connection lost"
+	}`
+
+	req := httptest.NewRequest("POST", "/api/v1/nodes/test-peer-1/jobs/"+job.ID+"/progress", strings.NewReader(payload))
+	req = mux.SetURLVars(req, map[string]string{"id": "test-peer-1", "job_id": job.ID})
+	w := httptest.NewRecorder()
+
+	handler.handleNodeJobProgress(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	// Verify job failed
+	updatedJob := queue.Get(job.ID)
+	assert.NotNil(t, updatedJob)
+	assert.Equal(t, cluster.JobStatus("failed"), updatedJob.Status)
+	assert.Contains(t, updatedJob.Error, "flash operation failed")
+
+	// Verify device released
+	state := master.State()
+	dev := state.Devices["/dev/ttyUSB0"]
+	assert.Equal(t, "available", dev.Status)
+}
+
+func TestAPIHandler_HandleNodeJobProgress_JobNotFound(t *testing.T) {
+	store, err := persistence.Open(persistence.DefaultConfig(t.TempDir() + "/test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	master := cluster.NewLeaderNode("test", &cluster.LeaderConfig{
+		HTTPPort:           8080,
+		DisablemDNS:        true,
+		DisableMaintenance: true,
+		DisableWatcher:     true,
+		HeartbeatInterval:  time.Second,
+		NodeTimeout:        5 * time.Second,
+	}, store)
+	master.Start(context.Background())
+	defer master.Stop()
+
+	handler := NewAPIHandler(master, store)
+
+	payload := `{
+		"job_id": "non-existent-job",
+		"status": "running",
+		"progress": 50,
+		"node_id": "test-peer-1"
+	}`
+
+	req := httptest.NewRequest("POST", "/api/v1/nodes/test-peer-1/jobs/non-existent-job/progress", strings.NewReader(payload))
+	req = mux.SetURLVars(req, map[string]string{"id": "test-peer-1", "job_id": "non-existent-job"})
+	w := httptest.NewRecorder()
+
+	handler.handleNodeJobProgress(w, req)
+
+	assert.Equal(t, http.StatusNotFound, w.Code)
+}
+
+func TestAPIHandler_HandleNodeJobProgress_NodeMismatch(t *testing.T) {
+	store, err := persistence.Open(persistence.DefaultConfig(t.TempDir() + "/test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	master := cluster.NewLeaderNode("test", &cluster.LeaderConfig{
+		HTTPPort:           8080,
+		DisablemDNS:        true,
+		DisableMaintenance: true,
+		DisableWatcher:     true,
+		HeartbeatInterval:  time.Second,
+		NodeTimeout:        5 * time.Second,
+	}, store)
+	master.Start(context.Background())
+	defer master.Stop()
+
+	handler := NewAPIHandler(master, store)
+
+	// Create a test job assigned to one peer
+	queue := master.GetJobQueue()
+	job := queue.EnqueueFlash("/path/to/firmware.bin", "/dev/ttyUSB0", 0, false)
+	job.DeviceNode = "peer-1"
+
+	// Try to send progress from a different peer
+	payload := `{
+		"job_id": "` + job.ID + `",
+		"status": "running",
+		"progress": 50,
+		"node_id": "peer-2"
+	}`
+
+	req := httptest.NewRequest("POST", "/api/v1/nodes/peer-2/jobs/"+job.ID+"/progress", strings.NewReader(payload))
+	req = mux.SetURLVars(req, map[string]string{"id": "peer-2", "job_id": job.ID})
+	w := httptest.NewRecorder()
+
+	handler.handleNodeJobProgress(w, req)
+
+	assert.Equal(t, http.StatusForbidden, w.Code)
+}
+
+func TestAPIHandler_HandleNodeJobProgress_InvalidPayload(t *testing.T) {
+	store, err := persistence.Open(persistence.DefaultConfig(t.TempDir() + "/test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	master := cluster.NewLeaderNode("test", &cluster.LeaderConfig{
+		HTTPPort:           8080,
+		DisablemDNS:        true,
+		DisableMaintenance: true,
+		DisableWatcher:     true,
+		HeartbeatInterval:  time.Second,
+		NodeTimeout:        5 * time.Second,
+	}, store)
+	master.Start(context.Background())
+	defer master.Stop()
+
+	handler := NewAPIHandler(master, store)
+
+	req := httptest.NewRequest("POST", "/api/v1/nodes/test-peer-1/jobs/some-job/progress", strings.NewReader("invalid json"))
+	req = mux.SetURLVars(req, map[string]string{"id": "test-peer-1", "job_id": "some-job"})
+	w := httptest.NewRecorder()
+
+	handler.handleNodeJobProgress(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}

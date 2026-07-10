@@ -4,6 +4,10 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
 
 	"codeberg.org/georgik/espbrew-go/internal/chips"
 	"codeberg.org/georgik/espbrew-go/internal/espflash"
@@ -64,6 +68,13 @@ func (f *Flasher) Flash(ctx context.Context, req *FlashRequest) *FlashResult {
 		return f.flashVirtual(ctx, req)
 	}
 
+	// Resolve stable device path to actual port
+	port, err := resolveDevicePath(req.Port)
+	if err != nil {
+		return &FlashResult{Success: false, Error: fmt.Errorf("resolve device path: %w", err)}
+	}
+	log.Debug().Str("original", req.Port).Str("resolved", port).Msg("Device path resolved")
+
 	firmware := req.Firmware
 
 	// Convert ELF to ESP-IDF binary if needed
@@ -92,7 +103,7 @@ func (f *Flasher) Flash(ctx context.Context, req *FlashRequest) *FlashResult {
 			return &FlashResult{Success: false, Error: fmt.Errorf("parse multipart: %w", err)}
 		}
 
-		logger := &flashLogger{port: req.Port}
+		logger := &flashLogger{port: port}
 
 		espOpts := espflash.DefaultOptions()
 		espOpts.BaudRate = f.opts.BaudRate
@@ -101,17 +112,17 @@ func (f *Flasher) Flash(ctx context.Context, req *FlashRequest) *FlashResult {
 		espOpts.Erase = f.opts.Erase
 		espOpts.Logger = logger
 		// Disable FastMode for USB CDC ports - they re-enumerate after reset
-		espOpts.FastMode = f.opts.FastMode && !isUSBPort(req.Port)
+		espOpts.FastMode = f.opts.FastMode && !isUSBPort(port)
 		espOpts.SkipUnchanged = f.opts.SkipUnchanged
 
-		flasher, err := espflash.New(ctx, req.Port, espOpts)
+		flasher, err := espflash.New(ctx, port, espOpts)
 		if err != nil {
-			log.Error().Err(err).Str("port", req.Port).Msg("Failed to create flasher")
+			log.Error().Err(err).Str("port", port).Str("original", req.Port).Msg("Failed to create flasher")
 			return &FlashResult{Success: false, Error: err}
 		}
 		defer func() { _ = flasher.Close() }()
 
-		log.Info().Str("port", req.Port).Msg("Chip detected")
+		log.Info().Str("port", port).Str("original", req.Port).Msg("Chip detected")
 
 		// Log detected chip for visibility
 		chipName := flasher.ChipName()
@@ -166,7 +177,7 @@ func (f *Flasher) Flash(ctx context.Context, req *FlashRequest) *FlashResult {
 		}
 	}
 
-	logger := &flashLogger{port: req.Port}
+	logger := &flashLogger{port: port}
 
 	espOpts := espflash.DefaultOptions()
 	espOpts.BaudRate = f.opts.BaudRate
@@ -175,17 +186,17 @@ func (f *Flasher) Flash(ctx context.Context, req *FlashRequest) *FlashResult {
 	espOpts.Erase = f.opts.Erase
 	espOpts.Logger = logger
 	// Disable FastMode for USB CDC ports - they re-enumerate after reset
-	espOpts.FastMode = f.opts.FastMode && !isUSBPort(req.Port)
+	espOpts.FastMode = f.opts.FastMode && !isUSBPort(port)
 	espOpts.SkipUnchanged = f.opts.SkipUnchanged
 
-	flasher, err := espflash.New(ctx, req.Port, espOpts)
+	flasher, err := espflash.New(ctx, port, espOpts)
 	if err != nil {
-		log.Error().Err(err).Str("port", req.Port).Msg("Failed to create flasher")
+		log.Error().Err(err).Str("port", port).Str("original", req.Port).Msg("Failed to create flasher")
 		return &FlashResult{Success: false, Error: err}
 	}
 	defer func() { _ = flasher.Close() }()
 
-	log.Info().Str("port", req.Port).Msg("Chip detected")
+	log.Info().Str("port", port).Str("original", req.Port).Msg("Chip detected")
 
 	// Log detected chip for visibility
 	chipName := flasher.ChipName()
@@ -354,7 +365,12 @@ type ReadFlashResult struct {
 
 // ReadFlash reads data from the device's flash memory at the specified address
 func (f *Flasher) ReadFlash(ctx context.Context, req *ReadFlashRequest) *ReadFlashResult {
-	log.Info().Str("port", req.Port).Uint32("address", req.Address).Uint32("size", req.Size).Msg("Reading flash")
+	// Resolve stable device path to actual port
+	port, err := resolveDevicePath(req.Port)
+	if err != nil {
+		return &ReadFlashResult{Success: false, Error: fmt.Errorf("resolve device path: %w", err)}
+	}
+	log.Info().Str("port", port).Str("original", req.Port).Uint32("address", req.Address).Uint32("size", req.Size).Msg("Reading flash")
 
 	// Build flasher options
 	espOpts := espflash.DefaultOptions()
@@ -362,19 +378,19 @@ func (f *Flasher) ReadFlash(ctx context.Context, req *ReadFlashRequest) *ReadFla
 	espOpts.FlashBaudRate = f.opts.FlashBaudRate
 	espOpts.Compress = f.opts.Compress
 	espOpts.Erase = f.opts.Erase
-	espOpts.Logger = &flashLogger{port: req.Port}
+	espOpts.Logger = &flashLogger{port: port}
 	// Disable FastMode for USB CDC ports - they re-enumerate after reset
-	espOpts.FastMode = f.opts.FastMode && !isUSBPort(req.Port)
+	espOpts.FastMode = f.opts.FastMode && !isUSBPort(port)
 	espOpts.SkipUnchanged = f.opts.SkipUnchanged
 
 	// Open connection
-	flasher, err := espflash.New(ctx, req.Port, espOpts)
+	flasher, err := espflash.New(ctx, port, espOpts)
 	if err != nil {
 		return &ReadFlashResult{Success: false, Error: fmt.Errorf("connect: %w", err)}
 	}
 	defer func() { _ = flasher.Close() }()
 
-	log.Info().Str("port", req.Port).Msg("Chip detected")
+	log.Info().Str("port", port).Msg("Chip detected")
 	log.Info().Str("chip", flasher.ChipName()).Msg("Detected chip")
 
 	// Read flash data
@@ -406,7 +422,12 @@ type EraseResult struct {
 
 // EraseFlash erases the device's flash memory
 func (f *Flasher) EraseFlash(ctx context.Context, req *EraseRequest) *EraseResult {
-	log.Info().Str("port", req.Port).Uint32("address", req.Address).Uint32("size", req.Size).Bool("erase_all", req.EraseAll).Msg("Erasing flash")
+	// Resolve stable device path to actual port
+	port, err := resolveDevicePath(req.Port)
+	if err != nil {
+		return &EraseResult{Success: false, Error: fmt.Errorf("resolve device path: %w", err)}
+	}
+	log.Info().Str("port", port).Str("original", req.Port).Uint32("address", req.Address).Uint32("size", req.Size).Bool("erase_all", req.EraseAll).Msg("Erasing flash")
 
 	// Check if using virtual device
 	if virtual.IsVirtualPath(req.Port) {
@@ -419,19 +440,19 @@ func (f *Flasher) EraseFlash(ctx context.Context, req *EraseRequest) *EraseResul
 	espOpts.FlashBaudRate = f.opts.FlashBaudRate
 	espOpts.Compress = f.opts.Compress
 	espOpts.Erase = f.opts.Erase
-	espOpts.Logger = &flashLogger{port: req.Port}
+	espOpts.Logger = &flashLogger{port: port}
 	// Disable FastMode for USB CDC ports - they re-enumerate after reset
-	espOpts.FastMode = f.opts.FastMode && !isUSBPort(req.Port)
+	espOpts.FastMode = f.opts.FastMode && !isUSBPort(port)
 	espOpts.SkipUnchanged = f.opts.SkipUnchanged
 
 	// Open connection
-	flasher, err := espflash.New(ctx, req.Port, espOpts)
+	flasher, err := espflash.New(ctx, port, espOpts)
 	if err != nil {
 		return &EraseResult{Success: false, Error: fmt.Errorf("connect: %w", err)}
 	}
 	defer flasher.Close()
 
-	log.Info().Str("port", req.Port).Msg("Chip detected")
+	log.Info().Str("port", port).Msg("Chip detected")
 	log.Info().Str("chip", flasher.ChipName()).Msg("Detected chip")
 
 	// Report initial progress
@@ -550,4 +571,28 @@ func (f *Flasher) eraseVirtual(ctx context.Context, req *EraseRequest) *EraseRes
 // FastMode must be disabled for these ports to allow port reopen.
 func isUSBPort(port string) bool {
 	return len(port) > 11 && port[:11] == "/dev/ttyACM" || len(port) > 11 && port[:11] == "/dev/cu.usb"
+}
+
+// resolveDevicePath resolves a stable device path (by-id) to the actual port path.
+// On Linux, resolves /dev/serial/by-id/* symlinks to /dev/ttyUSB* or /dev/ttyACM*.
+// On other platforms or for direct paths, returns the path as-is.
+func resolveDevicePath(path string) (string, error) {
+	if runtime.GOOS != "linux" {
+		return path, nil
+	}
+
+	// If it's already a direct device path, return as-is
+	if !strings.HasPrefix(path, "/dev/serial/by-id/") {
+		return path, nil
+	}
+
+	// Resolve the symlink to get the actual device path
+	target, err := os.Readlink(path)
+	if err != nil {
+		return "", fmt.Errorf("read symlink %s: %w", path, err)
+	}
+
+	// Convert relative symlink target to absolute path
+	resolved := filepath.Join(filepath.Dir(path), target)
+	return resolved, nil
 }

@@ -91,6 +91,8 @@ func (q *JobQueue) EnqueueFlash(firmwarePath, devicePath string, offset int, era
 	log.Info().Str("job_id", job.ID).Str("device", devicePath).Int("offset", offset).
 		Msg("Flash job enqueued")
 
+	// RecordJobQueued()
+
 	return job
 }
 
@@ -116,6 +118,8 @@ func (q *JobQueue) EnqueueErase(devicePath string, eraseAll bool, address, size 
 		Bool("erase_all", eraseAll).Uint32("address", address).Uint32("size", size).
 		Msg("Erase job enqueued")
 
+	// RecordJobQueued()
+
 	return job
 }
 
@@ -140,6 +144,9 @@ func (q *JobQueue) Dequeue(deviceNode string) *Job {
 
 	log.Info().Str("job_id", job.ID).Str("node", deviceNode).
 		Msg("Job dequeued")
+
+	// RecordJobDequeued()
+	// RecordJobStarted()
 
 	return job
 }
@@ -194,14 +201,24 @@ func (q *JobQueue) Complete(jobID string, err error) {
 	now := time.Now()
 	job.CompletedAt = &now
 
+	// var status string
+	// var duration float64
+
 	if err != nil {
 		job.Status = JobFailed
 		job.Error = err.Error()
+		// status = "failed"
 		log.Error().Str("job_id", jobID).Err(err).Msg("Job failed")
 	} else {
 		job.Status = JobComplete
+		// status = "completed"
 		log.Info().Str("job_id", jobID).Msg("Job completed")
 	}
+
+	// if job.StartedAt != nil {
+	// 	duration = now.Sub(*job.StartedAt).Seconds()
+	// }
+	// RecordJobCompleted(status, duration)
 }
 
 func (q *JobQueue) PendingCount() int {
@@ -231,6 +248,12 @@ func (q *JobQueue) Cancel(jobID string) error {
 	job.CompletedAt = &now
 	job.Error = "Cancelled by user"
 
+	// var duration float64
+	// if job.StartedAt != nil {
+	// 	duration = time.Since(*job.StartedAt).Seconds()
+	// }
+	// RecordJobCompleted("cancelled", duration)
+
 	log.Info().Str("job_id", jobID).Msg("Job cancelled")
 
 	return nil
@@ -256,6 +279,12 @@ func (q *JobQueue) Timeout(jobID string) error {
 	now := time.Now()
 	job.CompletedAt = &now
 	job.Error = "Job timed out"
+
+	// var duration float64
+	// if job.StartedAt != nil {
+	// 	duration = time.Since(*job.StartedAt).Seconds()
+	// }
+	// RecordJobCompleted("timeout", duration)
 
 	log.Warn().Str("job_id", jobID).Msg("Job timed out")
 

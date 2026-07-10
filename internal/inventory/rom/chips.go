@@ -8,6 +8,9 @@ const (
 	ESP32C3_MAGIC      = 0x6921506f // ECO1+2
 	ESP32C3_MAGIC_ECO3 = 0x1b31506f
 	ESP32C3_MAGIC_ECO6 = 0x4881606f
+	ESP32C5_MAGIC      = 0x5fd1406f // Main ECO
+	ESP32C5_MAGIC_ALT1 = 0x1101406f // Alt ECO
+	ESP32C5_MAGIC_ALT2 = 0x63e1406f // Alt ECO
 	ESP32C6_MAGIC      = 0x2ce0806f
 )
 
@@ -23,9 +26,12 @@ const (
 
 // chipByMagic maps magic values to Chip implementations
 var chipByMagic = map[uint32]func() Chip{
-	ESP32S3_MAGIC: func() Chip { return &ESP32S3Chip{} },
-	ESP32C3_MAGIC: func() Chip { return &ESP32C3Chip{} },
-	ESP32C6_MAGIC: func() Chip { return &ESP32C6Chip{} },
+	ESP32S3_MAGIC:      func() Chip { return &ESP32S3Chip{} },
+	ESP32C3_MAGIC:      func() Chip { return &ESP32C3Chip{} },
+	ESP32C5_MAGIC:      func() Chip { return &ESP32C5Chip{} },
+	ESP32C5_MAGIC_ALT1: func() Chip { return &ESP32C5Chip{} },
+	ESP32C5_MAGIC_ALT2: func() Chip { return &ESP32C5Chip{} },
+	ESP32C6_MAGIC:      func() Chip { return &ESP32C6Chip{} },
 }
 
 // chipBySecurityID maps security-id values to Chip implementations
@@ -49,6 +55,8 @@ func DetectByMagic(magic uint32) Chip {
 	switch magic {
 	case ESP32C3_MAGIC_ECO3, ESP32C3_MAGIC_ECO6:
 		return &ESP32C3Chip{}
+	case ESP32C5_MAGIC_ALT1, ESP32C5_MAGIC_ALT2:
+		return &ESP32C5Chip{}
 	}
 
 	return nil

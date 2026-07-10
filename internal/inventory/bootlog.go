@@ -3,10 +3,13 @@ package inventory
 import (
 	"bufio"
 	"fmt"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
 
+	"github.com/rs/zerolog/log"
 	"go.bug.st/serial"
 )
 
@@ -39,12 +42,47 @@ var (
 
 // MonitorBootLog opens a port, toggles DTR to reset device, and parses boot log
 func MonitorBootLog(port string, timeout time.Duration) (*BootLogInfo, error) {
+	log.Info().Str("path", port).Msg("Starting device probe via boot log")
+
+	// Resolve /dev/serial/by-id/ symlinks to real device path
+	// The serial library may not handle symlinks correctly on all platforms
+	openPath := port
+	if strings.HasPrefix(port, "/dev/serial/by-id/") {
+		target, err := os.Readlink(port)
+		if err == nil {
+			// Resolve relative symlink (e.g., "../../ttyUSB0")
+			openPath = filepath.Join(filepath.Dir(port), target)
+			// Clean the path to resolve any ".." components
+			openPath = filepath.Clean(openPath)
+			log.Debug().Str("symlink", port).Str("resolved", openPath).Msg("Resolved device symlink")
+		} else {
+			// If symlink resolution fails, try original path
+			log.Warn().Str("path", port).Err(err).Msg("Failed to resolve symlink, using original")
+			openPath = port
+		}
+	}
+
 	mode := &serial.Mode{
 		BaudRate: 115200,
 	}
 
-	p, err := serial.Open(port, mode)
+	// Retry port open with delay (handle "port busy" from ModemManager etc)
+	var p serial.Port
+	var err error
+	for attempt := 0; attempt < 3; attempt++ {
+		p, err = serial.Open(openPath, mode)
+		if err == nil {
+			if attempt > 0 {
+				log.Debug().Str("path", openPath).Int("attempt", attempt+1).Msg("Port opened after retry")
+			}
+			break
+		}
+		if attempt < 2 {
+			time.Sleep(200 * time.Millisecond)
+		}
+	}
 	if err != nil {
+		log.Error().Str("path", openPath).Err(err).Msg("Failed to open serial port for probe")
 		return nil, fmt.Errorf("open port: %w", err)
 	}
 	defer func() { _ = p.Close() }()
@@ -74,6 +112,7 @@ func MonitorBootLog(port string, timeout time.Duration) (*BootLogInfo, error) {
 	}
 
 	if err := scanner.Err(); err != nil {
+		log.Error().Str("path", port).Err(err).Msg("Failed to read boot log")
 		return nil, fmt.Errorf("read boot log: %w", err)
 	}
 
@@ -87,8 +126,17 @@ func MonitorBootLog(port string, timeout time.Duration) (*BootLogInfo, error) {
 	}
 
 	if info.ChipType == "" {
+		log.Warn().Str("path", port).Msg("Could not identify chip from boot log")
 		return nil, fmt.Errorf("could not identify chip from boot log")
 	}
+
+	log.Info().
+		Str("path", port).
+		Str("chip", info.ChipType).
+		Str("mac", info.MAC).
+		Uint32("flash", info.FlashSize).
+		Uint32("psram", info.PSRAMSize).
+		Msg("Device probe successful")
 
 	return info, nil
 }

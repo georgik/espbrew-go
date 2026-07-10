@@ -137,6 +137,7 @@ func runServer(cmd *cobra.Command, args []string) error {
 			NodeTimeout:       appCfg.NodeTimeout,
 			HTTPPort:          appCfg.HTTPPort,
 			DisablemDNS:       cfg.disablemDNS,
+			StaticPeers:       appCfg.StaticPeers,
 		}, store)
 		node = leader
 		if err := node.Start(ctx); err != nil {

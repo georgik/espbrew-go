@@ -52,6 +52,7 @@ func NewServer(addr string, node cluster.Node, store *persistence.Store) *Server
 
 func (s *Server) setupRoutes(store *persistence.Store) {
 	s.router = mux.NewRouter()
+	s.router.SkipClean(true) // Allow encoded slashes in URLs for device paths
 	s.hub = NewProgressHub()
 
 	// API routes
@@ -112,6 +113,9 @@ func (s *Server) setupRoutes(store *persistence.Store) {
 
 	// Health check
 	s.router.HandleFunc("/health", s.handleHealth).Methods("GET")
+
+	// Prometheus metrics
+	s.router.HandleFunc("/metrics", s.handleMetrics).Methods("GET")
 
 	// Serial monitor page
 	s.router.HandleFunc("/monitor", s.handleMonitor).Methods("GET")

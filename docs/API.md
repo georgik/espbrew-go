@@ -745,6 +745,123 @@ Response (409 Conflict):
 }
 ```
 
+### Node Job Progress
+
+```
+POST /api/v1/nodes/{id}/jobs/{job_id}/progress
+```
+
+Called by peer nodes to report job progress and completion status to the leader.
+
+Request body:
+```json
+{
+  "job_id": "job-abc123",
+  "status": "running",
+  "progress": 50,
+  "node_id": "peer-node-1",
+  "error": "optional error message"
+}
+```
+
+Status values:
+- `running` - Job is in progress (progress is updated)
+- `completed` - Job finished successfully (device released)
+- `failed` - Job failed with error (device released)
+
+Response (200 OK):
+```json
+{
+  "status": "ok"
+}
+```
+
+Response (400 Bad Request):
+```json
+{
+  "error": "node_id mismatch"
+}
+```
+
+Response (404 Not Found):
+```json
+{
+  "error": "job not found"
+}
+```
+
+Response (403 Forbidden):
+```json
+{
+  "error": "job does not belong to this node"
+}
+```
+
+### Register Node
+
+```
+POST /api/v1/nodes/register
+```
+
+Called by peer nodes to register with the leader. Registers the node and aggregates its devices and cameras.
+
+Request body:
+```json
+{
+  "node_id": "peer-node-1",
+  "http_port": 8081,
+  "device_count": 3,
+  "camera_count": 1,
+  "active_jobs": 0,
+  "timestamp": 1700000000,
+  "devices": [
+    {
+      "path": "/dev/ttyUSB0",
+      "vid": 1234,
+      "pid": 5678,
+      "serial_number": "aa:bb:cc:dd:ee:ff",
+      "node_id": "peer-node-1",
+      "status": "available"
+    }
+  ],
+  "cameras": [
+    {
+      "id": "cam-usb-12345",
+      "name": "ESP Camera",
+      "path": "/dev/video0",
+      "backend": "v4l2",
+      "node_id": "peer-node-1",
+      "status": "available"
+    }
+  ]
+}
+```
+
+Response (200 OK):
+```json
+{
+  "status": "registered",
+  "node_id": "peer-node-1"
+}
+```
+
+### Node Heartbeat
+
+```
+POST /api/v1/nodes/{id}/heartbeat
+```
+
+Called by peer nodes to update their status and device list. The leader updates the node's last seen timestamp and aggregates device/camera changes.
+
+Request body: Same as Register Node
+
+Response (200 OK):
+```json
+{
+  "status": "ok"
+}
+```
+
 ### Upload Firmware
 
 ```
@@ -1742,3 +1859,36 @@ Common HTTP status codes:
 - `409 Conflict` - Device/job unavailable
 - `500 Internal Server Error` - Server error
 - `501 Not Implemented` - Feature not available
+
+### Metrics
+
+#### GET /metrics
+
+Prometheus metrics endpoint for cluster observability.
+
+**Response:**
+
+```
+# HELP espbrew_cluster_node_count Current number of nodes in the cluster
+# TYPE espbrew_cluster_node_count gauge
+espbrew_cluster_node_count 3
+# HELP espbrew_cluster_jobs_completed_total Total number of jobs completed by status
+# TYPE espbrew_cluster_jobs_completed_total counter
+espbrew_cluster_jobs_completed_total{status="completed"} 42
+espbrew_cluster_jobs_completed_total{status="failed"} 1
+...
+```
+
+**Status Codes:**
+
+- `200 OK`: Metrics returned successfully
+
+**Use with Prometheus:**
+
+```yaml
+# prometheus.yml
+scrape_configs:
+  - job_name: 'espbrew'
+    static_configs:
+      - targets: ['localhost:8080']
+```

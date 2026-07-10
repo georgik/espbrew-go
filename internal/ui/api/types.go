@@ -17,6 +17,7 @@ type Camera struct {
 type Device struct {
 	DeviceID      string                 `json:"device_id"`
 	Path          string                 `json:"path"`
+	RealPath      string                 `json:"real_path,omitempty"`
 	ChipType      string                 `json:"chip_type"`
 	ChipRev       string                 `json:"chip_rev,omitempty"`
 	FlashSize     uint32                 `json:"flash_size,omitempty"`
@@ -34,6 +35,13 @@ type Device struct {
 	AccessError   string                 `json:"access_error,omitempty"`
 	Backend       string                 `json:"backend,omitempty"`
 	BackendConfig map[string]interface{} `json:"backend_config,omitempty"`
+	// Device identification attributes
+	VID          string `json:"vid,omitempty"`
+	PID          string `json:"pid,omitempty"`
+	SerialNumber string `json:"serial_number,omitempty"`
+	Manufacturer string `json:"manufacturer,omitempty"`
+	Product      string `json:"product,omitempty"`
+	Connected    bool   `json:"connected,omitempty"`
 }
 
 // Capture represents a saved capture

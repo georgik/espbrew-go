@@ -97,7 +97,7 @@ func loadDevices() {
 		// Create table header
 		table := doc.CreateElement("div")
 		table.SetStyle("display", "grid")
-		table.SetStyle("grid-template-columns", "1fr 1fr 1fr 100px")
+		table.SetStyle("grid-template-columns", "1fr 1fr 1fr 120px 100px 100px")
 		table.SetStyle("gap", "12px")
 		table.SetStyle("padding", "8px")
 		table.SetStyle("background-color", "rgba(255,255,255,0.05)")
@@ -118,6 +118,14 @@ func loadDevices() {
 		headerStatus.SetTextContent("Status")
 		table.Append(headerStatus)
 
+		headerAliases := doc.CreateElement("div")
+		headerAliases.SetTextContent("Aliases")
+		table.Append(headerAliases)
+
+		headerTags := doc.CreateElement("div")
+		headerTags.SetTextContent("Tags")
+		table.Append(headerTags)
+
 		headerActions := doc.CreateElement("div")
 		headerActions.SetTextContent("Actions")
 		table.Append(headerActions)
@@ -136,7 +144,7 @@ func createDeviceRow(dev api.Device) *dom.Element {
 	doc := dom.GlobalDocument()
 	row := doc.CreateElement("div")
 	row.SetStyle("display", "grid")
-	row.SetStyle("grid-template-columns", "1fr 1fr 1fr 100px")
+	row.SetStyle("grid-template-columns", "1fr 1fr 1fr 120px 100px 100px")
 	row.SetStyle("gap", "12px")
 	row.SetStyle("padding", "12px 8px")
 	row.SetStyle("background-color", "rgba(255,255,255,0.02)")
@@ -153,10 +161,28 @@ func createDeviceRow(dev api.Device) *dom.Element {
 		row.SetAttribute("title", dev.AccessError)
 	}
 
-	// Device path
+	// Device path - combine Path and RealPath in one cell
 	pathDiv := doc.CreateElement("div")
 	pathDiv.SetStyle("font-family", "monospace")
-	pathDiv.SetTextContent(dev.Path)
+	pathDiv.SetStyle("font-size", "12px")
+
+	// Show real path (e.g., /dev/ttyACM0) if available, otherwise show the path
+	displayPath := dev.RealPath
+	if displayPath == "" || displayPath == dev.Path {
+		displayPath = dev.Path
+	}
+
+	pathDiv.SetTextContent(displayPath)
+
+	// Show alternative path in smaller text if different
+	if dev.RealPath != "" && dev.RealPath != dev.Path {
+		altPathSpan := doc.CreateElement("div")
+		altPathSpan.SetStyle("font-size", "10px")
+		altPathSpan.SetStyle("color", "#888")
+		altPathSpan.SetTextContent(dev.Path)
+		pathDiv.Append(altPathSpan)
+	}
+
 	row.Append(pathDiv)
 
 	// Chip type
@@ -193,6 +219,34 @@ func createDeviceRow(dev api.Device) *dom.Element {
 	}
 	row.Append(statusDiv)
 
+	// Aliases
+	aliasesDiv := doc.CreateElement("div")
+	aliasesDiv.SetStyle("font-size", "12px")
+	aliasesDiv.SetStyle("overflow", "hidden")
+	aliasesDiv.SetStyle("text-overflow", "ellipsis")
+	aliasesDiv.SetStyle("white-space", "nowrap")
+	if len(dev.Aliases) > 0 {
+		aliasesDiv.SetTextContent(joinStrings(dev.Aliases, ", "))
+	} else {
+		aliasesDiv.SetTextContent("-")
+		aliasesDiv.SetStyle("color", "#666")
+	}
+	row.Append(aliasesDiv)
+
+	// Tags
+	tagsDiv := doc.CreateElement("div")
+	tagsDiv.SetStyle("font-size", "12px")
+	tagsDiv.SetStyle("overflow", "hidden")
+	tagsDiv.SetStyle("text-overflow", "ellipsis")
+	tagsDiv.SetStyle("white-space", "nowrap")
+	if len(dev.Tags) > 0 {
+		tagsDiv.SetTextContent(joinStrings(dev.Tags, ", "))
+	} else {
+		tagsDiv.SetTextContent("-")
+		tagsDiv.SetStyle("color", "#666")
+	}
+	row.Append(tagsDiv)
+
 	// Actions
 	actionsDiv := doc.CreateElement("div")
 	actionsDiv.SetStyle("display", "flex")
@@ -200,7 +254,15 @@ func createDeviceRow(dev api.Device) *dom.Element {
 
 	// Handle different device states
 	if dev.DeviceID == "" {
-		// Device without ID - show Probe and Forget buttons
+		// Device without ID - show Edit, Probe and Forget buttons
+		// Edit allows manual entry when probe fails
+		editBtn := components.NewButton(components.ButtonConfig{
+			Text:    "Edit",
+			Class:   "btn-sm btn-secondary",
+			OnClick: func(_ *dom.Event) { editUnprobedDevice(dev) },
+		})
+		actionsDiv.Append(editBtn.Element)
+
 		probeBtn := components.NewButton(components.ButtonConfig{
 			Text:    "Probe",
 			Class:   "btn-sm btn-primary",
@@ -285,8 +347,67 @@ func editDevice(dev api.Device) {
 	content.Append(deviceIDRow)
 
 	// Path
-	pathRow := createFormField("Path", dev.Path, true)
+	displayPath := dev.Path
+	if dev.RealPath != "" && dev.RealPath != dev.Path {
+		displayPath = dev.RealPath + " (" + dev.Path + ")"
+	}
+	pathRow := createFormField("Path", displayPath, true)
 	content.Append(pathRow)
+
+	// Device identification section (for physical devices)
+	if dev.Backend == "" || (!strings.HasPrefix(dev.Path, "wokwi:") && !strings.HasPrefix(dev.Path, "qemu:") && !strings.HasPrefix(dev.Path, ":virtual:")) {
+		identSection := doc.CreateElement("div")
+		identSection.SetStyle("margin-top", "8px")
+		identSection.SetStyle("padding-top", "8px")
+		identSection.SetStyle("border-top", "1px solid rgba(255,255,255,0.1)")
+
+		identHeader := doc.CreateElement("div")
+		identHeader.SetStyle("font-weight", "500")
+		identHeader.SetStyle("font-size", "13px")
+		identHeader.SetStyle("margin-bottom", "8px")
+		identHeader.SetStyle("color", "#6c5ce7")
+		identHeader.SetTextContent("Device Identification")
+		identSection.Append(identHeader)
+
+		// Serial Number
+		if dev.SerialNumber != "" {
+			serialRow := createFormField("Serial Number", dev.SerialNumber, true)
+			identSection.Append(serialRow)
+		}
+
+		// VID/PID
+		vidPid := ""
+		if dev.VID != "" || dev.PID != "" {
+			vidPid = dev.VID + ":" + dev.PID
+		}
+		if vidPid != "" {
+			vidPidRow := createFormField("VID:PID", vidPid, true)
+			identSection.Append(vidPidRow)
+		}
+
+		// Manufacturer
+		if dev.Manufacturer != "" {
+			mfgRow := createFormField("Manufacturer", dev.Manufacturer, true)
+			identSection.Append(mfgRow)
+		}
+
+		// Product
+		if dev.Product != "" {
+			productRow := createFormField("Product", dev.Product, true)
+			identSection.Append(productRow)
+		}
+
+		// Reset Device button
+		resetBtn := components.NewButton(components.ButtonConfig{
+			Text:    "Reset Device",
+			Class:   "btn-secondary",
+			OnClick: func(_ *dom.Event) { resetDevice(dev) },
+		})
+		resetBtn.Element.SetStyle("margin-top", "8px")
+		identSection.Append(resetBtn.Element)
+
+		content.Append(identSection)
+	}
 
 	// Chip Type - editable selector
 	chipRow := createChipTypeSelector(dev.ChipType)
@@ -299,6 +420,14 @@ func editDevice(dev api.Device) {
 	}
 	aliasesRow := createFormFieldWithID("Aliases", "device-aliases-input", aliasesStr, false)
 	content.Append(aliasesRow)
+
+	// Tags
+	tagsStr := ""
+	if len(dev.Tags) > 0 {
+		tagsStr = joinStrings(dev.Tags, ", ")
+	}
+	tagsRow := createFormFieldWithID("Tags", "device-tags-input", tagsStr, false)
+	content.Append(tagsRow)
 
 	// MAC Address
 	macRow := createFormField("MAC Address", dev.MACAddress, true)
@@ -405,29 +534,35 @@ func editDevice(dev api.Device) {
 	})
 	actions.Append(cancelBtn.Element)
 
-	// Add delete button for virtual devices or manual devices
-	if dev.Backend == "wokwi" || dev.Backend == "qemu" || strings.HasPrefix(dev.DeviceID, "manual-") {
-		deleteBtn := components.NewButton(components.ButtonConfig{
-			Text:  "Delete",
-			Class: "btn-danger",
-			OnClick: func(_ *dom.Event) {
-				// Confirm deletion using JavaScript confirm
-				result := js.Global().Get("window").Call("confirm", "Are you sure you want to delete device "+dev.DeviceID+"?")
-				if result.Bool() {
-					api.DeleteDevice(dev.DeviceID, func(success bool, err error) {
-						if err != nil || !success {
-							showError("Failed to delete device")
-						} else {
-							showSuccess("Device deleted successfully")
-							modal.Close()
-							loadDevices() // Refresh the list
-						}
-					})
-				}
-			},
-		})
-		actions.Append(deleteBtn.Element)
+	// Use path for unprobed devices instead of fallback deviceID
+	identifier := dev.DeviceID
+	displayID := dev.DeviceID
+	if strings.HasPrefix(dev.DeviceID, "unprobed-") {
+		identifier = dev.Path
+		displayID = dev.Path
 	}
+
+	// Add delete button for all devices
+	deleteBtn := components.NewButton(components.ButtonConfig{
+		Text:  "Delete",
+		Class: "btn-danger",
+		OnClick: func(_ *dom.Event) {
+			// Confirm deletion using JavaScript confirm
+			result := js.Global().Get("window").Call("confirm", "Are you sure you want to delete device "+displayID+"?")
+			if result.Bool() {
+				api.DeleteDevice(identifier, func(success bool, err error) {
+					if err != nil || !success {
+						showError("Failed to delete device")
+					} else {
+						showSuccess("Device deleted successfully")
+						modal.Close()
+						loadDevices() // Refresh the list
+					}
+				})
+			}
+		},
+	})
+	actions.Append(deleteBtn.Element)
 
 	// Add Forget button for physical devices (removes from list but doesn't delete from persistence)
 	if dev.Backend != "wokwi" && dev.Backend != "qemu" {
@@ -449,7 +584,7 @@ func editDevice(dev api.Device) {
 		Text:  "Save",
 		Class: "btn-primary",
 		OnClick: func(_ *dom.Event) {
-			saveDeviceAttributes(dev.DeviceID)
+			saveDeviceAttributes(identifier)
 			modal.Close()
 		},
 	})
@@ -462,6 +597,333 @@ func editDevice(dev api.Device) {
 	// Append modal to body
 	doc.GetBody().Append(modal.Element)
 	modal.Show()
+}
+
+// editUnprobedDevice opens modal for manually editing unprobed device info
+func editUnprobedDevice(dev api.Device) {
+	doc := dom.GlobalDocument()
+
+	// Remove existing modal
+	existingModal := doc.GetElementByID("device-edit-modal")
+	if existingModal != nil {
+		existingModal.Remove()
+	}
+
+	// Create modal for editing device
+	modal := components.NewModal(components.ModalConfig{
+		ID:       "device-edit-modal",
+		Closable: true,
+	})
+
+	content := doc.CreateElement("div")
+	content.SetStyle("display", "flex")
+	content.SetStyle("flex-direction", "column")
+	content.SetStyle("gap", "16px")
+	content.SetStyle("min-width", "400px")
+
+	// Warning banner
+	warning := doc.CreateElement("div")
+	warning.SetStyle("background-color", "rgba(255, 165, 2, 0.1)")
+	warning.SetStyle("border", "1px solid rgba(255, 165, 2, 0.3)")
+	warning.SetStyle("border-radius", "6px")
+	warning.SetStyle("padding", "12px")
+	warning.SetStyle("font-size", "12px")
+	warning.SetStyle("color", "#ffa502")
+	warning.SetTextContent("Device not probed. Enter details manually or use Probe button to auto-detect.")
+	content.Append(warning)
+
+	// Device header
+	header := doc.CreateElement("div")
+	header.SetStyle("font-weight", "500")
+	header.SetTextContent("Edit Device: " + dev.Path)
+	content.Append(header)
+
+	// Path (read-only)
+	pathRow := createFormField("Device Path", dev.Path, true)
+	content.Append(pathRow)
+
+	// Real path if available
+	if dev.RealPath != "" && dev.RealPath != dev.Path {
+		realPathRow := createFormField("Real Path", dev.RealPath, true)
+		content.Append(realPathRow)
+	}
+
+	// Device Identification section
+	identSection := doc.CreateElement("div")
+	identSection.SetStyle("margin-top", "8px")
+	identSection.SetStyle("padding-top", "8px")
+	identSection.SetStyle("border-top", "1px solid rgba(255,255,255,0.1)")
+
+	identHeader := doc.CreateElement("div")
+	identHeader.SetStyle("font-weight", "500")
+	identHeader.SetStyle("font-size", "13px")
+	identHeader.SetStyle("margin-bottom", "8px")
+	identHeader.SetStyle("color", "#6c5ce7")
+	identHeader.SetTextContent("Device Identification")
+	identSection.Append(identHeader)
+
+	// Serial Number (if available)
+	if dev.SerialNumber != "" {
+		serialRow := createFormField("Serial Number", dev.SerialNumber, true)
+		identSection.Append(serialRow)
+	}
+
+	// VID:PID (if available)
+	vidPid := ""
+	if dev.VID != "" || dev.PID != "" {
+		vidPid = dev.VID + ":" + dev.PID
+	}
+	if vidPid != "" {
+		vidPidRow := createFormField("VID:PID", vidPid, true)
+		identSection.Append(vidPidRow)
+	}
+
+	content.Append(identSection)
+
+	// MAC Address (required for DeviceID generation)
+	macRow := createFormFieldWithID("MAC Address", "device-mac-input", dev.MACAddress, false)
+	macHint := doc.CreateElement("div")
+	macHint.SetStyle("font-size", "11px")
+	macHint.SetStyle("color", "#888")
+	macHint.SetStyle("margin-top", "2px")
+	macHint.SetTextContent("Format: AA:BB:CC:DD:EE:FF (Optional but recommended)")
+	macRow.Append(macHint)
+	content.Append(macRow)
+
+	// Chip Type (editable selector)
+	chipRow := createChipTypeSelector(dev.ChipType)
+	content.Append(chipRow)
+
+	// Chip Revision
+	chipRevRow := createFormFieldWithID("Chip Revision", "device-chiprev-input", "", false)
+	content.Append(chipRevRow)
+
+	// Flash Size
+	flashRow := createFormFieldWithID("Flash Size (bytes)", "device-flash-input", "", false)
+	flashHint := doc.CreateElement("div")
+	flashHint.SetStyle("font-size", "11px")
+	flashHint.SetStyle("color", "#888")
+	flashHint.SetStyle("margin-top", "2px")
+	flashHint.SetTextContent("e.g., 4194304 (4MB)")
+	flashRow.Append(flashHint)
+	content.Append(flashRow)
+
+	// Board Model
+	boardRow := createFormFieldWithID("Board Model", "device-board-input", "", false)
+	content.Append(boardRow)
+
+	// Description
+	descRow := createFormFieldWithID("Description", "device-desc-input", "", false)
+	content.Append(descRow)
+
+	// Aliases
+	aliasesStr := ""
+	if len(dev.Aliases) > 0 {
+		aliasesStr = joinStrings(dev.Aliases, ", ")
+	}
+	aliasesRow := createFormFieldWithID("Aliases", "device-aliases-input", aliasesStr, false)
+	content.Append(aliasesRow)
+
+	// Tags
+	tagsStr := ""
+	if len(dev.Tags) > 0 {
+		tagsStr = joinStrings(dev.Tags, ", ")
+	}
+	tagsRow := createFormFieldWithID("Tags", "device-tags-input", tagsStr, false)
+	content.Append(tagsRow)
+
+	// Actions
+	actions := doc.CreateElement("div")
+	actions.SetStyle("display", "flex")
+	actions.SetStyle("gap", "8px")
+	actions.SetStyle("justify-content", "flex-end")
+	actions.SetStyle("margin-top", "8px")
+
+	cancelBtn := components.NewButton(components.ButtonConfig{
+		Text:  "Cancel",
+		Class: "btn-secondary",
+		OnClick: func(_ *dom.Event) {
+			modal.Close()
+		},
+	})
+	actions.Append(cancelBtn.Element)
+
+	probeBtn := components.NewButton(components.ButtonConfig{
+		Text:  "Probe",
+		Class: "btn-primary",
+		OnClick: func(_ *dom.Event) {
+			modal.Close()
+			probeDevice(dev.Path)
+		},
+	})
+	actions.Append(probeBtn.Element)
+
+	saveBtn := components.NewButton(components.ButtonConfig{
+		Text:  "Save",
+		Class: "btn-primary",
+		OnClick: func(_ *dom.Event) {
+			saveUnprobedDevice(dev)
+			modal.Close()
+		},
+	})
+	actions.Append(saveBtn.Element)
+
+	content.Append(actions)
+
+	modal.SetContent(content)
+
+	// Append modal to body
+	doc.GetBody().Append(modal.Element)
+	modal.Show()
+}
+
+// saveUnprobedDevice saves manually entered device info via POST /api/v1/devices
+func saveUnprobedDevice(dev api.Device) {
+	doc := dom.GlobalDocument()
+
+	macInput := doc.QuerySelector("#device-mac-input")
+	chipTypeSelect := doc.QuerySelector("#device-chip-type")
+	chipRevInput := doc.QuerySelector("#device-chiprev-input")
+	flashInput := doc.QuerySelector("#device-flash-input")
+	boardInput := doc.QuerySelector("#device-board-input")
+	descInput := doc.QuerySelector("#device-desc-input")
+	aliasesInput := doc.QuerySelector("#device-aliases-input")
+	tagsInput := doc.QuerySelector("#device-tags-input")
+
+	if macInput == nil || chipTypeSelect == nil {
+		showError("Failed to read form values")
+		return
+	}
+
+	mac := macInput.GetValue()
+	chipType := chipTypeSelect.GetValue()
+	chipRev := ""
+	if chipRevInput != nil {
+		chipRev = chipRevInput.GetValue()
+	}
+	flashSize := ""
+	if flashInput != nil {
+		flashSize = flashInput.GetValue()
+	}
+	boardModel := ""
+	if boardInput != nil {
+		boardModel = boardInput.GetValue()
+	}
+	description := ""
+	if descInput != nil {
+		description = descInput.GetValue()
+	}
+
+	// Get aliases
+	aliasesStr := ""
+	aliases := []string{}
+	if aliasesInput != nil {
+		aliasesStr = aliasesInput.GetValue()
+		if aliasesStr != "" {
+			aliases = splitString(aliasesStr, ",")
+		}
+	}
+
+	// Get tags
+	tagsStr := ""
+	tags := []string{}
+	if tagsInput != nil {
+		tagsStr = tagsInput.GetValue()
+		if tagsStr != "" {
+			tags = splitString(tagsStr, ",")
+		}
+	}
+
+	// Handle custom chip type
+	if chipType == "Custom" {
+		customInput := doc.QuerySelector("#device-chip-type-custom")
+		if customInput != nil {
+			customValue := customInput.GetValue()
+			if customValue != "" {
+				chipType = customValue
+			}
+		}
+	}
+
+	// Require chip type
+	if chipType == "" {
+		showError("Chip Type is required")
+		return
+	}
+
+	// Validate MAC format if provided
+	if mac != "" && !isValidMAC(mac) {
+		showError("Invalid MAC address format. Use AA:BB:CC:DD:EE:FF")
+		return
+	}
+
+	// Create device record via API
+	req := map[string]interface{}{
+		"path":        dev.Path,
+		"mac_address": mac,
+		"chip_type":   chipType,
+		"aliases":     aliases,
+		"tags":        tags,
+	}
+
+	if chipRev != "" {
+		req["chip_rev"] = chipRev
+	}
+	if flashSize != "" {
+		if flashSizeInt := parseFlashSize(flashSize); flashSizeInt > 0 {
+			req["flash_size"] = flashSizeInt
+		}
+	}
+	if boardModel != "" {
+		req["board_model"] = boardModel
+	}
+	if description != "" {
+		req["description"] = description
+	}
+
+	// Use UpdateDevice (PATCH) instead of CreateDevice (POST)
+	// The device already exists in memory, we're just adding its identity
+	api.UpdateDevice(dev.Path, req, func(success bool, err error) {
+		if err != nil || !success {
+			showError("Failed to save device: " + err.Error())
+		} else {
+			showSuccess("Device saved successfully")
+			loadDevices() // Refresh the list
+		}
+	})
+}
+
+// isValidMAC validates MAC address format
+func isValidMAC(mac string) bool {
+	parts := splitString(mac, ":")
+	if len(parts) != 6 {
+		return false
+	}
+	for _, part := range parts {
+		if len(part) != 2 {
+			return false
+		}
+		for _, c := range part {
+			if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// parseFlashSize parses flash size string to integer
+func parseFlashSize(s string) int {
+	// Try to parse as integer directly
+	size := 0
+	for _, c := range s {
+		if c >= '0' && c <= '9' {
+			size = size*10 + int(c-'0')
+		} else {
+			break
+		}
+	}
+	return size
 }
 
 func createFormField(label, value string, readonly bool) *dom.Element {
@@ -604,6 +1066,7 @@ func createChipTypeSelector(currentChipType string) *dom.Element {
 func saveDeviceAttributes(deviceID string) {
 	doc := dom.GlobalDocument()
 	aliasesInput := doc.QuerySelector("#device-aliases-input")
+	tagsInput := doc.QuerySelector("#device-tags-input")
 	protectedToggle := doc.QuerySelector("#device-protected")
 	diagramTextarea := doc.QuerySelector("#device-diagram-json")
 	chipTypeSelect := doc.QuerySelector("#device-chip-type")
@@ -619,11 +1082,21 @@ func saveDeviceAttributes(deviceID string) {
 		aliases = splitString(aliasesStr, ",")
 	}
 
+	tagsStr := ""
+	tags := []string{}
+	if tagsInput != nil {
+		tagsStr = tagsInput.GetValue()
+		if tagsStr != "" {
+			tags = splitString(tagsStr, ",")
+		}
+	}
+
 	protected := protectedToggle.GetChecked()
 
 	// Update request for basic device attributes
 	req := map[string]interface{}{
 		"aliases":   aliases,
+		"tags":      tags,
 		"protected": protected,
 	}
 
@@ -673,6 +1146,29 @@ func saveDeviceAttributes(deviceID string) {
 			loadDevices() // Refresh the list
 		}
 	})
+}
+
+// resetDevice sends a reset command to the device
+func resetDevice(dev api.Device) {
+	// For physical devices, trigger reset via DTR/RTS
+	if dev.Backend == "" || (!strings.HasPrefix(dev.Path, "wokwi:") && !strings.HasPrefix(dev.Path, "qemu:") && !strings.HasPrefix(dev.Path, ":virtual:")) {
+		// Call reset API
+		api.ResetDevice(dev.Path, func(success bool, err error) {
+			if err != nil || !success {
+				showError("Failed to reset device: " + err.Error())
+			} else {
+				showSuccess("Device reset initiated - watch for reconnect")
+				// Refresh device list after a short delay
+				js.Global().Get("setTimeout").Invoke(js.FuncOf(func(this js.Value, args []js.Value) interface{} {
+					loadDevices()
+					return nil
+				}), 2000)
+			}
+		})
+		return
+	}
+
+	showError("Reset not available for virtual devices")
 }
 
 func showError(message string) {

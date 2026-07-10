@@ -44,6 +44,11 @@ type DeviceRecord struct {
 	LastSeen        time.Time          `json:"last_seen"`
 	LastPath        string             `json:"last_path"`
 	NodeID          string             `json:"node_id"`
+	VID             uint16             `json:"vid,omitempty"`
+	PID             uint16             `json:"pid,omitempty"`
+	SerialNumber    string             `json:"serial_number,omitempty"`
+	Manufacturer    string             `json:"manufacturer,omitempty"`
+	Product         string             `json:"product,omitempty"`
 	Disabled        bool               `json:"disabled"`
 	DisabledReason  string             `json:"disabled_reason,omitempty"`
 	DisabledBy      string             `json:"disabled_by,omitempty"`

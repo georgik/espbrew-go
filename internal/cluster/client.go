@@ -110,14 +110,18 @@ func (c *Client) doWithRetry(req *http.Request) (*http.Response, error) {
 }
 
 type DeviceInfo struct {
+	DeviceID   string      `json:"device_id"`
 	Path       string      `json:"path"`
+	RealPath   string      `json:"real_path,omitempty"`
 	VID        string      `json:"vid,omitempty"`
 	PID        string      `json:"pid,omitempty"`
 	State      DeviceState `json:"status"`
+	Connected  bool        `json:"connected,omitempty"`
 	NodeID     string      `json:"node_id,omitempty"`
 	ChipType   string      `json:"chip_type,omitempty"`
 	BoardModel string      `json:"board_model,omitempty"`
 	Tags       []string    `json:"tags,omitempty"`
+	Aliases    []string    `json:"aliases,omitempty"`
 	ReservedBy string      `json:"reserved_by,omitempty"`
 }
 
@@ -139,6 +143,25 @@ func (c *Client) ListDevices() ([]DeviceInfo, error) {
 	}
 
 	return devices, nil
+}
+
+func (c *Client) DeleteDevice(deviceID string) error {
+	req, err := http.NewRequest("DELETE", c.baseURL+"/api/v1/devices/"+deviceID, nil)
+	if err != nil {
+		return fmt.Errorf("create request: %w", err)
+	}
+
+	resp, err := c.doWithRetry(req)
+	if err != nil {
+		return fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("status %d", resp.StatusCode)
+	}
+
+	return nil
 }
 
 func (c *Client) GetStatus() (*ClusterStatus, error) {

@@ -10,15 +10,17 @@ const (
 )
 
 type DeviceEvent struct {
-	Type   EventType
-	Path   string
-	VID    uint16
-	PID    uint16
-	Serial string
+	Type     EventType
+	Path     string // Stable path (by-id on Linux)
+	RealPath string // Actual device path (e.g., /dev/ttyUSB0)
+	VID      uint16
+	PID      uint16
+	Serial   string
 }
 
 type DeviceInfo struct {
-	Path         string
+	Path         string // Stable path (by-id on Linux)
+	RealPath     string // Actual device path (e.g., /dev/ttyUSB0)
 	VID          uint16
 	PID          uint16
 	SerialNumber string
@@ -51,6 +53,7 @@ func IsESPDevice(vid, pid uint16) bool {
 func EventToProtocol(event *DeviceEvent, nodeID string) *protocol.DeviceInfo {
 	return &protocol.DeviceInfo{
 		Path:         event.Path,
+		RealPath:     event.RealPath,
 		VID:          event.VID,
 		PID:          event.PID,
 		SerialNumber: event.Serial,

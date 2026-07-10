@@ -66,17 +66,44 @@ func parseDevice(v js.Value) Device {
 		}
 	}
 
+	// Parse tags array
+	tagsArray := v.Get("tags")
+	var tags []string
+	if !tagsArray.IsUndefined() && !tagsArray.IsNull() {
+		tagsLength := tagsArray.Get("length").Int()
+		tags = make([]string, tagsLength)
+		for i := 0; i < tagsLength; i++ {
+			tags[i] = ValueToString(tagsArray.Index(i))
+		}
+	}
+
 	return Device{
 		DeviceID:      ValueToString(v.Get("device_id")),
 		Path:          ValueToString(v.Get("path")),
+		RealPath:      ValueToString(v.Get("real_path")),
 		ChipType:      ValueToString(v.Get("chip_type")),
+		ChipRev:       ValueToString(v.Get("chip_rev")),
+		FlashSize:     uint32(ValueToInt(v.Get("flash_size"))),
+		PSRAMSize:     uint32(ValueToInt(v.Get("psram_size"))),
+		PSRAMType:     ValueToString(v.Get("psram_type")),
+		BoardModel:    ValueToString(v.Get("board_model")),
+		Description:   ValueToString(v.Get("description")),
 		Status:        ValueToString(v.Get("status")),
 		Aliases:       aliases,
+		Tags:          tags,
 		MACAddress:    ValueToString(v.Get("mac_address")),
 		NodeID:        ValueToString(v.Get("node_id")),
 		Protected:     ValueToBool(v.Get("protected")),
+		Disabled:      ValueToBool(v.Get("disabled")),
+		AccessError:   ValueToString(v.Get("access_error")),
 		Backend:       ValueToString(v.Get("backend")),
 		BackendConfig: backendConfig,
+		VID:           ValueToString(v.Get("vid")),
+		PID:           ValueToString(v.Get("pid")),
+		SerialNumber:  ValueToString(v.Get("serial")),
+		Manufacturer:  ValueToString(v.Get("manufacturer")),
+		Product:       ValueToString(v.Get("product")),
+		Connected:     ValueToBool(v.Get("connected")),
 	}
 }
 
@@ -283,5 +310,60 @@ func ForgetDevice(path string, callback func(bool, error)) {
 		}
 
 		callback(false, nil)
+	})
+}
+
+// ResetDevice triggers a hardware reset on the specified device
+func ResetDevice(path string, callback func(bool, error)) {
+	if DemoModeEnabled() {
+		// In demo mode, simulate reset
+		js.Global().Get("setTimeout").Invoke(js.FuncOf(func(this js.Value, args []js.Value) interface{} {
+			callback(true, nil)
+			return nil
+		}), 500)
+		return
+	}
+
+	DefaultAsyncClient.Post("/devices/reset", map[string]interface{}{
+		"path": path,
+	}, func(result js.Value, err error) {
+		if err != nil {
+			callback(false, err)
+			return
+		}
+
+		// Check for success status
+		if !result.IsUndefined() && !result.IsNull() {
+			status := ValueToString(result.Get("status"))
+			success := (status == "reset" || status == "ok")
+			callback(success, nil)
+			return
+		}
+
+		callback(false, nil)
+	})
+}
+
+// CreateDevice creates a new device record (for manually adding unprobed devices)
+func CreateDevice(data map[string]interface{}, callback func(bool, string, error)) {
+	if DemoModeEnabled() {
+		// In demo mode, generate mock device ID
+		callback(true, "demo-device-"+ValueToString(js.Global().Get("Date").Call("now")), nil)
+		return
+	}
+
+	DefaultAsyncClient.Post("/devices", data, func(result js.Value, err error) {
+		if err != nil {
+			callback(false, "", err)
+			return
+		}
+
+		// Parse response for device_id
+		deviceID := ValueToString(result.Get("device_id"))
+		if deviceID == "" {
+			deviceID = ValueToString(result.Get("id"))
+		}
+		success := (deviceID != "")
+		callback(success, deviceID, nil)
 	})
 }

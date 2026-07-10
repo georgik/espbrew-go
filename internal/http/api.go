@@ -20,6 +20,7 @@ import (
 	"codeberg.org/georgik/espbrew-go/pkg/protocol"
 	"github.com/gorilla/mux"
 	"github.com/rs/zerolog/log"
+	"go.bug.st/serial"
 )
 
 type APIHandler struct {
@@ -45,6 +46,7 @@ func NewAPIHandler(node cluster.Node, store *persistence.Store) *APIHandler {
 
 func (h *APIHandler) RegisterRoutes(r *mux.Router) {
 	api := r.PathPrefix("/api/v1").Subrouter()
+	api.SkipClean(true) // Allow encoded slashes in URLs
 
 	// Cluster status
 	api.HandleFunc("/status", h.handleStatus).Methods("GET")
@@ -52,12 +54,14 @@ func (h *APIHandler) RegisterRoutes(r *mux.Router) {
 	api.HandleFunc("/devices", h.handleDevices).Methods("GET")
 	api.HandleFunc("/devices", h.handleAddDevice).Methods("POST")
 	api.HandleFunc("/devices/probe", h.handleProbeDevice).Methods("POST")
+	api.HandleFunc("/devices/reset", h.handleResetDevice).Methods("POST")
 	api.HandleFunc("/devices/forgot/{path:.*}", h.handleForgetDevice).Methods("DELETE")
 	// Register specific device routes BEFORE generic /devices/{id} to ensure they match first
 	h.RegisterBackendRoutes(r)
-	api.HandleFunc("/devices/{id}", h.handleDeviceDetail).Methods("GET")
-	api.HandleFunc("/devices/{id}", h.handleUpdateDevice).Methods("PUT", "PATCH")
-	api.HandleFunc("/devices/{id}", h.handleDeleteDevice).Methods("DELETE")
+	// Use {id:.*} to match paths with slashes (e.g., /dev/ttyUSB0)
+	api.HandleFunc("/devices/{id:.*}", h.handleDeviceDetail).Methods("GET")
+	api.HandleFunc("/devices/{id:.*}", h.handleUpdateDevice).Methods("PUT", "PATCH")
+	api.HandleFunc("/devices/{id:.*}", h.handleDeleteDevice).Methods("DELETE")
 	api.HandleFunc("/devices/{id}/captures", h.handleDeviceCaptures).Methods("GET")
 	api.HandleFunc("/cameras", h.handleCameras).Methods("GET")
 	api.HandleFunc("/boards", h.handleBoards).Methods("GET")
@@ -79,11 +83,27 @@ func (h *APIHandler) RegisterRoutes(r *mux.Router) {
 	// Node registration (for peer nodes)
 	api.HandleFunc("/nodes/register", h.handleRegisterNode).Methods("POST")
 	api.HandleFunc("/nodes/{id}/heartbeat", h.handleNodeHeartbeat).Methods("POST")
+	api.HandleFunc("/nodes/{id}/jobs/{job_id}/progress", h.handleNodeJobProgress).Methods("POST")
 
 	// Leader-specific
 	if h.leader != nil {
 		api.HandleFunc("/queue", h.handleQueue).Methods("GET")
 		api.HandleFunc("/cameras/capture", h.handleCameraCapture).Methods("POST")
+	}
+
+	// Peer-specific job routes
+	if h.peer != nil {
+		peerHandler := NewPeerAPIHandler(h.peer)
+		api.HandleFunc("/jobs/assign", peerHandler.handlePeerJobAssign).Methods("POST")
+		api.HandleFunc("/jobs/{id}/cancel", peerHandler.handlePeerJobCancel).Methods("DELETE")
+	}
+
+	// Health check (both leader and peer)
+	if h.peer != nil {
+		peerHandler := NewPeerAPIHandler(h.peer)
+		r.HandleFunc("/health", peerHandler.handlePeerHealth).Methods("GET")
+	} else if h.leader != nil {
+		r.HandleFunc("/health", h.handleStatus).Methods("GET")
 	}
 }
 
@@ -170,6 +190,7 @@ func (h *APIHandler) handleDevices(w http.ResponseWriter, r *http.Request) {
 
 		// Check if currently connected
 		accessError := ""
+		realPath := ""
 		if dev.MACAddress != "" {
 			if conn, ok := state.Devices[dev.LastPath]; ok && (conn.DeviceID == dev.DeviceID || conn.SerialNumber == dev.MACAddress) {
 				status = conn.Status
@@ -180,6 +201,7 @@ func (h *APIHandler) handleDevices(w http.ResponseWriter, r *http.Request) {
 					serial = conn.SerialNumber
 				}
 				accessError = conn.AccessError
+				realPath = conn.RealPath
 			}
 		}
 		if dev.DeviceID != "" {
@@ -193,8 +215,22 @@ func (h *APIHandler) handleDevices(w http.ResponseWriter, r *http.Request) {
 					if conn.SerialNumber != "" {
 						serial = conn.SerialNumber
 					}
+					realPath = conn.RealPath
 					break
 				}
+			}
+		} else if dev.LastPath != "" {
+			// Fallback: match by path for devices without DeviceID or MAC
+			if conn, ok := state.Devices[dev.LastPath]; ok {
+				status = conn.Status
+				currentPath = conn.Path
+				vid = fmt.Sprintf("0x%04x", conn.VID)
+				pid = fmt.Sprintf("0x%04x", conn.PID)
+				nodeID = conn.NodeID
+				if conn.SerialNumber != "" {
+					serial = conn.SerialNumber
+				}
+				realPath = conn.RealPath
 			}
 		}
 
@@ -203,24 +239,48 @@ func (h *APIHandler) handleDevices(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
+		// Use stored VID/PID/Serial if available, otherwise use connection values
+		storedVid := ""
+		storedPid := ""
+		if dev.VID != 0 {
+			storedVid = fmt.Sprintf("0x%04x", dev.VID)
+		}
+		if dev.PID != 0 {
+			storedPid = fmt.Sprintf("0x%04x", dev.PID)
+		}
+
 		devMap := map[string]interface{}{
 			"path":      currentPath,
+			"real_path": realPath,
 			"device_id": dev.DeviceID,
 			"chip_type": dev.ChipType,
 			"status":    status,
 			"connected": status != "offline",
 		}
-		if vid != "" {
+		// Prefer stored values, fallback to connection values
+		if storedVid != "" {
+			devMap["vid"] = storedVid
+		} else if vid != "" {
 			devMap["vid"] = vid
 		}
-		if pid != "" {
+		if storedPid != "" {
+			devMap["pid"] = storedPid
+		} else if pid != "" {
 			devMap["pid"] = pid
+		}
+		if dev.SerialNumber != "" {
+			devMap["serial"] = dev.SerialNumber
+		} else if serial != "" {
+			devMap["serial"] = serial
+		}
+		if dev.Manufacturer != "" {
+			devMap["manufacturer"] = dev.Manufacturer
+		}
+		if dev.Product != "" {
+			devMap["product"] = dev.Product
 		}
 		if nodeID != "" {
 			devMap["node_id"] = nodeID
-		}
-		if serial != "" {
-			devMap["serial"] = serial
 		}
 		if dev.BoardModel != "" {
 			devMap["board_model"] = dev.BoardModel
@@ -290,6 +350,7 @@ func (h *APIHandler) handleDevices(w http.ResponseWriter, r *http.Request) {
 			// Virtual device or unprobed device - add to list
 			devMap := map[string]interface{}{
 				"path":      conn.Path,
+				"real_path": conn.RealPath,
 				"vid":       fmt.Sprintf("0x%04x", conn.VID),
 				"pid":       fmt.Sprintf("0x%04x", conn.PID),
 				"status":    conn.Status,
@@ -785,6 +846,97 @@ func (h *APIHandler) handleNodeHeartbeat(w http.ResponseWriter, r *http.Request)
 	})
 }
 
+// handleNodeJobProgress handles progress updates from peer nodes.
+func (h *APIHandler) handleNodeJobProgress(w http.ResponseWriter, r *http.Request) {
+	if h.leader == nil {
+		respondError(w, http.StatusNotImplemented, "Job progress only available on leader")
+		return
+	}
+
+	vars := mux.Vars(r)
+	nodeID := vars["id"]
+	jobID := vars["job_id"]
+
+	if nodeID == "" || jobID == "" {
+		respondError(w, http.StatusBadRequest, "node_id and job_id required")
+		return
+	}
+
+	var payload struct {
+		JobID    string `json:"job_id"`
+		Status   string `json:"status"`
+		Progress int    `json:"progress"`
+		NodeID   string `json:"node_id"`
+		Error    string `json:"error,omitempty"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		log.Debug().Err(err).Str("node_id", nodeID).Str("job_id", jobID).Msg("Failed to decode progress payload")
+		respondError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+
+	// Verify node ID matches
+	if payload.NodeID != nodeID {
+		log.Warn().Str("payload_node", payload.NodeID).Str("url_node", nodeID).Msg("Node ID mismatch in progress update")
+		respondError(w, http.StatusBadRequest, "node_id mismatch")
+		return
+	}
+
+	// Verify job ID matches
+	if payload.JobID != jobID {
+		log.Warn().Str("payload_job", payload.JobID).Str("url_job", jobID).Msg("Job ID mismatch in progress update")
+		respondError(w, http.StatusBadRequest, "job_id mismatch")
+		return
+	}
+
+	queue := h.leader.GetJobQueue()
+	job := queue.Get(jobID)
+	if job == nil {
+		log.Warn().Str("job_id", jobID).Str("node_id", nodeID).Msg("Job not found")
+		respondError(w, http.StatusNotFound, "job not found")
+		return
+	}
+
+	// Verify job belongs to this node
+	if job.DeviceNode != nodeID {
+		log.Warn().Str("job_id", jobID).Str("job_node", job.DeviceNode).Str("node_id", nodeID).Msg("Job node mismatch")
+		respondError(w, http.StatusForbidden, "job does not belong to this node")
+		return
+	}
+
+	log.Debug().
+		Str("job_id", jobID).
+		Str("node_id", nodeID).
+		Str("status", payload.Status).
+		Int("progress", payload.Progress).
+		Msg("Progress update received")
+
+	// Update progress
+	queue.UpdateProgress(jobID, payload.Progress)
+
+	// Handle terminal states
+	if payload.Status == "completed" {
+		queue.Complete(jobID, nil)
+		h.leader.ReleaseDevice(job.DevicePath)
+		log.Info().Str("job_id", jobID).Str("node_id", nodeID).Msg("Job completed")
+	} else if payload.Status == "failed" {
+		var err error
+		if payload.Error != "" {
+			err = fmt.Errorf("job failed on peer: %s", payload.Error)
+		} else {
+			err = fmt.Errorf("job failed on peer")
+		}
+		queue.Complete(jobID, err)
+		h.leader.ReleaseDevice(job.DevicePath)
+		log.Error().Str("job_id", jobID).Str("node_id", nodeID).Err(err).Msg("Job failed")
+	}
+
+	respondJSON(w, map[string]interface{}{
+		"status": "ok",
+	})
+}
+
 // handleDeviceDetail returns detailed device information from persistence
 func (h *APIHandler) handleDeviceDetail(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
@@ -858,6 +1010,7 @@ func (h *APIHandler) handleDeviceDetail(w http.ResponseWriter, r *http.Request) 
 			connectedPath = path
 			response["connected"] = true
 			response["current_path"] = path
+			response["real_path"] = d.RealPath
 			response["status"] = d.Status
 			break
 		}
@@ -888,6 +1041,12 @@ func (h *APIHandler) handleUpdateDevice(w http.ResponseWriter, r *http.Request) 
 	vars := mux.Vars(r)
 	deviceID := vars["id"]
 
+	// Normalize path: add leading slash if deviceID looks like a path without one
+	// This handles URL-encoded paths like %2Fdev%2FttyUSB0 which mux decodes to "dev/ttyUSB0"
+	if deviceID != "" && !strings.HasPrefix(deviceID, "esp-") && !strings.Contains(deviceID, ":") && !strings.HasPrefix(deviceID, "/") {
+		deviceID = "/" + deviceID
+	}
+
 	// Find device (reuse logic from handleDeviceDetail)
 	dev, err := h.store.GetDevice(deviceID)
 	if err != nil {
@@ -900,8 +1059,29 @@ func (h *APIHandler) handleUpdateDevice(w http.ResponseWriter, r *http.Request) 
 				}
 			}
 			if err != nil {
-				respondError(w, http.StatusNotFound, "Device not found in inventory")
-				return
+				// Try finding by path for newly discovered devices
+				state := h.node.State()
+				for path, d := range state.Devices {
+					if path == deviceID || d.RealPath == deviceID {
+						// Found in-memory device, create store record
+						dev = &persistence.DeviceRecord{
+							DeviceID:     d.DeviceID,
+							MACAddress:   d.SerialNumber,
+							LastPath:     path,
+							LastSeen:     time.Now(),
+							FirstSeen:    time.Now(),
+							NodeID:       d.NodeID,
+							VID:          d.VID,
+							PID:          d.PID,
+							SerialNumber: d.SerialNumber,
+						}
+						break
+					}
+				}
+				if dev == nil {
+					respondError(w, http.StatusNotFound, "Device not found in inventory")
+					return
+				}
 			}
 		}
 	}
@@ -914,26 +1094,55 @@ func (h *APIHandler) handleUpdateDevice(w http.ResponseWriter, r *http.Request) 
 
 	// Update device fields (only update non-empty values)
 	updated := &persistence.DeviceRecord{
-		DeviceID:    dev.DeviceID,
-		MACAddress:  dev.MACAddress,
-		ChipType:    dev.ChipType,
-		ChipRev:     dev.ChipRev,
-		FlashSize:   dev.FlashSize,
-		PSRAMSize:   dev.PSRAMSize,
-		PSRAMType:   dev.PSRAMType,
-		BoardModel:  dev.BoardModel,
-		Description: dev.Description,
-		Aliases:     dev.Aliases,
-		Tags:        dev.Tags,
-		FirstSeen:   dev.FirstSeen,
-		LastSeen:    dev.LastSeen,
-		LastPath:    dev.LastPath,
-		NodeID:      dev.NodeID,
+		DeviceID:     dev.DeviceID,
+		MACAddress:   dev.MACAddress,
+		ChipType:     dev.ChipType,
+		ChipRev:      dev.ChipRev,
+		FlashSize:    dev.FlashSize,
+		PSRAMSize:    dev.PSRAMSize,
+		PSRAMType:    dev.PSRAMType,
+		BoardModel:   dev.BoardModel,
+		Description:  dev.Description,
+		Aliases:      dev.Aliases,
+		Tags:         dev.Tags,
+		FirstSeen:    dev.FirstSeen,
+		LastSeen:     dev.LastSeen,
+		LastPath:     dev.LastPath,
+		NodeID:       dev.NodeID,
+		VID:          dev.VID,
+		PID:          dev.PID,
+		SerialNumber: dev.SerialNumber,
+		Manufacturer: dev.Manufacturer,
+		Product:      dev.Product,
+		Disabled:     dev.Disabled,
+		Protected:    dev.Protected,
 	}
 
 	// Update fields from request if provided
 	if req.MACAddress != "" {
 		updated.MACAddress = req.MACAddress
+	}
+
+	// Handle unprobed device: generate DeviceID if empty
+	// This can happen when updating a device that exists only in memory (discovered but not probed)
+	isUnprobedDevice := (updated.DeviceID == "")
+	if isUnprobedDevice {
+		// Generate device ID from MAC if provided
+		if updated.MACAddress != "" {
+			updated.DeviceID = "esp-" + updated.MACAddress
+		} else if req.ChipType != "" {
+			// Generate manual ID from chip type
+			var err error
+			updated.DeviceID, err = h.store.GenerateManualID(req.ChipType)
+			if err != nil {
+				respondError(w, http.StatusInternalServerError, "Failed to generate device ID")
+				return
+			}
+		} else {
+			respondError(w, http.StatusBadRequest, "Cannot save unprobed device without MAC or chip_type")
+			return
+		}
+		log.Debug().Str("path", deviceID).Str("generated_device_id", updated.DeviceID).Msg("Generated ID for unprobed device")
 	}
 	if req.ChipType != "" {
 		updated.ChipType = req.ChipType
@@ -974,7 +1183,11 @@ func (h *APIHandler) handleUpdateDevice(w http.ResponseWriter, r *http.Request) 
 		state := h.leader.State()
 		if dev, exists := state.Devices[updated.LastPath]; exists {
 			// Verify this is the correct device before updating
-			if dev.DeviceID == updated.DeviceID || dev.SerialNumber == updated.MACAddress {
+			// For unprobed devices: match by path, VID/PID, or serial
+			match := dev.DeviceID == updated.DeviceID ||
+				dev.SerialNumber == updated.MACAddress ||
+				(isUnprobedDevice && dev.DeviceID == "" && dev.Path == updated.LastPath)
+			if match {
 				h.leader.UpdateDeviceInfo(updated.LastPath, updated.DeviceID, updated.ChipType, updated.MACAddress)
 				log.Debug().Str("path", updated.LastPath).Str("device_id", updated.DeviceID).
 					Msg("In-memory state updated via API")
@@ -984,7 +1197,7 @@ func (h *APIHandler) handleUpdateDevice(w http.ResponseWriter, r *http.Request) 
 
 	respondJSON(w, map[string]interface{}{
 		"status":    "updated",
-		"device_id": dev.DeviceID,
+		"device_id": updated.DeviceID,
 	})
 }
 
@@ -993,41 +1206,63 @@ func (h *APIHandler) handleDeleteDevice(w http.ResponseWriter, r *http.Request) 
 	vars := mux.Vars(r)
 	deviceID := vars["id"]
 
-	// Find device
+	// First try to find device in persistence
 	dev, err := h.store.GetDevice(deviceID)
-	if err != nil {
+	wasPersisted := err == nil
+
+	if !wasPersisted {
+		// Try by alias
 		dev, err = h.store.GetDeviceByAlias(deviceID)
-		if err != nil {
-			respondError(w, http.StatusNotFound, "Device not found")
+		wasPersisted = err == nil
+	}
+
+	// If found in persistence, delete from there
+	if wasPersisted {
+		if err := h.store.DeleteDevice(dev.DeviceID); err != nil {
+			respondError(w, http.StatusInternalServerError, "Failed to delete device")
 			return
 		}
 	}
 
-	// Delete from persistence
-	if err := h.store.DeleteDevice(dev.DeviceID); err != nil {
-		respondError(w, http.StatusInternalServerError, "Failed to delete device")
-		return
-	}
-
-	// Remove from in-memory state if present
+	// Remove from in-memory state if present (works for both persisted and in-memory devices)
 	if h.leader != nil {
 		state := h.leader.State()
+		deleted := false
 		for path, stateDev := range state.Devices {
-			if stateDev.DeviceID == dev.DeviceID || stateDev.SerialNumber == dev.MACAddress {
-				// Remove from state (need to access internal state through leader)
-				// This is a bit of a hack - we're directly manipulating the map
-				// In production, add a proper method to LeaderNode
+			if stateDev.DeviceID == deviceID {
 				h.leader.DeleteDeviceFromState(path)
-				log.Info().Str("path", path).Str("device_id", dev.DeviceID).
+				log.Info().Str("path", path).Str("device_id", deviceID).
 					Msg("Device removed from cluster state via API")
+				deleted = true
 				break
 			}
 		}
+
+		// If device was in memory but not persisted, report success
+		if deleted && !wasPersisted {
+			respondJSON(w, map[string]interface{}{
+				"status":    "deleted",
+				"device_id": deviceID,
+				"source":    "memory",
+			})
+			return
+		}
+
+		// If device was not found anywhere
+		if !deleted && !wasPersisted {
+			respondError(w, http.StatusNotFound, "Device not found")
+			return
+		}
+	} else if !wasPersisted {
+		// No leader and device not persisted
+		respondError(w, http.StatusNotFound, "Device not found")
+		return
 	}
 
 	respondJSON(w, map[string]interface{}{
 		"status":    "deleted",
 		"device_id": dev.DeviceID,
+		"source":    "persistence",
 	})
 }
 
@@ -1190,6 +1425,61 @@ func (h *APIHandler) handleForgetDevice(w http.ResponseWriter, r *http.Request) 
 		"status":  "forgotten",
 		"path":    path,
 		"message": "Device removed from cluster state",
+	})
+}
+
+// handleResetDevice triggers a hardware reset via DTR/RTS toggle
+type ResetDeviceRequest struct {
+	Path string `json:"path"`
+}
+
+func (h *APIHandler) handleResetDevice(w http.ResponseWriter, r *http.Request) {
+	var req ResetDeviceRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+
+	if req.Path == "" {
+		respondError(w, http.StatusBadRequest, "path is required")
+		return
+	}
+
+	// Resolve the device path (handle /dev/serial/by-id/ symlinks)
+	devicePath := req.Path
+	if runtime.GOOS == "linux" && strings.HasPrefix(devicePath, "/dev/serial/by-id/") {
+		// Resolve symlink to actual device
+		target, err := os.Readlink(devicePath)
+		if err == nil {
+			devicePath = filepath.Join("/dev/serial/by-id", target)
+		}
+	}
+
+	// Open the port briefly to send reset signals
+	mode := &serial.Mode{
+		BaudRate: 115200,
+	}
+	port, err := serial.Open(devicePath, mode)
+	if err != nil {
+		respondError(w, http.StatusServiceUnavailable, "Failed to open device: "+err.Error())
+		return
+	}
+	defer port.Close()
+
+	// Send reset sequence (DTR/RTS toggle)
+	// This matches the ESP reset sequence used in monitor
+	_ = port.SetDTR(false)
+	_ = port.SetRTS(true)
+	time.Sleep(100 * time.Millisecond)
+	_ = port.SetRTS(false)
+	time.Sleep(50 * time.Millisecond)
+
+	log.Info().Str("path", req.Path).Msg("Device reset triggered")
+
+	respondJSON(w, map[string]interface{}{
+		"status":  "reset",
+		"path":    req.Path,
+		"message": "Device reset triggered",
 	})
 }
 

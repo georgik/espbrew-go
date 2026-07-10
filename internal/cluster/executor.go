@@ -114,15 +114,21 @@ func (e *JobExecutor) executeJob(workerID int, job *Job) {
 	}
 
 	job.mu.Lock()
+	// var duration float64
+	// if job.StartedAt != nil {
+	// 	duration = time.Since(*job.StartedAt).Seconds()
+	// }
 	if err != nil {
 		job.Status = JobFailed
 		job.Error = err.Error()
+		// RecordJobCompleted("failed", duration)
 		log.Error().Err(err).Str("job_id", job.ID).Msg("Job failed")
 	} else {
 		job.Status = JobComplete
 		job.Progress = 100
-		now := job.CreatedAt
+		now := time.Now()
 		job.CompletedAt = &now
+		// RecordJobCompleted("completed", duration)
 		log.Info().Str("job_id", job.ID).Msg("Job completed successfully")
 	}
 	job.mu.Unlock()

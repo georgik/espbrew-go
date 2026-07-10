@@ -155,7 +155,8 @@ type NodeInfo struct {
 }
 
 type DeviceInfo struct {
-	Path             string             `json:"path"`
+	Path             string             `json:"path"`      // Stable path (by-id on Linux)
+	RealPath         string             `json:"real_path"` // Actual device path (e.g., /dev/ttyUSB0)
 	VID              uint16             `json:"vid"`
 	PID              uint16             `json:"pid"`
 	SerialNumber     string             `json:"serial"`

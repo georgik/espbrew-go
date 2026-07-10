@@ -14,6 +14,9 @@ func TestDetectByMagic(t *testing.T) {
 		{"ESP32-C3", ESP32C3_MAGIC, false},
 		{"ESP32-C3 ECO3", ESP32C3_MAGIC_ECO3, false},
 		{"ESP32-C3 ECO6", ESP32C3_MAGIC_ECO6, false},
+		{"ESP32-C5", ESP32C5_MAGIC, false},
+		{"ESP32-C5 ALT1", ESP32C5_MAGIC_ALT1, false},
+		{"ESP32-C5 ALT2", ESP32C5_MAGIC_ALT2, false},
 		{"ESP32-C6", ESP32C6_MAGIC, false},
 		{"Unknown", 0xFFFFFFFF, true},
 	}
@@ -91,6 +94,24 @@ func TestESP32C3Chip(t *testing.T) {
 	expectedBase := uint32(0x60008844)
 	if chip.BaseAddress() != expectedBase {
 		t.Errorf("expected base address 0x%08x, got 0x%08x", expectedBase, chip.BaseAddress())
+	}
+}
+
+func TestESP32C5Chip(t *testing.T) {
+	chip := &ESP32C5Chip{}
+
+	if chip.Name() != "ESP32-C5" {
+		t.Errorf("expected name 'ESP32-C5', got %s", chip.Name())
+	}
+
+	expectedBase := uint32(0x600B0044)
+	if chip.BaseAddress() != expectedBase {
+		t.Errorf("expected base address 0x%08x, got 0x%08x", expectedBase, chip.BaseAddress())
+	}
+
+	expectedMACReg := uint32(0x44)
+	if chip.MACRegister() != expectedMACReg {
+		t.Errorf("expected MAC register 0x%08x, got 0x%08x", expectedMACReg, chip.MACRegister())
 	}
 }
 
