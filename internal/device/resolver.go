@@ -192,7 +192,9 @@ func (r *DeviceResolver) ScanStable() ([]DeviceInfo, error) {
 	byIDDir := "/dev/serial/by-id"
 	entries, err := os.ReadDir(byIDDir)
 	if err != nil {
-		return nil, fmt.Errorf("read by-id directory: %w", err)
+		// No by-id directory (no serial devices or not Linux)
+		// Return empty list instead of error
+		return []DeviceInfo{}, nil
 	}
 
 	result := make([]DeviceInfo, 0, len(entries))
