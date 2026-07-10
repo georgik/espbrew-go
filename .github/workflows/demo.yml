@@ -58,12 +58,11 @@ jobs:
 
       - name: Create demo package
         run: |
-          mkdir -p demo/v2
-          cp web/index.html demo/v2/
-          cp web/styles.css demo/v2/
-          cp web/wasm_exec.js demo/v2/
-          cp web/main.wasm demo/v2/
-          cp web/demo/index.html demo/
+          mkdir -p demo
+          cp web/index.html demo/
+          cp web/styles.css demo/
+          cp web/wasm_exec.js demo/
+          cp web/main.wasm demo/
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v5
