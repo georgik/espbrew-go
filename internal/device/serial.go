@@ -142,6 +142,12 @@ func (s *Scanner) ScanESP() ([]DeviceInfo, error) {
 			}
 		}
 
+		// Set default VID/PID if not available (happens on Windows)
+		if info.VID == 0 {
+			info.VID = ESP_VID
+			info.PID = ESP_PID_S3
+		}
+
 		// Check if likely ESP
 		if s.isLikelyESP(port.Path) || IsESPDevice(info.VID, info.PID) {
 			result = append(result, *info)
