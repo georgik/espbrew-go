@@ -189,6 +189,150 @@ http://localhost:8080
 
 The serial monitor interface automatically handles Windows COM port paths without the `/dev/` prefix used on Unix systems.
 
+## Linux Support
+
+ESPBrew provides full support for Linux with stable device paths via `/dev/serial/by-id` and USB hub power control integration.
+
+### Device Discovery
+
+On Linux, ESPBrew automatically discovers USB serial devices using stable `/dev/serial/by-id/` symlinks. This provides persistent device identification across reconnections and reboots.
+
+```bash
+# List all serial devices on Linux
+./espbrew devices
+
+# List only ESP devices
+./espbrew devices --esp
+
+# View detailed device information
+./espbrew devices --json
+```
+
+### Stable Device Paths
+
+ESPBrew resolves temporary ports (`/dev/ttyUSB0`, `/dev/ttyACM0`) to stable symlinks:
+```
+/dev/ttyUSB0 → /dev/serial/by-id/usb-Espressif_ESP32-S3-DevKitC-1_1234567890-if00
+```
+
+This ensures device records persist across reconnections and system reboots.
+
+### Device Permissions
+
+Access to USB serial devices on Linux typically requires group membership or device-specific permissions.
+
+**Check current access:**
+```bash
+# Check dialout group membership (for serial ports)
+groups | grep dialout
+
+# Check device permissions
+ls -la /dev/serial/by-id/
+```
+
+**Add user to dialout group:**
+```bash
+# Add user to dialout group for serial port access
+sudo usermod -aG dialout $USER
+
+# Relogin required for group membership to take effect
+# Or test immediately:
+newgrp dialout
+```
+
+**Important**: After adding yourself to a group, you must **log out and log back in** for the change to take effect. Simply restarting your terminal is not enough — the group membership is set at login time.
+
+### USB Hub Power Control (uhubctl)
+
+ESPBrew supports `uhubctl` for USB hub power control on Linux, enabling automated device reset cycles and power management for cluster operations.
+
+**Install uhubctl:**
+```bash
+# Ubuntu/Debian
+sudo apt install uhubctl
+
+# Or build from source
+git clone https://github.com/mvp/uhubctl
+cd uhubctl && make && sudo make install
+```
+
+**Configure Device Access**
+
+uhubctl requires elevated permissions to access USB hub devices. Two approaches:
+
+**Option 1: udev rules (recommended)**
+
+Create a udev rule to grant your user group access to USB hub devices:
+
+```bash
+# Get your primary group
+MYGROUP=$(id -gn)
+
+# Create udev rule
+echo "SUBSYSTEM==\"usb\", ATTR{bDeviceClass}==\"09\", GROUP=\"${MYGROUP}\", MODE=\"0660\"" | sudo tee /etc/udev/rules.d/90-usb-hub.rules
+
+# Reload udev
+sudo udevadm control --reload-rules
+sudo udevadm trigger
+```
+
+This allows uhubctl to run without sudo for your user. Uses your primary group for simplicity — no additional group management needed.
+
+**Option 2: sudoers**
+
+Allow passwordless uhubctl execution:
+
+```bash
+echo "$USER ALL=(ALL) NOPASSWD: /usr/bin/uhubctl" | sudo tee /etc/sudoers.d/uhubctl
+sudo chmod 440 /etc/sudoers.d/uhubctl
+```
+
+**Verify setup:**
+```bash
+# List hubs
+uhubctl
+
+# Test power cycling (requires specific hub/location)
+sudo uhubctl -l <bus> -p <port> -P  # Power off
+sudo uhubctl -l <bus> -p <port> -p  # Power on
+```
+
+### Flashing on Linux
+
+```bash
+# Flash to auto-detected device
+./espbrew flash firmware.bin
+
+# Flash to specific device path
+./espbrew flash firmware.bin -p /dev/serial/by-id/usb-Espressif_...
+
+# Flash with chip specification
+./espbrew flash firmware.bin --chip esp32-s3
+```
+
+### Serial Monitoring on Linux
+
+```bash
+# Monitor auto-detected device
+./espbrew monitor
+
+# Monitor specific device
+./espbrew monitor -p /dev/serial/by-id/usb-Espressif_...
+
+# Monitor with reset to capture boot logs
+./espbrew monitor -p /dev/serial/by-id/usb-Espressif_... --reset
+```
+
+### Web Interface on Linux
+
+The web dashboard provides full monitoring capabilities:
+
+```
+http://localhost:8080
+```
+
+The serial monitor interface automatically handles Linux device paths including `/dev/serial/by-id/` symlinks.
+
 ## Simulator Backends
 
 ESPBrew supports simulator backends for testing without physical hardware. This enables testing and development workflows without requiring actual ESP32 devices.
