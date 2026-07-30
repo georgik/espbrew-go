@@ -297,6 +297,52 @@ sudo uhubctl -l <bus> -p <port> -P  # Power off
 sudo uhubctl -l <bus> -p <port> -p  # Power on
 ```
 
+### Native USB Hub Power Control
+
+ESPBrew includes native USB hub power control support on Linux (kernel >= 6.0), enabling automated device reset cycles for cold boot testing without external dependencies.
+
+**Requirements:**
+- Linux kernel
+- USB hub with per-port power switching (e.g., Rosonway RSH-A10, 0BDA:0411)
+
+**Commands:**
+```bash
+# Auto-detect supported hub
+./espbrew power auto-detect
+
+# Show hub and port status
+./espbrew power status
+
+# Power control
+./espbrew power on <port>          # Power on specific port
+./espbrew power off <port>         # Power off specific port
+./espbrew power cycle <port>       # Power cycle for cold boot
+
+# Power cycle with custom delay
+./espbrew power cycle <port> --delay 3s
+```
+
+**Permissions:**
+
+The native implementation requires write access to USB sysfs entries. Create a udev rule:
+
+```bash
+# Add udev rule for USB hub access
+sudo tee /etc/udev/rules.d/99-espbrew-hub.rules <<EOF
+SUBSYSTEM=="usb", ATTR{idVendor}=="0bda", ATTR{idProduct}=="0411", TAG+="uaccess"
+EOF
+
+# Reload rules
+sudo udevadm control --reload-rules
+sudo udevadm trigger
+```
+
+**Kernel Compatibility:**
+
+If running on kernel < 6.0, the power commands will return an error indicating kernel upgrade is required. As an alternative, use the `uhubctl` integration described above.
+
+For detailed implementation information, see [docs/POWER_CONTROL.md](docs/POWER_CONTROL.md).
+
 ### Flashing on Linux
 
 ```bash
