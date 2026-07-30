@@ -42,8 +42,8 @@ var (
 
 func init() {
 	listHubs = listHubsLinux
-	setPortPower = setPortPowerLinux
-	getPortStatus = getPortStatusLinux
+	setPortPower = setPortPowerIoctl
+	getPortStatus = getPortStatusIoctl
 }
 
 // invalidateCache invalidates the hub cache.
@@ -139,7 +139,7 @@ func parseHub(name, path string) (Hub, error) {
 		Product:      product,
 		NumPorts:     numPorts,
 		interfaceDir: interfaceDir,
-		superSpeed:   superSpeed,
+		SuperSpeed:   superSpeed,
 	}, nil
 }
 
@@ -152,8 +152,22 @@ func findHubInterface(path, name string) (string, int, bool, error) {
 
 	var interfaceDir string
 	var superSpeed bool
+	var ssInterfaceDir string // Track SuperSpeed interface separately
 
-	// Look for interface directories (format: X-Y:N.Z)
+	// Check USB version as fallback for SuperSpeed detection
+	// USB 3.x hubs have version >= 3.0
+	if versionBytes, err := os.ReadFile(filepath.Join(path, "version")); err == nil {
+		version := strings.TrimSpace(string(versionBytes))
+		// Parse version like "3.20" or "2.10"
+		var major, minor int
+		if _, err := fmt.Sscanf(version, "%d.%d", &major, &minor); err == nil {
+			if major >= 3 {
+				superSpeed = true
+			}
+		}
+	}
+
+	// First pass: check hub interfaces
 	for _, entry := range entries {
 		if !strings.Contains(entry.Name(), ":") {
 			continue
@@ -170,15 +184,21 @@ func findHubInterface(path, name string) (string, int, bool, error) {
 			continue
 		}
 
-		interfaceDir = entry.Name()
-
-		// Check for superspeed (USB 3.0)
-		// USB 3.0 hubs have interface number 1 for superspeed
-		if strings.HasSuffix(entry.Name(), ":1.0") {
+		// Track SuperSpeed interface
+		if strings.HasSuffix(entry.Name(), ":2.0") {
+			ssInterfaceDir = entry.Name()
 			superSpeed = true
 		}
 
-		break
+		// Use first hub interface as fallback
+		if interfaceDir == "" {
+			interfaceDir = entry.Name()
+		}
+	}
+
+	// Use SuperSpeed interface if found, otherwise use the first one
+	if superSpeed && ssInterfaceDir != "" {
+		interfaceDir = ssInterfaceDir
 	}
 
 	if interfaceDir == "" {
@@ -268,7 +288,7 @@ func getPortStatusLinux(hub *Hub, port int) (*PortStatus, error) {
 	}
 
 	// Power status depends on USB version
-	if hub.superSpeed {
+	if hub.SuperSpeed {
 		ps.Power = (status & usbSsPortStatPower) != 0
 
 		// Decode speed for USB 3.0

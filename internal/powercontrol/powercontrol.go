@@ -23,7 +23,7 @@ type Hub struct {
 	Product      string // Product ID, e.g., "0411"
 	NumPorts     int    // Number of ports
 	interfaceDir string // Interface directory, e.g., "1-2:1.0"
-	superSpeed   bool   // true if USB 3.0 hub
+	SuperSpeed   bool   // true if USB 3.0 hub
 }
 
 // PortStatus represents the current status of a hub port.
@@ -126,7 +126,7 @@ func (c *controller) PowerCycle(hub *Hub, port int, delay time.Duration) error {
 
 	// Calculate wait time (USB3 hubs need extra delay)
 	waitTime := delay
-	if hub.superSpeed {
+	if hub.SuperSpeed {
 		waitTime += 150 * time.Millisecond
 	}
 	time.Sleep(waitTime)

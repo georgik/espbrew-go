@@ -266,7 +266,7 @@ func runPowerAutoDetect(cmd *cobra.Command, args []string) error {
 	fmt.Printf("Found hub at location: %s\n", hub.Location)
 	fmt.Printf("  Vendor:Product: %s:%s\n", hub.Vendor, hub.Product)
 	fmt.Printf("  Ports: %d\n", hub.NumPorts)
-	if hub.superSpeed {
+	if hub.SuperSpeed {
 		fmt.Printf("  Speed: USB 3.0\n")
 	} else {
 		fmt.Printf("  Speed: USB 2.0\n")
