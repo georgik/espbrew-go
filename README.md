@@ -242,61 +242,6 @@ newgrp dialout
 
 **Important**: After adding yourself to a group, you must **log out and log back in** for the change to take effect. Simply restarting your terminal is not enough — the group membership is set at login time.
 
-### USB Hub Power Control (uhubctl)
-
-ESPBrew supports `uhubctl` for USB hub power control on Linux, enabling automated device reset cycles and power management for cluster operations.
-
-**Install uhubctl:**
-```bash
-# Ubuntu/Debian
-sudo apt install uhubctl
-
-# Or build from source
-git clone https://github.com/mvp/uhubctl
-cd uhubctl && make && sudo make install
-```
-
-**Configure Device Access**
-
-uhubctl requires elevated permissions to access USB hub devices. Two approaches:
-
-**Option 1: udev rules (recommended)**
-
-Create a udev rule to grant your user group access to USB hub devices:
-
-```bash
-# Get your primary group
-MYGROUP=$(id -gn)
-
-# Create udev rule
-echo "SUBSYSTEM==\"usb\", ATTR{bDeviceClass}==\"09\", GROUP=\"${MYGROUP}\", MODE=\"0660\"" | sudo tee /etc/udev/rules.d/90-usb-hub.rules
-
-# Reload udev
-sudo udevadm control --reload-rules
-sudo udevadm trigger
-```
-
-This allows uhubctl to run without sudo for your user. Uses your primary group for simplicity — no additional group management needed.
-
-**Option 2: sudoers**
-
-Allow passwordless uhubctl execution:
-
-```bash
-echo "$USER ALL=(ALL) NOPASSWD: /usr/bin/uhubctl" | sudo tee /etc/sudoers.d/uhubctl
-sudo chmod 440 /etc/sudoers.d/uhubctl
-```
-
-**Verify setup:**
-```bash
-# List hubs
-uhubctl
-
-# Test power cycling (requires specific hub/location)
-sudo uhubctl -l <bus> -p <port> -P  # Power off
-sudo uhubctl -l <bus> -p <port> -p  # Power on
-```
-
 ### Native USB Hub Power Control
 
 ESPBrew includes native USB hub power control support on Linux (kernel >= 6.0), enabling automated device reset cycles for cold boot testing without external dependencies.
@@ -379,7 +324,7 @@ sudo udevadm trigger
 
 **Kernel Compatibility:**
 
-If running on kernel < 6.0, the power commands will return an error indicating kernel upgrade is required. As an alternative, use the `uhubctl` integration described above.
+If running on kernel < 6.0, the power commands will return an error indicating kernel upgrade is required. As an alternative, use the `uhubctl`.
 
 For detailed implementation information, see [docs/POWER_CONTROL.md](docs/POWER_CONTROL.md).
 
