@@ -69,6 +69,27 @@ go build -o espbrew.exe ./cmd/espbrew
 # Windows: Navigate to http://localhost:8080 in your browser
 ```
 
+### macOS: cgo and C compiler on PATH
+
+The server uses cgo (via `pion/mediadevices` for the camera feature), so building on macOS requires a working C toolchain with the macOS SDK headers. Go resolves its C compiler (`clang`) from `PATH`. If another tool shadows Apple's `/usr/bin/clang`, the build fails with errors like:
+
+```
+# runtime/cgo
+fatal error: 'stdlib.h' file not found
+```
+
+This commonly happens when [Swiftly](https://swiftly.dev) (or any bundled compiler) is installed and its `bin` directory appears before `/usr/bin` in `PATH`. Its clang lacks the macOS SDK headers. Fix by ensuring Apple's clang is used:
+
+```bash
+command -v clang   # should print /usr/bin/clang, not ~/.swiftly/bin/clang
+```
+
+If it points elsewhere, either remove that toolchain from `PATH` (check `.zshrc`/`.zprofile`) or override the compiler for a single build:
+
+```bash
+CC=/usr/bin/clang go build -o espbrew ./cmd/espbrew
+```
+
 ## Installation
 
 ```bash
