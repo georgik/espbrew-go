@@ -16,7 +16,7 @@ require (
 	github.com/rs/zerolog v1.35.1
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/viper v1.21.0
-	github.com/stretchr/testify v1.11.1
+	github.com/stretchr/testify v1.12.0
 	github.com/vladimirvivien/go4vl v0.5.0
 	go.bug.st/serial v1.8.0
 	go.etcd.io/bbolt v1.5.0
@@ -28,7 +28,6 @@ require (
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/blackjack/webcam v0.6.1 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
-	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/fsnotify/fsnotify v1.9.0 // indirect
 	github.com/go-viper/mapstructure/v2 v2.4.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
@@ -53,7 +52,6 @@ require (
 	github.com/pion/transport/v3 v3.1.1 // indirect
 	github.com/pion/turn/v4 v4.1.3 // indirect
 	github.com/pion/webrtc/v4 v4.1.8 // indirect
-	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/prometheus/client_model v0.6.2 // indirect
 	github.com/prometheus/common v0.70.1 // indirect
 	github.com/prometheus/procfs v0.21.1 // indirect
