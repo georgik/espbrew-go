@@ -18,6 +18,12 @@ jobs:
           - platform: linux-amd64
             runner: ubuntu-latest
             output: espbrew-linux-amd64
+          # Native ARM64 runner (free for public repos). Required because the
+          # Linux build pulls in go4vl, which uses CGO with linux/videodev2.h —
+          # plain cross-compilation from amd64 fails without an aarch64 toolchain.
+          - platform: linux-arm64
+            runner: ubuntu-24.04-arm
+            output: espbrew-linux-arm64
           - platform: darwin-arm64
             runner: macos-latest
             output: espbrew-darwin-arm64
