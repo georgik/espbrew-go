@@ -20,7 +20,7 @@ require (
 	github.com/vladimirvivien/go4vl v0.5.0
 	go.bug.st/serial v1.8.0
 	go.etcd.io/bbolt v1.5.0
-	golang.org/x/sys v0.47.0
+	golang.org/x/sys v0.48.0
 	golang.org/x/term v0.45.0
 )
 
