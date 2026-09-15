@@ -12,31 +12,17 @@ The demo showcases the full WASM UI with mock data for devices, cameras, capture
 
 ## Features
 
-- **Smart File Detection**: Auto-detects ELF, ESP32 binary, and raw firmware files
-- **Chip-Specific Offsets**: Correct bootloader offsets per chip variant
-- **Multi-Image Flashing**: Flash bootloader, partitions, and app in one command
-- **Project Detection**: Automatically detects ESP-IDF, TinyGo, and Rust no_std projects and populates flash paths
-- **ESP-IDF Integration**: Read flash_args directly from build directory
-- **Cluster Mode**: Leader/peer architecture for distributed flashing
-- **Device Discovery**: Automatic ESP device detection via USB serial with stable /dev/serial/by-id paths on Linux
-- **Device Persistence**: Device information survives cluster restart
-- **Device Management**: View, edit, and delete device records via web UI and CLI
-- **Device Disabling**: Administratively disable devices to prevent accidental flashing
-- **Device Protection**: Flash read-only mode for production devices while allowing serial monitoring
-- **Camera Support**: Discover and capture images from connected cameras
-- **Snap Command**: Flash, monitor serial output, and capture camera image in one command
-- **Operational Modes**: Discovery mode for device auto-detection, operational mode for normal flashing
-- **Environment Variables**: Configure cluster endpoints via ESPBREW_CLUSTER and ESPBREW_LEADER
-- **Job Queue**: Queue and manage flash jobs across all available devices
-- **Device Locking**: Prevents concurrent access to serial ports
-- **Remote Flashing**: Flash devices from any machine on the network
-- **Progress Streaming**: Real-time progress updates via WebSocket
-- **Remote Monitor**: Serial monitor over WebSocket with pattern matching
-- **Web Dashboard**: Real-time status monitoring via HTTP
-- **mDNS**: Automatic node discovery on local network
-- **Boot Log Capture**: Reset device to observe startup messages with port busy retry
-- **Cross-Platform**: Support for Windows, Linux, and macOS with automatic COM port detection on Windows
-- **Simulator Backends**: Wokwi simulator integration for testing without hardware (QEMU planned)
+ESPBrew is a cluster flashing tool for ESP32. A leader node runs a web dashboard and a job queue; peer nodes report the devices attached to their machines; and the CLI flashes and monitors from anywhere on the network. It runs on Windows, Linux, and macOS.
+
+**Cluster flashing.** Run a single standalone node, or a leader with peers spread across machines. Devices from every node feed one job queue, so you flash to a device without tracking which machine it is on. Node discovery is automatic over mDNS, progress streams in real time over WebSocket, and serial ports are locked so two jobs never collide.
+
+**Flexible flashing.** Flash a single image or a full multi-image (bootloader + partitions + app) in one command. ESP-IDF, TinyGo, and Rust no_std projects are auto-detected and their flash paths filled in; `flash_args` is read straight from an ESP-IDF build directory. Chip-aware offsets handle the rest.
+
+**Device management.** ESP devices are discovered automatically over USB serial, using stable `/dev/serial/by-id` paths on Linux. Records persist across restarts and can be viewed, edited, aliased, tagged, or deleted from the CLI or dashboard. A device can be administratively disabled, or marked read-only (protected) so it can still be monitored.
+
+**Monitoring and cameras.** Live serial monitoring works locally or over the cluster, with exit-on-pattern matching and boot-log capture. Connected cameras are discoverable and capturable, and the `snap` command flashes, monitors serial, and captures a camera frame in a single step. Native USB-hub power control cycles ports for cold-boot resets.
+
+**Web dashboard and simulation.** The WASM dashboard shows real-time device and job status and manages devices, with a browser-only demo mode. Wokwi simulator backends let you flash, monitor, and snap against virtual devices with no hardware attached.
 
 ## Quick Start
 

@@ -1,0 +1,73 @@
+name: Publish Image
+
+# Publish the espbrew cluster container image to the GitHub Container Registry.
+#
+# The image is built from Dockerfile, which downloads the pre-built release
+# binary (espbrew-linux-amd64) — nothing is compiled inside the image. The
+# image is pushed to ghcr.io (GitHub's own registry), so no DockerHub account
+# is required and the image lives next to the code that produced it.
+#
+# Trigger manually: GitHub -> <repo> -> Actions -> "Publish Image" -> Run workflow.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "espbrew release tag to bundle (asset: espbrew-linux-amd64)"
+        type: string
+        required: true
+        default: "v0.3.1"
+      tag:
+        description: "Additional image tag to publish (optional, e.g. 'stable', 'v0.3.1')"
+        type: string
+        required: false
+        default: ""
+
+# Push the image (and build cache) to the GitHub Container Registry.
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_REPO: ${{ github.repository }}
+
+jobs:
+  build-and-push:
+    name: Build & push image
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Get image metadata (tags + labels)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_REPO }}
+          tags: |
+            type=raw,value=latest,enable=${{ github.ref_name == 'main' }}
+            type=raw,value=${{ github.ref_name }},enable=${{ github.ref_type == 'tag' }}
+            type=raw,value=${{ inputs.tag }},enable=${{ inputs.tag != '' }}
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            ESPBREW_VERSION=${{ inputs.version }}
+          # Reuse the downloaded release binary across builds via ghcr cache.
+          cache-from: type=ghcr,ref=${{ env.REGISTRY }}/${{ env.IMAGE_REPO }}:buildcache
+          cache-to: type=ghcr,ref=${{ env.REGISTRY }}/${{ env.IMAGE_REPO }}:buildcache,mode=max
