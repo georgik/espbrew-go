@@ -23,7 +23,7 @@ on:
         required: false
         default: ""
 
-# Push the image (and build cache) to the GitHub Container Registry.
+# Push the image to the GitHub Container Registry.
 permissions:
   contents: read
   packages: write
@@ -68,6 +68,3 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
             ESPBREW_VERSION=${{ inputs.version }}
-          # Reuse the downloaded release binary across builds via ghcr cache.
-          cache-from: type=ghcr,ref=${{ env.REGISTRY }}/${{ env.IMAGE_REPO }}:buildcache
-          cache-to: type=ghcr,ref=${{ env.REGISTRY }}/${{ env.IMAGE_REPO }}:buildcache,mode=max
