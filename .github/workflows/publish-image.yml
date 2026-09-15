@@ -2,7 +2,7 @@ name: Publish Image
 
 # Publish the espbrew cluster container image to the GitHub Container Registry.
 #
-# The image is built from Dockerfile, which downloads the pre-built release
+# The image is built from Containerfile, which downloads the pre-built release
 # binary (espbrew-linux-amd64) — nothing is compiled inside the image. The
 # image is pushed to ghcr.io (GitHub's own registry), so no DockerHub account
 # is required and the image lives next to the code that produced it.
@@ -43,7 +43,7 @@ jobs:
 
       - name: Get image metadata (tags + labels)
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_REPO }}
           tags: |
@@ -59,10 +59,10 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
-          file: Dockerfile
+          file: Containerfile
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}

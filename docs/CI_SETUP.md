@@ -93,7 +93,7 @@ A container image that runs espbrew as a **cluster leader** (web dashboard + API
 is published to the **GitHub Container Registry** (`ghcr.io`) — no DockerHub account needed, and the
 image lives next to the code that produced it.
 
-- **`Dockerfile`** (repo root) — bundles the **pre-built release binary** `espbrew-linux-amd64`
+- **`Containerfile`** (repo root) — bundles the **pre-built release binary** `espbrew-linux-amd64`
   (downloaded from GitHub Releases, **no build inside the image**) and starts it with
   `espbrew cluster --role leader --port 8080` (mirrors `cluster.sh`). Base image is `debian:bookworm-slim`
   because the release binary is glibc-linked (Alpine/musl would not run it).
