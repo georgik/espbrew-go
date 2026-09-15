@@ -37,6 +37,7 @@ type DeviceRecord struct {
 	PSRAMSize       uint32             `json:"psram_size"`
 	PSRAMType       string             `json:"psram_type"`
 	BoardModel      string             `json:"board_model"`
+	Name            string             `json:"name,omitempty"` // Human-readable device label (free-form, updatable)
 	Description     string             `json:"description"`
 	Aliases         []string           `json:"aliases"`
 	Tags            []string           `json:"tags"`
@@ -416,6 +417,7 @@ func (d *DeviceRecord) ToDeviceInfo() *protocol.DeviceInfo {
 	info := &protocol.DeviceInfo{
 		Path:            d.LastPath,
 		DeviceID:        d.DeviceID,
+		Name:            d.Name,
 		ChipType:        d.ChipType,
 		NodeID:          d.NodeID,
 		Status:          "available",

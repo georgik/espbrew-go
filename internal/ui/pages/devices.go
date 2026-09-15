@@ -413,6 +413,10 @@ func editDevice(dev api.Device) {
 	chipRow := createChipTypeSelector(dev.ChipType)
 	content.Append(chipRow)
 
+	// Name (human-readable display name)
+	nameRow := createFormFieldWithID("Name", "device-name-input", dev.Name, false)
+	content.Append(nameRow)
+
 	// Aliases
 	aliasesStr := ""
 	if len(dev.Aliases) > 0 {
@@ -708,6 +712,10 @@ func editUnprobedDevice(dev api.Device) {
 	flashRow.Append(flashHint)
 	content.Append(flashRow)
 
+	// Name (human-readable display name)
+	nameRow := createFormFieldWithID("Name", "device-name-input", dev.Name, false)
+	content.Append(nameRow)
+
 	// Board Model
 	boardRow := createFormFieldWithID("Board Model", "device-board-input", "", false)
 	content.Append(boardRow)
@@ -782,6 +790,7 @@ func saveUnprobedDevice(dev api.Device) {
 	doc := dom.GlobalDocument()
 
 	macInput := doc.QuerySelector("#device-mac-input")
+	nameInput := doc.QuerySelector("#device-name-input")
 	chipTypeSelect := doc.QuerySelector("#device-chip-type")
 	chipRevInput := doc.QuerySelector("#device-chiprev-input")
 	flashInput := doc.QuerySelector("#device-flash-input")
@@ -795,90 +804,29 @@ func saveUnprobedDevice(dev api.Device) {
 		return
 	}
 
-	mac := macInput.GetValue()
-	chipType := chipTypeSelect.GetValue()
-	chipRev := ""
-	if chipRevInput != nil {
-		chipRev = chipRevInput.GetValue()
+	// Build the request body from the parsed form values. All form parsing is
+	// moved into buildUnprobedRequest so the request shape (and every field
+	// it sends) is covered by host-side tests, not only by hand in the WASM.
+	form := unprobedFormValues{
+		Path:     dev.Path,
+		MAC:      macInput.GetValue(),
+		Name:     readOptional(nameInput),
+		ChipType: chipTypeSelect.GetValue(),
+		Aliases:  readOptional(aliasesInput),
+		Tags:     readOptional(tagsInput),
 	}
-	flashSize := ""
-	if flashInput != nil {
-		flashSize = flashInput.GetValue()
-	}
-	boardModel := ""
-	if boardInput != nil {
-		boardModel = boardInput.GetValue()
-	}
-	description := ""
-	if descInput != nil {
-		description = descInput.GetValue()
-	}
-
-	// Get aliases
-	aliasesStr := ""
-	aliases := []string{}
-	if aliasesInput != nil {
-		aliasesStr = aliasesInput.GetValue()
-		if aliasesStr != "" {
-			aliases = splitString(aliasesStr, ",")
-		}
+	form.ChipRev = readOptional(chipRevInput)
+	form.FlashSize = readOptional(flashInput)
+	form.BoardModel = readOptional(boardInput)
+	form.Description = readOptional(descInput)
+	if form.ChipType == "Custom" {
+		form.CustomChip = readOptional(doc.QuerySelector("#device-chip-type-custom"))
 	}
 
-	// Get tags
-	tagsStr := ""
-	tags := []string{}
-	if tagsInput != nil {
-		tagsStr = tagsInput.GetValue()
-		if tagsStr != "" {
-			tags = splitString(tagsStr, ",")
-		}
-	}
-
-	// Handle custom chip type
-	if chipType == "Custom" {
-		customInput := doc.QuerySelector("#device-chip-type-custom")
-		if customInput != nil {
-			customValue := customInput.GetValue()
-			if customValue != "" {
-				chipType = customValue
-			}
-		}
-	}
-
-	// Require chip type
-	if chipType == "" {
-		showError("Chip Type is required")
+	req, err := buildUnprobedRequest(form)
+	if err != nil {
+		showError(err.Error())
 		return
-	}
-
-	// Validate MAC format if provided
-	if mac != "" && !isValidMAC(mac) {
-		showError("Invalid MAC address format. Use AA:BB:CC:DD:EE:FF")
-		return
-	}
-
-	// Create device record via API
-	req := map[string]interface{}{
-		"path":        dev.Path,
-		"mac_address": mac,
-		"chip_type":   chipType,
-		"aliases":     aliases,
-		"tags":        tags,
-	}
-
-	if chipRev != "" {
-		req["chip_rev"] = chipRev
-	}
-	if flashSize != "" {
-		if flashSizeInt := parseFlashSize(flashSize); flashSizeInt > 0 {
-			req["flash_size"] = flashSizeInt
-		}
-	}
-	if boardModel != "" {
-		req["board_model"] = boardModel
-	}
-	if description != "" {
-		req["description"] = description
 	}
 
 	// Use UpdateDevice (PATCH) instead of CreateDevice (POST)
@@ -891,39 +839,6 @@ func saveUnprobedDevice(dev api.Device) {
 			loadDevices() // Refresh the list
 		}
 	})
-}
-
-// isValidMAC validates MAC address format
-func isValidMAC(mac string) bool {
-	parts := splitString(mac, ":")
-	if len(parts) != 6 {
-		return false
-	}
-	for _, part := range parts {
-		if len(part) != 2 {
-			return false
-		}
-		for _, c := range part {
-			if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
-				return false
-			}
-		}
-	}
-	return true
-}
-
-// parseFlashSize parses flash size string to integer
-func parseFlashSize(s string) int {
-	// Try to parse as integer directly
-	size := 0
-	for _, c := range s {
-		if c >= '0' && c <= '9' {
-			size = size*10 + int(c-'0')
-		} else {
-			break
-		}
-	}
-	return size
 }
 
 func createFormField(label, value string, readonly bool) *dom.Element {
@@ -1065,6 +980,7 @@ func createChipTypeSelector(currentChipType string) *dom.Element {
 
 func saveDeviceAttributes(deviceID string) {
 	doc := dom.GlobalDocument()
+	nameInput := doc.QuerySelector("#device-name-input")
 	aliasesInput := doc.QuerySelector("#device-aliases-input")
 	tagsInput := doc.QuerySelector("#device-tags-input")
 	protectedToggle := doc.QuerySelector("#device-protected")
@@ -1076,45 +992,21 @@ func saveDeviceAttributes(deviceID string) {
 		return
 	}
 
-	aliasesStr := aliasesInput.GetValue()
-	aliases := []string{}
-	if aliasesStr != "" {
-		aliases = splitString(aliasesStr, ",")
+	// Build the attribute request from the parsed form values. Separated from
+	// the DOM reads so the exact field set is covered by host-side tests.
+	form := attributeFormValues{
+		Name:      readOptional(nameInput),
+		Aliases:   readOptional(aliasesInput),
+		Tags:      readOptional(tagsInput),
+		Protected: protectedToggle.GetChecked(),
 	}
-
-	tagsStr := ""
-	tags := []string{}
-	if tagsInput != nil {
-		tagsStr = tagsInput.GetValue()
-		if tagsStr != "" {
-			tags = splitString(tagsStr, ",")
-		}
-	}
-
-	protected := protectedToggle.GetChecked()
-
-	// Update request for basic device attributes
-	req := map[string]interface{}{
-		"aliases":   aliases,
-		"tags":      tags,
-		"protected": protected,
-	}
-
-	// Add chip type if changed
 	if chipTypeSelect != nil {
-		chipType := chipTypeSelect.GetValue()
-		if chipType == "Custom" {
-			customInput := doc.QuerySelector("#device-chip-type-custom")
-			if customInput != nil {
-				customValue := customInput.GetValue()
-				if customValue != "" {
-					req["chip_type"] = customValue
-				}
-			}
-		} else if chipType != "" {
-			req["chip_type"] = chipType
+		form.ChipType = chipTypeSelect.GetValue()
+		if form.ChipType == "Custom" {
+			form.CustomChip = readOptional(doc.QuerySelector("#device-chip-type-custom"))
 		}
 	}
+	req := buildAttributeRequest(form)
 
 	// Check if this is a wokwi device with diagram config
 	if diagramTextarea != nil {
@@ -1293,31 +1185,19 @@ func joinStrings(strs []string, sep string) string {
 	return result
 }
 
-func splitString(s, sep string) []string {
-	if s == "" {
-		return []string{}
-	}
-	parts := []string{}
-	current := ""
-	for _, c := range s {
-		if string(c) == sep {
-			if current != "" {
-				parts = append(parts, current)
-				current = ""
-			}
-		} else {
-			current += string(c)
-		}
-	}
-	if current != "" {
-		parts = append(parts, current)
-	}
-	return parts
-}
-
 // Initialize devices page
 func initDevicesPage() {
 	loadDevices()
+}
+
+// readOptional returns the value of an optional form element, or "" when the
+// element is missing/nil (e.g. a field that wasn't rendered in the DOM). It is
+// a js/wasm-only helper because it reads DOM values.
+func readOptional(e *dom.Element) string {
+	if e == nil || e.IsNil() {
+		return ""
+	}
+	return e.GetValue()
 }
 
 // probeDevice attempts to identify an unidentified device

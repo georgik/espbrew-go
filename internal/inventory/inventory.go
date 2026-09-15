@@ -371,6 +371,22 @@ func (i *Inventory) SetBoardModel(deviceID, model string) error {
 	return i.save()
 }
 
+// UpdateName sets the human-readable name for a device.
+// An empty name clears it. Unlike BoardModel/Description, Name is a
+// free-form label owned by the user and must survive re-probes.
+func (i *Inventory) UpdateName(deviceID, name string) error {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+
+	dev, ok := i.devices[deviceID]
+	if !ok {
+		return fmt.Errorf("device not found: %s", deviceID)
+	}
+
+	dev.Name = name
+	return i.save()
+}
+
 // SetDescription sets the description for a device
 func (i *Inventory) SetDescription(deviceID, desc string) error {
 	i.mu.Lock()

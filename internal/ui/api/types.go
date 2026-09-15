@@ -25,6 +25,7 @@ type Device struct {
 	PSRAMType     string                 `json:"psram_type,omitempty"`
 	BoardModel    string                 `json:"board_model,omitempty"`
 	Description   string                 `json:"description,omitempty"`
+	Name          string                 `json:"name,omitempty"`
 	Status        string                 `json:"status"`
 	Aliases       []string               `json:"aliases,omitempty"`
 	Tags          []string               `json:"tags,omitempty"`

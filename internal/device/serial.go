@@ -56,6 +56,10 @@ func (s *Scanner) scanStable() ([]Port, error) {
 			RealPath: resolved, // Actual /dev/ttyUSB path
 		})
 	}
+
+	// Drop ports that are definitely not ESP32 flashing devices (e.g. Bluetooth
+	// serial ports) so they never surface to the user.
+	result = FilterIgnoredPorts(result)
 	return result, nil
 }
 
@@ -73,6 +77,10 @@ func (s *Scanner) scanLegacy() ([]Port, error) {
 			RealPath: p,
 		})
 	}
+
+	// Drop ports that are definitely not ESP32 flashing devices (e.g. macOS's
+	// /dev/cu.Bluetooth-Incoming-Port) so they never surface to the user.
+	result = FilterIgnoredPorts(result)
 	return result, nil
 }
 
@@ -158,6 +166,13 @@ func (s *Scanner) ScanESP() ([]DeviceInfo, error) {
 
 // isLikelyESP heuristically determines if port is likely an ESP device
 func (s *Scanner) isLikelyESP(path string) bool {
+	// Explicit exclusions: ports that are definitely not ESP32 flashing devices
+	// (e.g. Bluetooth-Incoming-Port) are never considered ESP, even if their
+	// path happens to contain a generic "usb"/"COM" token.
+	if IsIgnoredPort(path) {
+		return false
+	}
+
 	espPatterns := []string{
 		"usb", "UART", "SLAB", "CP21", "FTDI", "CH340",
 		"ttyUSB", "ttyACM", "cu.usb", "cu.usbserial",

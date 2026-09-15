@@ -149,6 +149,12 @@ func (pw *pollingWatcher) scan() {
 	// Prefer cu.* devices (call-out, no carrier wait)
 	ports = deduplicatePorts(ports)
 
+	// Never surface ports that are definitely not ESP32 flashing devices
+	// (e.g. macOS's /dev/cu.Bluetooth-Incoming-Port). Scan already filters
+	// these, but we filter again so the watcher is self-documenting and
+	// robust against future changes to the scanner.
+	ports = FilterIgnoredPorts(ports)
+
 	current := make(map[string]Port)
 	for _, p := range ports {
 		current[p.Path] = p

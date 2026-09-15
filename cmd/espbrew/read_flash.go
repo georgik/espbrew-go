@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"codeberg.org/georgik/espbrew-go/internal/cluster"
+	"codeberg.org/georgik/espbrew-go/internal/device"
 	"codeberg.org/georgik/espbrew-go/internal/flash"
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
@@ -128,11 +129,12 @@ func findDevicePort() (string, error) {
 		}
 	}
 
-	// Fall back to cu.* or tty.* but skip known Bluetooth ports
+	// Fall back to cu.* or tty.* but skip ports that are definitely not ESP32
+	// flashing devices (e.g. Bluetooth-Incoming-Port).
 	for _, port := range ports {
 		lower := strings.ToLower(port)
 		if (strings.Contains(lower, "cu.") || strings.Contains(lower, "tty.")) &&
-			!strings.Contains(lower, "bluetooth") {
+			!device.IsIgnoredPort(port) {
 			return port, nil
 		}
 	}

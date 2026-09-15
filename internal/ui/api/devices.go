@@ -88,6 +88,7 @@ func parseDevice(v js.Value) Device {
 		PSRAMType:     ValueToString(v.Get("psram_type")),
 		BoardModel:    ValueToString(v.Get("board_model")),
 		Description:   ValueToString(v.Get("description")),
+		Name:          ValueToString(v.Get("name")),
 		Status:        ValueToString(v.Get("status")),
 		Aliases:       aliases,
 		Tags:          tags,

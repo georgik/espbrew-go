@@ -285,6 +285,9 @@ func (h *APIHandler) handleDevices(w http.ResponseWriter, r *http.Request) {
 		if dev.BoardModel != "" {
 			devMap["board_model"] = dev.BoardModel
 		}
+		if dev.Name != "" {
+			devMap["name"] = dev.Name
+		}
 		if len(dev.Aliases) > 0 {
 			devMap["aliases"] = dev.Aliases
 		}
@@ -974,6 +977,7 @@ func (h *APIHandler) handleDeviceDetail(w http.ResponseWriter, r *http.Request) 
 		"psram_type":  dev.PSRAMType,
 		"board_model": dev.BoardModel,
 		"description": dev.Description,
+		"name":        dev.Name,
 		"first_seen":  dev.FirstSeen.Format(time.RFC3339),
 		"last_seen":   dev.LastSeen.Format(time.RFC3339),
 		"last_path":   dev.LastPath,
@@ -1023,18 +1027,23 @@ func (h *APIHandler) handleDeviceDetail(w http.ResponseWriter, r *http.Request) 
 	respondJSON(w, response)
 }
 
-// handleUpdateDevice updates device tags and aliases
+// handleUpdateDevice updates device attributes (partial/patch semantics).
+// UpdateDeviceRequest updates device attributes (partial/patch semantics).
+// Empty/omitted fields are left untouched; only explicitly-provided fields apply.
 type UpdateDeviceRequest struct {
-	MACAddress  string   `json:"mac_address"`
-	ChipType    string   `json:"chip_type"`
-	ChipRev     string   `json:"chip_rev"`
-	FlashSize   uint32   `json:"flash_size"`
-	PSRAMSize   uint32   `json:"psram_size"`
-	PSRAMType   string   `json:"psram_type"`
-	BoardModel  string   `json:"board_model"`
-	Description string   `json:"description"`
-	Aliases     []string `json:"aliases"`
-	Tags        []string `json:"tags"`
+	MACAddress  string `json:"mac_address"`
+	ChipType    string `json:"chip_type"`
+	ChipRev     string `json:"chip_rev"`
+	FlashSize   uint32 `json:"flash_size"`
+	PSRAMSize   uint32 `json:"psram_size"`
+	PSRAMType   string `json:"psram_type"`
+	BoardModel  string `json:"board_model"`
+	Description string `json:"description"`
+	// Name is a pointer so we can distinguish "omitted" (leave unchanged)
+	// from "provided, possibly empty" (WASM sends empty to clear the name).
+	Name    *string  `json:"name,omitempty"`
+	Aliases []string `json:"aliases"`
+	Tags    []string `json:"tags"`
 }
 
 func (h *APIHandler) handleUpdateDevice(w http.ResponseWriter, r *http.Request) {
@@ -1092,7 +1101,6 @@ func (h *APIHandler) handleUpdateDevice(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// Update device fields (only update non-empty values)
 	updated := &persistence.DeviceRecord{
 		DeviceID:     dev.DeviceID,
 		MACAddress:   dev.MACAddress,
@@ -1103,6 +1111,7 @@ func (h *APIHandler) handleUpdateDevice(w http.ResponseWriter, r *http.Request) 
 		PSRAMType:    dev.PSRAMType,
 		BoardModel:   dev.BoardModel,
 		Description:  dev.Description,
+		Name:         dev.Name,
 		Aliases:      dev.Aliases,
 		Tags:         dev.Tags,
 		FirstSeen:    dev.FirstSeen,
@@ -1118,31 +1127,11 @@ func (h *APIHandler) handleUpdateDevice(w http.ResponseWriter, r *http.Request) 
 		Protected:    dev.Protected,
 	}
 
-	// Update fields from request if provided
+	// Apply the provided request fields first so that the unprobed-device ID
+	// generation below can rely on a MAC/serial supplied in the body rather
+	// than only one already present on the (in-memory) device record.
 	if req.MACAddress != "" {
 		updated.MACAddress = req.MACAddress
-	}
-
-	// Handle unprobed device: generate DeviceID if empty
-	// This can happen when updating a device that exists only in memory (discovered but not probed)
-	isUnprobedDevice := (updated.DeviceID == "")
-	if isUnprobedDevice {
-		// Generate device ID from MAC if provided
-		if updated.MACAddress != "" {
-			updated.DeviceID = "esp-" + updated.MACAddress
-		} else if req.ChipType != "" {
-			// Generate manual ID from chip type
-			var err error
-			updated.DeviceID, err = h.store.GenerateManualID(req.ChipType)
-			if err != nil {
-				respondError(w, http.StatusInternalServerError, "Failed to generate device ID")
-				return
-			}
-		} else {
-			respondError(w, http.StatusBadRequest, "Cannot save unprobed device without MAC or chip_type")
-			return
-		}
-		log.Debug().Str("path", deviceID).Str("generated_device_id", updated.DeviceID).Msg("Generated ID for unprobed device")
 	}
 	if req.ChipType != "" {
 		updated.ChipType = req.ChipType
@@ -1165,11 +1154,39 @@ func (h *APIHandler) handleUpdateDevice(w http.ResponseWriter, r *http.Request) 
 	if req.Description != "" {
 		updated.Description = req.Description
 	}
+	// Name uses pointer semantics: a nil pointer leaves the name unchanged,
+	// while a non-nil pointer (even pointing at "") sets/clears it.
+	if req.Name != nil {
+		updated.Name = *req.Name
+	}
 	if req.Aliases != nil {
 		updated.Aliases = req.Aliases
 	}
 	if req.Tags != nil {
 		updated.Tags = req.Tags
+	}
+
+	// Handle unprobed device: generate DeviceID if empty.
+	// This can happen when updating a device that exists only in memory
+	// (discovered but not probed).
+	isUnprobedDevice := (updated.DeviceID == "")
+	if isUnprobedDevice {
+		// Generate device ID from MAC if provided
+		if updated.MACAddress != "" {
+			updated.DeviceID = "esp-" + updated.MACAddress
+		} else if req.ChipType != "" {
+			// Generate manual ID from chip type
+			var err error
+			updated.DeviceID, err = h.store.GenerateManualID(req.ChipType)
+			if err != nil {
+				respondError(w, http.StatusInternalServerError, "Failed to generate device ID")
+				return
+			}
+		} else {
+			respondError(w, http.StatusBadRequest, "Cannot save unprobed device without MAC or chip_type")
+			return
+		}
+		log.Debug().Str("path", deviceID).Str("generated_device_id", updated.DeviceID).Msg("Generated ID for unprobed device")
 	}
 
 	if err := h.store.SaveDevice(updated); err != nil {
@@ -1277,6 +1294,7 @@ type AddDeviceRequest struct {
 	PSRAMType   string   `json:"psram_type"`
 	BoardModel  string   `json:"board_model"`
 	Description string   `json:"description"`
+	Name        string   `json:"name,omitempty"`
 	Aliases     []string `json:"aliases"`
 	Tags        []string `json:"tags"`
 }
@@ -1326,6 +1344,7 @@ func (h *APIHandler) handleAddDevice(w http.ResponseWriter, r *http.Request) {
 		PSRAMType:   req.PSRAMType,
 		BoardModel:  req.BoardModel,
 		Description: req.Description,
+		Name:        req.Name,
 		Aliases:     req.Aliases,
 		Tags:        req.Tags,
 		FirstSeen:   now,

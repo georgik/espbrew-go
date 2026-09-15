@@ -32,6 +32,7 @@ type DeviceInventory struct {
 	// User-editable properties
 	Aliases     []string `json:"aliases"`     // Custom names for CI jobs
 	Tags        []string `json:"tags"`        // User-defined classification
+	Name        string   `json:"name"`        // Human-readable device label (free-form)
 	BoardModel  string   `json:"board_model"` // e.g., "ESP32-S3-BOX-3"
 	Description string   `json:"description"` // Free-form notes
 

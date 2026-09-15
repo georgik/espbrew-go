@@ -49,18 +49,21 @@ var deviceAliasCmd = &cobra.Command{
 	Use:   "alias <device-id>",
 	Short: "Manage device aliases",
 	Args:  cobra.ExactArgs(1),
+	RunE:  runDeviceAlias,
 }
 
 var deviceTagCmd = &cobra.Command{
 	Use:   "tag <device-id>",
 	Short: "Manage device tags",
 	Args:  cobra.ExactArgs(1),
+	RunE:  runDeviceTag,
 }
 
 var deviceSetCmd = &cobra.Command{
 	Use:   "set <device-id>",
 	Short: "Set device properties",
 	Args:  cobra.ExactArgs(1),
+	RunE:  runDeviceSet,
 }
 
 type deviceFlags struct {
@@ -71,6 +74,7 @@ type deviceFlags struct {
 	tagClear    bool
 	boardModel  string
 	description string
+	name        string
 }
 
 var deviceOpts deviceFlags
@@ -101,6 +105,7 @@ func init() {
 	// Set flags
 	deviceSetCmd.Flags().StringVar(&deviceOpts.boardModel, "model", "", "Set board model")
 	deviceSetCmd.Flags().StringVar(&deviceOpts.description, "description", "", "Set description")
+	deviceSetCmd.Flags().StringVar(&deviceOpts.name, "name", "", "Set human-readable device name (use empty to clear)")
 }
 
 func runDeviceList(cmd *cobra.Command, args []string) error {
@@ -120,7 +125,7 @@ func runDeviceList(cmd *cobra.Command, args []string) error {
 	}
 
 	tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "DEVICE ID\tCHIP\tREVISION\tPSRAM\tFLASH\tALIASES\tTAGS")
+	fmt.Fprintln(tw, "DEVICE ID\tNAME\tCHIP\tREVISION\tPSRAM\tFLASH\tALIASES\tTAGS")
 	for _, dev := range devices {
 		psram := formatBytes(int64(dev.PSRAMSize))
 		if dev.PSRAMSize == 0 {
@@ -132,8 +137,8 @@ func runDeviceList(cmd *cobra.Command, args []string) error {
 		}
 		aliases := joinLimit(dev.Aliases, ",", 2)
 		tags := joinLimit(dev.Tags, ",", 3)
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
-			dev.DeviceID, dev.ChipType, dev.ChipRev, psram, flash, aliases, tags)
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			dev.DeviceID, nameOrDefault(dev.Name), dev.ChipType, dev.ChipRev, psram, flash, aliases, tags)
 	}
 	tw.Flush()
 
@@ -197,6 +202,9 @@ func runDeviceShow(cmd *cobra.Command, args []string) error {
 	fmt.Println()
 	if dev.BoardModel != "" {
 		fmt.Printf("Board Model:  %s\n", dev.BoardModel)
+	}
+	if dev.Name != "" {
+		fmt.Printf("Name:         %s\n", dev.Name)
 	}
 	if dev.Description != "" {
 		fmt.Printf("Description:  %s\n", dev.Description)
@@ -434,6 +442,15 @@ func runDeviceSet(cmd *cobra.Command, args []string) error {
 		log.Info().Str("device_id", dev.DeviceID).Msg("Description set")
 	}
 
+	// Name is set via the flag only when explicitly provided, so `--name ""`
+	// can be used to clear a previously stored name.
+	if cmd.Flags().Changed("name") {
+		if err := inv.UpdateName(dev.DeviceID, deviceOpts.name); err != nil {
+			return err
+		}
+		log.Info().Str("device_id", dev.DeviceID).Str("name", deviceOpts.name).Msg("Device name set")
+	}
+
 	return nil
 }
 
@@ -462,6 +479,15 @@ func findDevice(inv *inventory.Inventory, identifier string) (*inventory.DeviceI
 	}
 
 	return nil, fmt.Errorf("device not found: %s", identifier)
+}
+
+// nameOrDefault returns the given device name, or "-" when empty so it renders
+// cleanly in tabular output.
+func nameOrDefault(name string) string {
+	if name == "" {
+		return "-"
+	}
+	return name
 }
 
 func joinLimit(items []string, sep string, limit int) string {

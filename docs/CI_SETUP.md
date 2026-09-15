@@ -1,47 +1,40 @@
 # CI/CD Setup Summary
 
-## Overview
+ESPBrew-Go runs **GitHub Actions** only (Woodpecker/Codeberg was a removed experiment).
+Everything — tests, multi-platform release builds, and the container image — lives under
+`.github/workflows/`.
 
-ESPBrew-Go now has CI/CD configured on both Codeberg (primary) and GitHub (mirror).
+## Workflows (`.github/workflows/`)
 
-## Platforms Configured
-
-### Codeberg (Primary Repository)
-- **Platform**: Woodpecker CI
-- **Location**: `.woodpecker/`
-- **Pipelines**:
-  - `test.yml` - Runs on push/PR to main/develop
-  - `release.yml` - Runs on version tags (v*)
-
-### GitHub (Mirror Repository)
-- **Platform**: GitHub Actions
-- **Location**: `.github/workflows/`
-- **Workflows**:
-  - `ci.yml` - Tests on Linux, macOS, Windows
-  - `release.yml` - Multi-platform builds on tags
+| File | Trigger | What it does |
+|------|---------|--------------|
+| `ci.yml` | push to `main`/`develop`, PRs | Tests on Linux/macOS/Windows, WASM build + size check, lint (`go vet`) |
+| `release.yml` | version tags `v*` | Builds all platforms in parallel (linux amd64/arm64, darwin arm64, windows), uploads artifacts, creates the GitHub Release with SHA256 checksums |
+| `publish-image.yml` | **manual** (`workflow_dispatch`) | Bundles the pre-built release binary into a container image and pushes it to `ghcr.io` |
+| `demo.yml` | **manual** (`workflow_dispatch`) | Builds the WASM demo and deploys it to GitHub Pages |
+| `dependabot.yml` | — | Weekly dependency updates (Go modules + GitHub Actions) |
 
 ## Configuration Files
 
 ```
-.woodpecker/
-├── test.yml          # Codeberg test pipeline
-└── release.yml       # Codeberg release pipeline
-
 .github/
 ├── workflows/
-│   ├── ci.yml        # GitHub Actions CI
-│   └── release.yml   # GitHub Actions release
-└── dependabot.yml    # Dependency updates
+│   ├── ci.yml            # GitHub Actions CI (tests + lint)
+│   ├── release.yml       # GitHub Actions release (multi-platform binaries)
+│   ├── publish-image.yml # Container image -> ghcr.io (manual)
+│   └── demo.yml          # WASM demo -> GitHub Pages (manual)
+└── dependabot.yml        # Dependency updates
 
 scripts/
-├── build-release.sh   # Manual release build script
-└── create-release.sh  # Release creation helper
+├── build-release.sh      # Manual release build script
+└── create-release.sh     # Release creation helper
 ```
 
 ## Build Limitations
 
 ### V4L2 Camera Support
-The `github.com/vladimirvivien/go4vl` library requires CGO and Linux-specific headers. This affects cross-compilation:
+The `github.com/vladimirvivien/go4vl` library requires CGO and Linux-specific headers. This affects
+cross-compilation:
 
 - **Linux amd64**: Full camera support (CGO enabled)
 - **Linux arm64/arm**: No camera support (CGO disabled)
@@ -50,77 +43,79 @@ The `github.com/vladimirvivien/go4vl` library requires CGO and Linux-specific he
 ### Build Matrix
 
 | Platform | Architecture | Camera Support | Built By |
-|----------|-------------|----------------|----------|
-| Linux | amd64 | Full | Codeberg + GitHub |
-| Linux | arm64 | None | GitHub |
+|----------|--------------|----------------|----------|
+| Linux | amd64 | Full | GitHub (ubuntu-latest) |
+| Linux | arm64 | None | GitHub (ubuntu-24.04-arm, free native runner) |
 | Linux | arm | None | GitHub |
 | macOS | amd64 | None | GitHub |
 | macOS | arm64 | None | GitHub |
 | Windows | amd64 | None | GitHub |
 
+> The native `ubuntu-24.04-arm` runner is required for `linux/arm64` because the Linux build pulls in
+> `go4vl` (CGO + `linux/videodev2.h`); plain cross-compilation from amd64 fails without an aarch64
+> toolchain.
+
 ## Release Process
 
-### Option 1: Using GitHub Actions (Recommended)
-1. Push tag to GitHub: `git push gh v1.0.0`
-2. GitHub Actions builds all platforms
-3. Release created automatically with checksums
+### Option 1: GitHub Actions (Recommended)
+1. Push a tag to GitHub: `git tag v1.0.0 && git push origin v1.0.0`
+2. The `release.yml` workflow builds all platforms
+3. The GitHub Release is created automatically with all binaries + checksums
 
-### Option 2: Using Codeberg CI
-1. Push tag to Codeberg: `git push origin v1.0.0`
-2. Woodpecker builds Linux binaries
-3. Release created on Codeberg
-
-### Option 3: Manual Build
+### Option 2: Manual Build
 ```bash
-# Build for current platform
+# Build for current platform (+ other Linux archs if on linux/amd64)
 ./scripts/build-release.sh
 
 # Create and push release tag
 ./scripts/create-release.sh v1.0.0 "Release v1.0.0"
 ```
 
-## CI Pipeline Details
+## Pipeline Details
 
-### Codeberg Test Pipeline (`.woodpecker/test.yml`)
-- Runs on: Pull requests, pushes to main/develop
-- Steps:
-  - Format check
-  - Go vet
-  - Tests with race detector
-  - WASM build verification
-  - golangci-lint
+### CI (`.github/workflows/ci.yml`)
+- Runs on: Pull requests, pushes to `main`/`develop`
+- Tests on: Linux, macOS, Windows (with `-race`)
+- WASM build + 5 MB size warning
+- Lint: `go vet` (golangci-lint is pending Go 1.26 support)
 
-### Codeberg Release Pipeline (`.woodpecker/release.yml`)
-- Runs on: Version tags (v*)
-- Builds:
-  - Linux amd64 (with CGO)
-  - Linux arm64/arm (without CGO)
-  - WASM UI
-- Creates release on Codeberg with SHA256 checksums
-
-### GitHub Actions CI (`.github/workflows/ci.yml`)
-- Runs on: Pull requests, pushes to main/develop
-- Tests on: Linux, macOS, Windows
-- Includes: WASM size check
-
-### GitHub Actions Release (`.github/workflows/release.yml`)
-- Runs on: Version tags (v*)
-- Builds all platforms in parallel
-- Creates GitHub release with:
+### Release (`.github/workflows/release.yml`)
+- Runs on: Version tags (`v*`)
+- Builds all platforms in parallel via a matrix
+- Creates the GitHub Release with:
   - All binaries
   - SHA256 checksums
   - Auto-generated release notes
 
-## Enabling CI
+### Container Image — `ghcr.io` (`.github/workflows/publish-image.yml`)
 
-### Codeberg Woodpecker CI
-1. Go to: https://codeberg.org/georgik/espbrew-go/settings
-2. Enable "Woodpecker CI"
-3. Configure webhook if needed
+A container image that runs espbrew as a **cluster leader** (web dashboard + API on port **8080**)
+is published to the **GitHub Container Registry** (`ghcr.io`) — no DockerHub account needed, and the
+image lives next to the code that produced it.
 
-### GitHub Actions
-1. Already enabled on GitHub mirror
-2. No configuration needed
+- **`Dockerfile`** (repo root) — bundles the **pre-built release binary** `espbrew-linux-amd64`
+  (downloaded from GitHub Releases, **no build inside the image**) and starts it with
+  `espbrew cluster --role leader --port 8080` (mirrors `cluster.sh`). Base image is `debian:bookworm-slim`
+  because the release binary is glibc-linked (Alpine/musl would not run it).
+- **`.github/workflows/publish-image.yml`** — triggered **manually** (`workflow_dispatch`). Bundles a
+  configurable release tag (default `v0.3.1`), builds the image with `docker/build-push-action`, and
+  pushes it to `ghcr.io/<owner>/<repo>`.
+
+#### Use
+
+1. Go to `<repo> -> Actions -> Publish Image -> Run workflow`.
+2. Set **espbrew release tag to bundle** (e.g. `v0.3.1`) and optionally an extra image tag.
+3. After it finishes, pull and run:
+
+   ```bash
+   docker login ghcr.io            # your GitHub credentials
+   docker pull ghcr.io/<owner>/<repo>:latest
+   docker run --rm -p 8080:8080 ghcr.io/<owner>/<repo>:latest
+   # -> espbrew cluster running, dashboard at http://localhost:8080
+   ```
+
+   To bundle a different release, change the **version** input (or rebuild with
+   `docker build --build-arg ESPBREW_VERSION=vX.Y.Z .`).
 
 ## Dependency Updates
 
@@ -132,57 +127,36 @@ Dependabot is configured to:
 
 ## Testing CI
 
-### Test Codeberg CI
 ```bash
-# Create a test branch
+# Create a test branch, make a trivial change, commit and push
 git checkout -b test/ci-setup
-
-# Make a trivial change
 echo "# CI test" >> README.md
-
-# Commit and push
 git add README.md
 git commit -m "test: CI setup verification"
 git push origin test/ci-setup
 
-# Create PR on Codeberg and check Woodpecker status
-```
-
-### Test GitHub CI
-```bash
-# Push to GitHub mirror
-git push gh test/ci-setup
-
-# Create PR on GitHub and check Actions status
+# Open a PR on GitHub and check the Actions status
 ```
 
 ### Test Release
+
 ```bash
-# Create a test tag (will be deleted later)
+# Create a test tag (deleted afterwards)
 git tag v0.0.0-test
 git push origin v0.0.0-test
-git push gh v0.0.0-test
 
-# Check releases on both platforms
-# Codeberg: https://codeberg.org/georgik/espbrew-go/releases
-# GitHub: https://github.com/georgik/espbrew-go/releases
+# Check the GitHub Release that gets created
+# https://github.com/georgik/espbrew-go/releases
 
-# Delete test tag
+# Delete the test tag
 git tag -d v0.0.0-test
 git push origin :refs/tags/v0.0.0-test
-git push gh :refs/tags/v0.0.0-test
 ```
 
-## Next Steps
-
-1. Enable Woodpecker CI in Codeberg repository settings
-2. Test with a dummy PR/commit
-3. Test release flow with test tag
-4. Add CI status badges to README
-
-## Badge Markdown
+## Status Badges
 
 ```markdown
-[![CI](https://ci.codeberg.org/api/badges/georgik/espbrew-go/status.svg)](https://ci.codeberg.org/georgik/espbrew-go)
 [![GitHub CI](https://github.com/georgik/espbrew-go/actions/workflows/ci.yml/badge.svg)](https://github.com/georgik/espbrew-go/actions/workflows/ci.yml)
+[![Release](https://github.com/georgik/espbrew-go/actions/workflows/release.yml/badge.svg)](https://github.com/georgik/espbrew-go/actions/workflows/release.yml)
+[![Publish Image](https://github.com/georgik/espbrew-go/actions/workflows/publish-image.yml/badge.svg)](https://github.com/georgik/espbrew-go/actions/workflows/publish-image.yml)
 ```
