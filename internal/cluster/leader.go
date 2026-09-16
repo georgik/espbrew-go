@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -39,6 +41,13 @@ type LeaderNode struct {
 	modeTimer   *time.Timer
 	modeCancel  context.CancelFunc
 	staticPeers *StaticPeerRegistry
+
+	// deviceConfigs is the working copy of the espbrew.toml mapping. It is the
+	// explicit source of truth for device identity (auto-discovery stays off);
+	// it is only mutated by AddDevice/RemoveDevice, never by the watcher.
+	deviceConfigs []config.DeviceConfig
+	// configPath is the espbrew.toml file the mapping is loaded from / written to.
+	configPath string
 }
 
 type LeaderConfig struct {
@@ -52,6 +61,17 @@ type LeaderConfig struct {
 	DiscoveryDuration  time.Duration             // How long to stay in discovery mode (default 5s)
 	StaticPeers        []config.StaticPeerConfig // Static peer configuration
 	InitialMode        string                    // Starting mode (default "discovery")
+	Devices            []config.DeviceConfig     // Explicit espbrew.toml device mapping
+	ConfigPath         string                    // espbrew.toml file (load + write target)
+}
+
+func (c *LeaderConfig) DeviceByPath(path string) *config.DeviceConfig {
+	for i := range c.Devices {
+		if c.Devices[i].Path == path {
+			return &c.Devices[i]
+		}
+	}
+	return nil
 }
 
 func NewLeaderNode(id string, cfg *LeaderConfig, store *persistence.Store) *LeaderNode {
@@ -60,14 +80,19 @@ func NewLeaderNode(id string, cfg *LeaderConfig, store *persistence.Store) *Lead
 		initialMode = protocol.ModeOperational
 	}
 
+	deviceConfigs := make([]config.DeviceConfig, len(cfg.Devices))
+	copy(deviceConfigs, cfg.Devices)
+
 	return &LeaderNode{
-		id:      id,
-		config:  cfg,
-		state:   NewClusterState(),
-		queue:   NewJobQueue(),
-		devices: NewDeviceRegistry(),
-		store:   store,
-		mode:    initialMode,
+		id:            id,
+		config:        cfg,
+		state:         NewClusterState(),
+		queue:         NewJobQueue(),
+		devices:       NewDeviceRegistry(),
+		store:         store,
+		mode:          initialMode,
+		deviceConfigs: deviceConfigs,
+		configPath:    cfg.ConfigPath,
 	}
 }
 
@@ -121,6 +146,9 @@ func (l *LeaderNode) Start(ctx context.Context) error {
 
 	// Load persisted devices from store
 	l.loadPersistedDevices()
+
+	// Report espbrew.toml device mapping presence (auto-discovery stays off)
+	l.logConfiguredDevices()
 
 	// Register virtual devices
 	l.registerVirtualDevices()
@@ -595,7 +623,11 @@ func (l *LeaderNode) handleDeviceEvent(event device.DeviceEvent) {
 			return
 		}
 
-		// Truly new device - create fresh entry
+		// Truly new device - create fresh entry. Auto-discovery is disabled:
+		// we never probe a port on connect (that blocked the port and collided
+		// with flashing). Identity comes from the explicit espbrew.toml mapping
+		// when present; otherwise the port is listed as available and unconfigured
+		// so it can be probed or configured on demand.
 		dev := &protocol.DeviceInfo{
 			Path:         event.Path,
 			RealPath:     event.RealPath,
@@ -605,17 +637,73 @@ func (l *LeaderNode) handleDeviceEvent(event device.DeviceEvent) {
 			NodeID:       l.id,
 			Status:       "available",
 		}
+		l.applyDeviceConfig(dev)
 		l.state.Devices[event.Path] = dev
 		l.devices.Register(event.Path)
 
-		// Quick probe immediately for new devices
-		l.wg.Add(1)
-		go l.probeDeviceQuickAsync(dev)
-		log.Info().Str("path", event.Path).Msg("Device added on leader")
+		if dev.DeviceID == "" {
+			log.Info().Str("path", event.Path).Msg(
+				"Device present, unconfigured - run 'espbrew device probe <port>' or add it to espbrew.toml")
+		} else {
+			log.Info().Str("path", event.Path).Str("device_id", dev.DeviceID).
+				Msg("Device added on leader")
+		}
 
 	case device.DeviceRemoved:
 		delete(l.state.Devices, event.Path)
 		log.Info().Str("path", event.Path).Msg("Device removed from leader")
+	}
+}
+
+// applyDeviceConfig stamps the identity from espbrew.toml onto a freshly
+// detected port. Because the mapping is authoritative, no probing is required:
+// the port simply adopts the configured id/chip, keeping discovery
+// non-blocking and deterministic across restarts.
+func (l *LeaderNode) applyDeviceConfig(dev *protocol.DeviceInfo) {
+	if dev == nil {
+		return
+	}
+
+	cfg := l.config.DeviceByPath(dev.Path)
+	if cfg == nil {
+		return
+	}
+
+	if cfg.ID != "" {
+		dev.DeviceID = cfg.ID
+	}
+	if cfg.ChipType != "" {
+		dev.ChipType = cfg.ChipType
+	}
+	if cfg.Alias != "" {
+		if dev.Status == "available" {
+			log.Debug().Str("path", dev.Path).Str("alias", cfg.Alias).
+				Msg("Applied configured device alias")
+		}
+	}
+}
+
+// logConfiguredDevices reports, at startup, whether each espbrew.toml device is
+// currently present on the host. Absent ports are visible to the operator
+// without being auto-probed or resurrected from hidden persistence.
+func (l *LeaderNode) logConfiguredDevices() {
+	if len(l.config.Devices) == 0 {
+		return
+	}
+
+	for _, cfg := range l.config.Devices {
+		if cfg.Path == "" {
+			continue
+		}
+
+		if _, err := os.Stat(cfg.Path); err != nil {
+			log.Warn().Str("path", cfg.Path).Str("id", cfg.ID).
+				Msg("Configured device not present on host - it will be registered when connected")
+			continue
+		}
+
+		log.Info().Str("path", cfg.Path).Str("id", cfg.ID).
+			Msg("Configured device present - registered from espbrew.toml")
 	}
 }
 
@@ -833,6 +921,186 @@ func (l *LeaderNode) ProbeDevice(path string) (*protocol.DeviceInfo, error) {
 		Msg("Manual probe successful")
 
 	return dev, nil
+}
+
+// DiscoveredDevice is the result of identifying a single port during a
+// discovery pass.
+type DiscoveredDevice struct {
+	Path     string `json:"path"`
+	DeviceID string `json:"device_id"`
+	Chip     string `json:"chip"`
+	MAC      string `json:"mac"`
+}
+
+// Discover runs one bounded, non-blocking discovery pass over the given ports.
+// It is invoked on demand (CLI/UI) rather than on every device connection, so
+// the serial port is never contended with flashing. Each port is probed with a
+// strict timeout and the whole pass is bounded by timeout, so a board that
+// never logs cannot hold the port. When paths is empty, all currently known
+// unconfigured ports are scanned.
+func (l *LeaderNode) Discover(timeout time.Duration, paths ...string) []DiscoveredDevice {
+	if timeout <= 0 {
+		timeout = 5 * time.Second
+	}
+
+	// Collect the ports to scan.
+	targets := append([]string(nil), paths...)
+	if len(targets) == 0 {
+		l.mu.RLock()
+		targets = make([]string, 0, len(l.state.Devices))
+		for p, d := range l.state.Devices {
+			if d.DeviceID == "" { // only scan unconfigured ports
+				targets = append(targets, p)
+			}
+		}
+		l.mu.RUnlock()
+	}
+	if len(targets) == 0 {
+		return nil
+	}
+
+	// Bound the whole pass by timeout. Even if some ports finish later, the
+	// caller stops collecting once this fires.
+	ctx, cancel := context.WithTimeout(l.ctx, timeout)
+	defer cancel()
+
+	type result struct {
+		path     string
+		identity *inventory.DeviceIdentity
+		err      error
+	}
+	results := make(chan result, len(targets))
+
+	for _, path := range targets {
+		go func(p string) {
+			identity, err := inventory.ProbeFromBootLogWithTimeout(p, timeout)
+			results <- result{path: p, identity: identity, err: err}
+		}(path)
+	}
+
+	discovered := []DiscoveredDevice{}
+	done := make(chan struct{})
+	go func() {
+		for i := 0; i < len(targets); i++ {
+			r := <-results
+			if r.err != nil {
+				log.Debug().Str("path", r.path).Err(r.err).Msg("Discovery: port not identified")
+				continue
+			}
+			discovered = append(discovered, DiscoveredDevice{
+				Path:     r.path,
+				DeviceID: rom.DeviceID(r.identity.MAC),
+				Chip:     r.identity.Chip,
+				MAC:      r.identity.MAC,
+			})
+		}
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-ctx.Done():
+	}
+
+	if len(discovered) > 0 {
+		log.Info().Int("count", len(discovered)).Msg("Discovery complete")
+	}
+	return discovered
+}
+
+// DiscoverAndSave runs a discovery pass, then (when save is true) persists each
+// discovered port into espbrew.toml as an explicit mapping. This is the on-demand
+// bootstrap path: discover unconfigured ports, turn discovery back off, and record
+// the ones the operator wants.
+func (l *LeaderNode) DiscoverAndSave(timeout time.Duration, save bool, paths ...string) []DiscoveredDevice {
+	discovered := l.Discover(timeout, paths...)
+
+	if save {
+		for i := range discovered {
+			cfg := config.DeviceConfig{
+				Path:     discovered[i].Path,
+				ID:       discovered[i].DeviceID,
+				ChipType: discovered[i].Chip,
+			}
+			if _, err := l.AddDevice(cfg); err != nil {
+				log.Warn().Err(err).Str("path", discovered[i].Path).Msg("Discovery: failed to persist device")
+			} else {
+				log.Info().Str("path", discovered[i].Path).Str("device_id", cfg.ID).
+					Msg("Device added to espbrew.toml")
+			}
+		}
+	}
+
+	return discovered
+}
+
+// AddDevice writes an explicit device mapping to espbrew.toml and, if the port
+// is currently present, stamps it onto cluster state. It is the canonical way
+// to register a discovered or manually-chosen device so the identity survives
+// restarts via the config file rather than hidden persistence.
+func (l *LeaderNode) AddDevice(cfg config.DeviceConfig) (string, error) {
+	if cfg.Path == "" {
+		return "", fmt.Errorf("device path is required")
+	}
+
+	if cfg.ID == "" {
+		cfg.ID = "unprobed-" + filepath.Base(cfg.Path)
+	}
+
+	l.mu.Lock()
+	devices := make([]config.DeviceConfig, len(l.deviceConfigs))
+	copy(devices, l.deviceConfigs)
+	for i := range devices {
+		if devices[i].Path == cfg.Path {
+			devices[i] = cfg
+			l.mu.Unlock()
+			l.applyDeviceState(cfg.Path)
+			return cfg.ID, config.WriteDevices(l.configPath, devices)
+		}
+	}
+	devices = append(devices, cfg)
+	l.mu.Unlock()
+
+	l.applyDeviceState(cfg.Path)
+	return cfg.ID, config.WriteDevices(l.configPath, devices)
+}
+
+// RemoveDevice drops a device mapping from espbrew.toml (by path, alias, or id)
+// and clears it from cluster state.
+func (l *LeaderNode) RemoveDevice(match string) error {
+	if match == "" {
+		return fmt.Errorf("match (path, alias, or id) is required")
+	}
+
+	l.mu.Lock()
+	idx := -1
+	for i := range l.deviceConfigs {
+		d := l.deviceConfigs[i]
+		if d.Path == match || d.Alias == match || d.ID == match {
+			idx = i
+			break
+		}
+	}
+	if idx == -1 {
+		l.mu.Unlock()
+		return fmt.Errorf("no configured device matching %q", match)
+	}
+	devices := make([]config.DeviceConfig, len(l.deviceConfigs))
+	copy(devices, l.deviceConfigs)
+	devices = append(devices[:idx], devices[idx+1:]...)
+	l.mu.Unlock()
+
+	return config.WriteDevices(l.configPath, devices)
+}
+
+// applyDeviceState stamps the espbrew.toml mapping onto a currently present port,
+// if any.
+func (l *LeaderNode) applyDeviceState(path string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if dev, ok := l.state.Devices[path]; ok {
+		l.applyDeviceConfig(dev)
+	}
 }
 
 func (l *LeaderNode) registerVirtualDevices() {

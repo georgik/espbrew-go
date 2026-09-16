@@ -4,8 +4,10 @@ import (
 	"fmt"
 	"os"
 	"text/tabwriter"
+	"time"
 
 	"codeberg.org/georgik/espbrew-go/internal/cluster"
+	"codeberg.org/georgik/espbrew-go/internal/config"
 	"codeberg.org/georgik/espbrew-go/internal/inventory"
 	"codeberg.org/georgik/espbrew-go/internal/inventory/rom"
 	"github.com/rs/zerolog/log"
@@ -66,6 +68,42 @@ var deviceSetCmd = &cobra.Command{
 	RunE:  runDeviceSet,
 }
 
+var deviceDiscoverCmd = &cobra.Command{
+	Use:   "discover [port...]",
+	Short: "Discover devices on unconfigured ports (non-blocking, on-demand)",
+	Long: `Discover devices on unconfigured ports. Each port is probed with a strict
+timeout and the whole pass is bounded, so a board that never logs cannot hold
+the port. Discovery is never run automatically on device connection.`,
+	Args: cobra.ArbitraryArgs,
+	RunE: runDeviceDiscover,
+}
+
+var deviceAddCmd = &cobra.Command{
+	Use:   "add <port>",
+	Short: "Add a device mapping (espbrew.toml on the leader)",
+	Args:  cobra.ExactArgs(1),
+	RunE:  runDeviceAdd,
+}
+
+var deviceRemoveCmd = &cobra.Command{
+	Use:   "remove <path|alias|id>",
+	Short: "Remove a device mapping (espbrew.toml on the leader)",
+	Args:  cobra.ExactArgs(1),
+	RunE:  runDeviceRemove,
+}
+
+var addOpts struct {
+	id          string
+	alias       string
+	chip        string
+	description string
+}
+
+var discoverOpts struct {
+	timeout time.Duration
+	save    bool
+}
+
 type deviceFlags struct {
 	aliasAdd    []string
 	aliasRemove []string
@@ -89,9 +127,22 @@ func init() {
 	deviceCmd.AddCommand(deviceAliasCmd)
 	deviceCmd.AddCommand(deviceTagCmd)
 	deviceCmd.AddCommand(deviceSetCmd)
+	deviceCmd.AddCommand(deviceDiscoverCmd)
+	deviceCmd.AddCommand(deviceAddCmd)
+	deviceCmd.AddCommand(deviceRemoveCmd)
 
 	// Cluster flag (global for device command)
 	deviceCmd.PersistentFlags().StringVar(&deviceClusterAddr, "cluster", "", "Cluster URL (e.g., localhost:8080)")
+
+	// Discover flags
+	deviceDiscoverCmd.Flags().DurationVar(&discoverOpts.timeout, "timeout", 5*time.Second, "Per-port probe timeout")
+	deviceDiscoverCmd.Flags().BoolVar(&discoverOpts.save, "save", false, "Record discovered devices to espbrew.toml on the leader")
+
+	// Add flags
+	deviceAddCmd.Flags().StringVar(&addOpts.id, "id", "", "Device ID (defaults to MAC-derived ID)")
+	deviceAddCmd.Flags().StringVar(&addOpts.alias, "alias", "", "Alias for the device")
+	deviceAddCmd.Flags().StringVar(&addOpts.chip, "chip", "", "Chip type (e.g., esp32s3)")
+	deviceAddCmd.Flags().StringVar(&addOpts.description, "description", "", "Human-readable description")
 
 	// Alias flags
 	deviceAliasCmd.Flags().StringSliceVar(&deviceOpts.aliasAdd, "add", nil, "Add alias")
@@ -323,6 +374,131 @@ func runDeviceDeleteCluster(clusterAddr, deviceID string) error {
 	}
 
 	log.Info().Str("device_id", deviceID).Msg("Device deleted from cluster")
+	return nil
+}
+
+func runDeviceDiscover(cmd *cobra.Command, args []string) error {
+	if deviceClusterAddr != "" {
+		discovered, err := cluster.NewClient(deviceClusterAddr).DiscoverDevices(discoverOpts.timeout, args, discoverOpts.save)
+		if err != nil {
+			return fmt.Errorf("discover on cluster: %w", err)
+		}
+		return printDiscovered(discovered)
+	}
+
+	// Local discovery: probe each requested port (or all, if none given).
+	var paths []string
+	if len(args) > 0 {
+		paths = args
+	} else {
+		if inv, err := inventory.NewInventory(); err == nil {
+			for _, d := range inv.List() {
+				if d.LastPath != "" {
+					paths = append(paths, d.LastPath)
+				}
+			}
+		}
+	}
+
+	discovered := []cluster.DiscoveredDevice{}
+	for _, p := range paths {
+		id, err := inventory.ProbeFromBootLogWithTimeout(p, discoverOpts.timeout)
+		if err != nil {
+			log.Debug().Str("path", p).Err(err).Msg("discover: port not identified")
+			continue
+		}
+		discovered = append(discovered, cluster.DiscoveredDevice{
+			Path:     p,
+			DeviceID: rom.DeviceID(id.MAC),
+			Chip:     id.Chip,
+			MAC:      id.MAC,
+		})
+	}
+
+	return printDiscovered(discovered)
+}
+
+func printDiscovered(discovered []cluster.DiscoveredDevice) error {
+	if len(discovered) == 0 {
+		log.Info().Msg("No devices identified on any port")
+		return nil
+	}
+
+	tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "PATH\tDEVICE ID\tCHIP\tMAC")
+	for _, d := range discovered {
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", d.Path, d.DeviceID, d.Chip, d.MAC)
+	}
+	tw.Flush()
+
+	if discoverOpts.save {
+		log.Info().Msg("Recorded discovered devices to espbrew.toml (rename via 'device add')")
+	} else {
+		log.Info().Msg("No changes made; re-run with --save, or 'device add <port>' to record a port")
+	}
+	return nil
+}
+
+func runDeviceAdd(cmd *cobra.Command, args []string) error {
+	path := args[0]
+	cfg := config.DeviceConfig{
+		Path:        path,
+		ID:          addOpts.id,
+		Alias:       addOpts.alias,
+		ChipType:    addOpts.chip,
+		Description: addOpts.description,
+	}
+
+	if deviceClusterAddr != "" {
+		id, err := cluster.NewClient(deviceClusterAddr).AddDevice(cfg)
+		if err != nil {
+			return fmt.Errorf("add on cluster: %w", err)
+		}
+		log.Info().Str("path", path).Str("device_id", id).Msg("Device added to espbrew.toml")
+		fmt.Printf("Device ID:  %s\n", id)
+		fmt.Printf("Path:       %s\n", path)
+		if addOpts.alias != "" {
+			fmt.Printf("Alias:      %s\n", addOpts.alias)
+		}
+		return nil
+	}
+
+	// Local add: probe to obtain identity, then record it.
+	identity, err := inventory.ProbeFromBootLogWithTimeout(path, discoverOpts.timeout)
+	if err != nil {
+		return fmt.Errorf("probe before add: %w", err)
+	}
+	inv, err := inventory.NewInventory()
+	if err != nil {
+		return err
+	}
+	device, err := inv.GetOrCreate(identity, path, "")
+	if err != nil {
+		return fmt.Errorf("add to inventory: %w", err)
+	}
+	log.Info().Str("device_id", device.DeviceID).Msg("Device added to inventory")
+	return nil
+}
+
+func runDeviceRemove(cmd *cobra.Command, args []string) error {
+	match := args[0]
+
+	if deviceClusterAddr != "" {
+		if err := cluster.NewClient(deviceClusterAddr).RemoveDevice(match); err != nil {
+			return fmt.Errorf("remove on cluster: %w", err)
+		}
+		log.Info().Str("match", match).Msg("Device removed from espbrew.toml")
+		return nil
+	}
+
+	inv, err := inventory.NewInventory()
+	if err != nil {
+		return err
+	}
+	if err := inv.Delete(match); err != nil {
+		return fmt.Errorf("remove: %w", err)
+	}
+	log.Info().Str("match", match).Msg("Device removed from inventory")
 	return nil
 }
 

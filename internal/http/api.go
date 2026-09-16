@@ -16,6 +16,7 @@ import (
 
 	"codeberg.org/georgik/espbrew-go/internal/camera"
 	"codeberg.org/georgik/espbrew-go/internal/cluster"
+	"codeberg.org/georgik/espbrew-go/internal/config"
 	"codeberg.org/georgik/espbrew-go/internal/persistence"
 	"codeberg.org/georgik/espbrew-go/pkg/protocol"
 	"github.com/gorilla/mux"
@@ -54,6 +55,9 @@ func (h *APIHandler) RegisterRoutes(r *mux.Router) {
 	api.HandleFunc("/devices", h.handleDevices).Methods("GET")
 	api.HandleFunc("/devices", h.handleAddDevice).Methods("POST")
 	api.HandleFunc("/devices/probe", h.handleProbeDevice).Methods("POST")
+	api.HandleFunc("/devices/discover", h.handleDiscoverDevice).Methods("POST")
+	api.HandleFunc("/devices/config", h.handleAddDeviceConfig).Methods("POST")
+	api.HandleFunc("/devices/remove", h.handleRemoveDevice).Methods("POST")
 	api.HandleFunc("/devices/reset", h.handleResetDevice).Methods("POST")
 	api.HandleFunc("/devices/forgot/{path:.*}", h.handleForgetDevice).Methods("DELETE")
 	// Register specific device routes BEFORE generic /devices/{id} to ensure they match first
@@ -1409,6 +1413,97 @@ func (h *APIHandler) handleProbeDevice(w http.ResponseWriter, r *http.Request) {
 		"chip_type": devInfo.ChipType,
 		"path":      devInfo.Path,
 	})
+}
+
+// DiscoverRequest is the on-demand discovery request body.
+// Timeout is in seconds (defaults to 5s); Paths is the optional subset to scan;
+// Save persists discovered devices to espbrew.toml.
+type DiscoverRequest struct {
+	Timeout float64  `json:"timeout"`
+	Paths   []string `json:"paths"`
+	Save    bool     `json:"save"`
+}
+
+// handleDiscoverDevice runs a single bounded, non-blocking discovery pass over
+// unconfigured ports. It never holds a port while flashing.
+func (h *APIHandler) handleDiscoverDevice(w http.ResponseWriter, r *http.Request) {
+	if h.leader == nil {
+		respondError(w, http.StatusNotImplemented, "Device discovery only available on leader")
+		return
+	}
+
+	var req DiscoverRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+
+	timeout := time.Duration(req.Timeout * float64(time.Second))
+	if timeout <= 0 {
+		timeout = 5 * time.Second
+	}
+
+	discovered := h.leader.DiscoverAndSave(timeout, req.Save, req.Paths...)
+	respondJSON(w, map[string]interface{}{
+		"status":  "discovered",
+		"count":   len(discovered),
+		"devices": discovered,
+	})
+}
+
+// handleAddDeviceConfig persists an explicit device mapping to espbrew.toml.
+// It accepts the flat config.DeviceConfig body (path, id, chip, alias,
+// description) rather than the probe-derived fields, so the mapping is driven
+// by the operator's file, not auto-probing.
+func (h *APIHandler) handleAddDeviceConfig(w http.ResponseWriter, r *http.Request) {
+	if h.leader == nil {
+		respondError(w, http.StatusNotImplemented, "Device config only available on leader")
+		return
+	}
+
+	var cfg config.DeviceConfig
+	if err := json.NewDecoder(r.Body).Decode(&cfg); err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+
+	id, err := h.leader.AddDevice(cfg)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	respondJSON(w, map[string]interface{}{
+		"status":    "configured",
+		"device_id": id,
+	})
+}
+
+// handleRemoveDevice drops a device mapping from espbrew.toml by path, alias, or id.
+func (h *APIHandler) handleRemoveDevice(w http.ResponseWriter, r *http.Request) {
+	if h.leader == nil {
+		respondError(w, http.StatusNotImplemented, "Device config only available on leader")
+		return
+	}
+
+	var req struct {
+		Match string `json:"match"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+	if req.Match == "" {
+		respondError(w, http.StatusBadRequest, "match is required")
+		return
+	}
+
+	if err := h.leader.RemoveDevice(req.Match); err != nil {
+		respondError(w, http.StatusNotFound, err.Error())
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // handleForgetDevice removes a device from cluster state by path (for unidentified devices)

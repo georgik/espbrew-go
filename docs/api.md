@@ -414,6 +414,118 @@ Note: To put ESP32 devices in bootloader mode:
 2. Press RESET button
 3. Release BOOT button
 
+### Discover Device
+
+```
+POST /api/v1/devices/discover
+Content-Type: application/json
+```
+
+Runs a single, on-demand, non-blocking discovery pass over unconfigured ports. Auto-probe is disabled by default; discovery never runs on device connection. Each requested port is probed with a strict timeout, and the whole pass is bounded by `timeout` (seconds), so a board that never logs cannot hold the port. If `paths` is omitted, all ports currently known to the leader that have no `device_id` are scanned. Discovery completes and returns without holding any port.
+
+Request:
+```json
+{
+  "timeout": 10,
+  "paths": ["/dev/ttyACM0", "/dev/ttyACM1"],
+  "save": true
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `timeout` | number | Per-port probe timeout in seconds; defaults to `5` when omitted or `<= 0` |
+| `paths` | array of strings | Optional subset of ports to scan; empty means "all unconfigured ports" |
+| `save` | boolean | When `true`, each discovered port is recorded in the leader's `espbrew.toml` via `AddDevice` before the response is returned |
+
+Response:
+```json
+{
+  "status": "discovered",
+  "count": 2,
+  "devices": [
+    {
+      "path": "/dev/ttyACM0",
+      "device_id": "esp-aa:bb:cc:dd:ee:ff",
+      "chip": "ESP32-S3",
+      "mac": "aa:bb:cc:dd:ee:ff"
+    }
+  ]
+}
+```
+
+Responses:
+- `200 OK` with the discovered devices (possibly empty).
+- `501 Not Implemented` when the request reaches a peer node, since discovery is a leader responsibility.
+
+When `save` is `true`, discovered ports are also written to `espbrew.toml` and stamped onto live cluster state. See [`config device add`](docs/cli-commands.md) for the matching CLI command.
+
+### Configure Device
+
+```
+POST /api/v1/devices/config
+Content-Type: application/json
+```
+
+Persists an explicit device mapping to the leader's `espbrew.toml`. This is the canonical way to register a discovered or manually-chosen device so its identity survives restarts via the config file rather than the embedded database alone.
+
+Request:
+```json
+{
+  "path": "/dev/ttyACM0",
+  "id": "esp-aa:bb:cc:dd:ee:ff",
+  "chip": "ESP32-S3",
+  "alias": "lab-1",
+  "description": "Front bench station"
+}
+```
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `path` | yes | Device path |
+| `id` | no | Device ID; defaults to `unprobed-<basename(path)>` when omitted |
+| `chip` | no | Chip type to stamp onto the record |
+| `alias` | no | Human-readable alias |
+| `description` | no | Free-text description |
+
+Response:
+```json
+{
+  "status": "configured",
+  "device_id": "esp-aa:bb:cc:dd:ee:ff"
+}
+```
+
+Responses:
+- `200 OK` with the assigned device ID.
+- `400 Bad Request` when `path` is missing or the body is invalid.
+
+The same mapping can be applied through the CLI with [`config device add`](docs/cli-commands.md).
+
+### Remove Device
+
+```
+POST /api/v1/devices/remove
+Content-Type: application/json
+```
+
+Drops a device mapping from the leader's `espbrew.toml`, matched by path, alias, or ID.
+
+Request:
+```json
+{
+  "match": "lab-1"
+}
+```
+
+Response: `204 No Content` on success.
+
+Responses:
+- `204 No Content` on success.
+- `404 Not Found` when no configured device matches.
+
+The matching CLI command is [`config device remove`](docs/cli-commands.md).
+
 ### Reserve Device
 
 ```

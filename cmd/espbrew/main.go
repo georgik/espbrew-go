@@ -138,6 +138,8 @@ func runServer(cmd *cobra.Command, args []string) error {
 			HTTPPort:          appCfg.HTTPPort,
 			DisablemDNS:       cfg.disablemDNS,
 			StaticPeers:       appCfg.StaticPeers,
+			Devices:           appCfg.Devices,
+			ConfigPath:        config.ResolveConfigPath(cfg.cfgFile),
 		}, store)
 		node = leader
 		if err := node.Start(ctx); err != nil {

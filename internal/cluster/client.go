@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"codeberg.org/georgik/espbrew-go/internal/config"
 	"github.com/gorilla/websocket"
 	"github.com/rs/zerolog/log"
 )
@@ -158,6 +159,142 @@ func (c *Client) DeleteDevice(deviceID string) error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("status %d", resp.StatusCode)
+	}
+
+	return nil
+}
+
+func (c *Client) ProbeDevice(path string) (*DeviceInfo, error) {
+	req, err := http.NewRequest("POST", c.baseURL+"/api/v1/devices/probe", nil)
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	body, err := json.Marshal(struct {
+		Path string `json:"path"`
+	}{Path: path})
+	if err != nil {
+		return nil, fmt.Errorf("marshal request: %w", err)
+	}
+	req.Body = io.NopCloser(bytes.NewReader(body))
+
+	resp, err := c.doWithRetry(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var probe struct {
+		Status   string `json:"status"`
+		DeviceID string `json:"device_id"`
+		ChipType string `json:"chip_type"`
+		Path     string `json:"path"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&probe); err != nil {
+		return nil, fmt.Errorf("decode response: %w", err)
+	}
+
+	if probe.DeviceID == "" && probe.Path == "" {
+		return nil, fmt.Errorf("probe: empty response")
+	}
+
+	return &DeviceInfo{
+		Path:     probe.Path,
+		DeviceID: probe.DeviceID,
+		ChipType: probe.ChipType,
+		NodeID:   probe.DeviceID,
+	}, nil
+}
+
+func (c *Client) DiscoverDevices(timeout time.Duration, paths []string, save bool) ([]DiscoveredDevice, error) {
+	req, err := http.NewRequest("POST", c.baseURL+"/api/v1/devices/discover", nil)
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	body, err := json.Marshal(struct {
+		Timeout float64  `json:"timeout"`
+		Paths   []string `json:"paths"`
+		Save    bool     `json:"save"`
+	}{Timeout: timeout.Seconds(), Paths: paths, Save: save})
+	if err != nil {
+		return nil, fmt.Errorf("marshal request: %w", err)
+	}
+	req.Body = io.NopCloser(bytes.NewReader(body))
+
+	resp, err := c.doWithRetry(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var respBody struct {
+		Status  string             `json:"status"`
+		Count   int                `json:"count"`
+		Devices []DiscoveredDevice `json:"devices"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&respBody); err != nil {
+		return nil, fmt.Errorf("decode response: %w", err)
+	}
+
+	return respBody.Devices, nil
+}
+
+func (c *Client) AddDevice(cfg config.DeviceConfig) (string, error) {
+	req, err := http.NewRequest("POST", c.baseURL+"/api/v1/devices/config", nil)
+	if err != nil {
+		return "", fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	body, err := json.Marshal(cfg)
+	if err != nil {
+		return "", fmt.Errorf("marshal request: %w", err)
+	}
+	req.Body = io.NopCloser(bytes.NewReader(body))
+
+	resp, err := c.doWithRetry(req)
+	if err != nil {
+		return "", fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		return "", fmt.Errorf("status %d", resp.StatusCode)
+	}
+
+	var respBody struct {
+		DeviceID string `json:"device_id"`
+	}
+	_ = json.NewDecoder(resp.Body).Decode(&respBody)
+	return respBody.DeviceID, nil
+}
+
+func (c *Client) RemoveDevice(match string) error {
+	req, err := http.NewRequest("POST", c.baseURL+"/api/v1/devices/remove", nil)
+	if err != nil {
+		return fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	body, err := json.Marshal(struct {
+		Match string `json:"match"`
+	}{Match: match})
+	if err != nil {
+		return err
+	}
+	req.Body = io.NopCloser(bytes.NewReader(body))
+
+	resp, err := c.doWithRetry(req)
+	if err != nil {
+		return fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
 		return fmt.Errorf("status %d", resp.StatusCode)
 	}
 

@@ -6,11 +6,15 @@ import (
 	"context"
 	"crypto/md5"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"runtime"
+	"strings"
+	"syscall"
 	"time"
 
+	"github.com/rs/zerolog/log"
 	"go.bug.st/serial"
 )
 
@@ -156,6 +160,58 @@ type Flasher struct {
 	closed  bool
 }
 
+// openPortWithRetries opens a serial port, retrying while the port reports a
+// transient "busy" condition (EBUSY). That happens when another caller is still
+// holding the port (e.g. the boot-log probe) or when a USB CDC device
+// momentarily detaches after a reset and re-enumerates. Permission, no-such
+// device and similar errors must fail immediately, so only busy conditions are
+// retried. The context bounds the retry so a cancelled/expired job stops.
+func openPortWithRetries(ctx context.Context, portName string, mode *serial.Mode) (serial.Port, error) {
+	const (
+		maxRetries = 8
+		retryDelay = 500 * time.Millisecond
+	)
+	var lastErr error
+	for i := 0; i < maxRetries; i++ {
+		if ctx != nil {
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			default:
+			}
+		}
+		port, err := serial.Open(portName, mode)
+		if err == nil {
+			return port, nil
+		}
+		lastErr = err
+		if !isBusyError(err) {
+			return nil, err
+		}
+		log.Debug().Str("path", portName).Err(err).Msg("Port busy, retrying open")
+		time.Sleep(retryDelay)
+	}
+	return nil, fmt.Errorf("port still busy after %d retries: %w", maxRetries, lastErr)
+}
+
+// isBusyError reports whether err is a transient "resource busy" / device
+// momentarily-unavailable condition that a retry should wait out.
+func isBusyError(err error) bool {
+	if err == nil {
+		return false
+	}
+	// go.bug.st/serial surfaces a busy port as a *serial.PortError with
+	// code==PortBusy (its message is "Serial port busy", not the raw errno).
+	var portErr *serial.PortError
+	if errors.As(err, &portErr) {
+		return portErr.Code() == serial.PortBusy
+	}
+	if errors.Is(err, syscall.EBUSY) {
+		return true
+	}
+	return strings.Contains(err.Error(), "Serial port busy")
+}
+
 // New creates a new Flasher connected to the given serial port.
 //
 // It opens the serial port, enters the bootloader, syncs with the device,
@@ -195,7 +251,7 @@ func New(ctx context.Context, portName string, opts *FlasherOptions) (*Flasher, 
 		StopBits: serial.OneStopBit,
 	}
 
-	port, err := serial.Open(portName, mode)
+	port, err := openPortWithRetries(ctx, portName, mode)
 	if err != nil {
 		cancel() // Clean up child context
 		return nil, fmt.Errorf("open serial port %s: %w", portName, err)

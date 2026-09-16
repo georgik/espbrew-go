@@ -97,23 +97,50 @@ func MonitorBootLog(port string, timeout time.Duration) (*BootLogInfo, error) {
 	time.Sleep(50 * time.Millisecond)
 	_ = p.SetDTR(false)
 
+	// Run the read loop in its own goroutine and enforce a hard deadline via
+	// select. A board that never emits a boot log, or one that re-enumerates
+	// and disconnects from USB on reset, can otherwise leave the read blocked
+	// indefinitely (the read timeout on the underlying fd is not guaranteed to
+	// fire). That would hold the serial port open for the lifetime of the
+	// call, which is exactly what collides with a concurrent flash. Returning
+	// here (deferred p.Close()) always releases the port within ~timeout.
 	info := &BootLogInfo{}
 	scanner := bufio.NewScanner(p)
-	deadline := time.Now().Add(timeout)
+	readDone := make(chan struct{})
 
-	for scanner.Scan() && time.Now().Before(deadline) {
-		line := scanner.Text()
-		parseBootLine(line, info)
-
-		// If we have enough info, we can stop
-		if info.ChipType != "" && info.MAC != "" {
-			break
+	var readErr error
+	go func() {
+		defer close(readDone)
+		for scanner.Scan() {
+			line := scanner.Text()
+			parseBootLine(line, info)
+			// Enough info to identify the device - stop early.
+			if info.ChipType != "" && info.MAC != "" {
+				break
+			}
 		}
+		readErr = scanner.Err()
+	}()
+
+	select {
+	case <-readDone:
+		// Read loop finished on its own (boot log received, enough info, or read error).
+	case <-time.After(timeout):
+		// Hard deadline reached. Give the goroutine a brief grace period to
+		// observe the closed port and exit, then give up. Either way the
+		// deferred p.Close() releases the port as we return.
+		select {
+		case <-readDone:
+		case <-time.After(500 * time.Millisecond):
+		}
+		log.Warn().Str("path", port).Dur("timeout", timeout).
+			Msg("Device probe timed out - releasing port (non-blocking)")
+		return nil, fmt.Errorf("device probe timed out after %s", timeout)
 	}
 
-	if err := scanner.Err(); err != nil {
-		log.Error().Str("path", port).Err(err).Msg("Failed to read boot log")
-		return nil, fmt.Errorf("read boot log: %w", err)
+	if readErr != nil {
+		log.Error().Str("path", port).Err(readErr).Msg("Failed to read boot log")
+		return nil, fmt.Errorf("read boot log: %w", readErr)
 	}
 
 	// Derive additional info from chip type

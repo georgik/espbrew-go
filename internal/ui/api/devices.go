@@ -289,6 +289,40 @@ func ProbeDevice(path string, callback func(bool, string, string, error)) {
 	})
 }
 
+// DiscoverDevices runs one on-demand, non-blocking discovery pass over the
+// given paths (empty = all unconfigured ports). It never runs automatically.
+func DiscoverDevices(paths []string, timeout float64, save bool, callback func(bool, []Device, error)) {
+	if DemoModeEnabled() {
+		callback(true, []Device{}, nil)
+		return
+	}
+
+	req := map[string]interface{}{
+		"paths": paths,
+		"save":  save,
+	}
+	if timeout > 0 {
+		req["timeout"] = timeout
+	}
+	DefaultAsyncClient.Post("/devices/discover", req, func(result js.Value, err error) {
+		if err != nil {
+			callback(false, nil, err)
+			return
+		}
+
+		status := ValueToString(result.Get("status"))
+		success := (status == "discovered")
+
+		var devices []Device
+		if !result.IsUndefined() && !result.IsNull() {
+			if arr := result.Get("devices"); !arr.IsUndefined() && !arr.IsNull() {
+				devices = parseDevicesArray(arr)
+			}
+		}
+		callback(success, devices, nil)
+	})
+}
+
 // ForgetDevice removes an unidentified device from cluster state by path
 func ForgetDevice(path string, callback func(bool, error)) {
 	if DemoModeEnabled() {
