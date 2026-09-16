@@ -42,13 +42,15 @@ jobs:
 
       - name: Get version
         id: version
-        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+        run: |
+          echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+          echo "BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> $GITHUB_OUTPUT
         shell: bash
 
       - name: Build
         run: |
           go build \
-            -ldflags="-s -w -X main.Version=${{ steps.version.outputs.VERSION }}" \
+            -ldflags="-s -w -X main.Version=${{ steps.version.outputs.VERSION }} -X main.BuildTime=${{ steps.version.outputs.BUILD_TIME }}" \
             -o ${{ matrix.output }} \
             ./cmd/espbrew
         shell: bash

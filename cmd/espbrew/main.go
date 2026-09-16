@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -21,6 +22,29 @@ import (
 var rootCmd = &cobra.Command{
 	Use:   "espbrew",
 	Short: "ESP32 cluster flashing tool",
+}
+
+// Build information. These are injected at build time via -ldflags, e.g.:
+//
+//	go build -ldflags "-s -w -X main.Version=v0.4.0 -X main.BuildTime=2026-09-16T07:59:00Z" \
+//	    -o espbrew ./cmd/espbrew
+//
+// Official releases (see .github/workflows/release.yml and scripts/build-release.sh)
+// pass the git tag as Version; local/dev builds default to "dev" and always set
+// a BuildTime timestamp, so `espbrew --version` can tell an official release apart
+// from a custom build.
+var (
+	Version   = "dev"
+	BuildTime = "unknown"
+)
+
+// versionCmd reports the build version information.
+var versionCmd = &cobra.Command{
+	Use:   "version",
+	Short: "Print version information",
+	Run: func(cmd *cobra.Command, args []string) {
+		fmt.Fprintf(cmd.OutOrStdout(), "%s version %s\n", rootCmd.Name(), versionString())
+	},
 }
 
 var cfg struct {
@@ -39,6 +63,10 @@ var cfg struct {
 func init() {
 	// flashCmd and monitorCmd added by their own init() functions
 	rootCmd.AddCommand(clusterCmd)
+	rootCmd.AddCommand(versionCmd)
+	// Registering a non-empty Version makes cobra add a global `--version`
+	// flag and print the banner for `espbrew --version` (and `espbrew version`).
+	rootCmd.Version = versionString()
 }
 
 var clusterCmd = &cobra.Command{
@@ -222,6 +250,22 @@ func runServer(cmd *cobra.Command, args []string) error {
 	}
 
 	return nil
+}
+
+// versionString returns the human-readable version banner shown by
+// `espbrew --version`, `espbrew version`, and the help output. It combines the
+// build version (the git tag for releases, "dev" for custom builds) with the
+// build timestamp so different builds can be told apart.
+func versionString() string {
+	v := strings.TrimSpace(Version)
+	if v == "" {
+		v = "dev"
+	}
+	b := strings.TrimSpace(BuildTime)
+	if b == "" {
+		b = "unknown"
+	}
+	return fmt.Sprintf("%s (built %s)", v, b)
 }
 
 func randomID(n int) string {

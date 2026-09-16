@@ -2,13 +2,21 @@
 
 .PHONY: all build wasm clean test fmt vet lint run e2e demo demo-serve
 
+# Build metadata. VERSION defaults to "dev" (a custom/local build); override with
+# `make build VERSION=v0.4.0` for a tagged release. BUILD_TIME is the UTC time the
+# binary is compiled. Both are injected via -ldflags so `espbrew --version` reports
+# them (see cmd/espbrew/main.go). This is the canonical build entry point.
+VERSION ?= dev
+BUILD_TIME := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
+ESPBREW_LDFLAGS := -s -w -X main.Version=$(VERSION) -X main.BuildTime=$(BUILD_TIME)
+
 # Default target builds everything
 all: build
 
 # Build both WASM UI and server binary
 build: wasm
 	@echo "Building ESPBrew server..."
-	@go build -o espbrew ./cmd/espbrew
+	@go build -ldflags "$(ESPBREW_LDFLAGS)" -o espbrew ./cmd/espbrew
 	@if [ "$$(uname)" = "Darwin" ]; then \
 		echo "Applying macOS ad-hoc signing with camera entitlements..."; \
 		codesign --sign - --entitlements macos/espbrew.entitlements --force ./espbrew 2>/dev/null || echo "Note: Code signing requires Xcode command line tools"; \
@@ -73,7 +81,7 @@ run-port:
 # Install to $GOPATH/bin
 install: wasm
 	@echo "Installing ESPBrew..."
-	@go install ./cmd/espbrew
+	@go install -ldflags "$(ESPBREW_LDFLAGS)" ./cmd/espbrew
 	@if [ "$$(uname)" = "Darwin" ]; then \
 		codesign --sign - --entitlements macos/espbrew.entitlements --force "$$(which espbrew)" 2>/dev/null || true; \
 	fi
@@ -82,7 +90,7 @@ install: wasm
 # macOS-specific build with proper code signing
 macos-build: wasm
 	@echo "Building ESPBrew for macOS with camera permissions..."
-	@go build -o espbrew ./cmd/espbrew
+	@go build -ldflags "$(ESPBREW_LDFLAGS)" -o espbrew ./cmd/espbrew
 	@echo "Applying ad-hoc code signing with entitlements..."
 	@codesign --sign - --entitlements macos/espbrew.entitlements --force --deep ./espbrew
 	@codesign --display --entitlements - ./espbrew

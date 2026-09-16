@@ -16,7 +16,7 @@ on:
         description: "espbrew release tag to bundle (asset: espbrew-linux-amd64)"
         type: string
         required: true
-        default: "v0.3.1"
+        default: "v0.4.0"
       tag:
         description: "Additional image tag to publish (optional, e.g. 'stable', 'v0.3.1')"
         type: string
