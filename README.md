@@ -112,31 +112,14 @@ docker run --rm -p 8081:8080 --userns=keep-id --group-add=keep-groups --device=/
 - `--device=/dev/ttyACM0:rwm` injects the node at the same path inside the
   container; `:rwm` grants read/write/mmap for flashing.
 
-> **Host prerequisite — the device must be world-accessible.** Because the
-> container runs in a rootless user namespace, the host `dialout` group cannot be
-> represented inside it, so the node is remapped to `nobody:nogroup` and its group
-> permission bits are **not** honoured. `--group-add=keep-groups` alone does **not**
-> let espbrew open the device. On Linux you must make the node world-readable /
-> writable (`0666`) with a small `udev` rule (for example
-> `SUBSYSTEM=="tty", MODE="0666"`). See
-> [container.md](docs/container.md) for the exact rule and why.
->
-> **State directory.** Under `keep-id` the container process runs as your host
-> user, so the image default `HOME=/` is not writable and espbrew aborts with
-> `mkdir /.espbrew: permission denied`. Two options:
->
-> 1. **Quick / throwaway:** pass `-e HOME=/tmp` (used above). State is lost on restart.
-> 2. **Persistent (recommended for a leader):** bind-mount a state dir owned by
->    your user — create it first, then mount it and point `HOME` at it:
->    ```bash
->    mkdir -p espbrew-state
->    podman run --rm -p 8081:8080 --userns=keep-id --group-add=keep-groups \
->      --device=/dev/ttyACM0:rwm \
->      -v "$(pwd)/espbrew-state":/state -e HOME=/state \
->      ghcr.io/georgik/espbrew-go:latest
->    ```
-> Rebuilding the image (see below) makes the default `/.espbrew` world-writable,
-> so neither `-e HOME=/tmp` nor the bind-mount is needed.
+**Host prerequisite — the device must be world-accessible.** Because the
+container runs in a rootless user namespace, the host `dialout` group cannot be
+represented inside it, so the node is remapped to `nobody:nogroup` and its group
+permission bits are **not** honoured. `--group-add=keep-groups` alone does **not**
+let espbrew open the device. On Linux you must make the node world-readable /
+writable (`0666`) with a small `udev` rule (for example
+`SUBSYSTEM=="tty", MODE="0666"`). See
+[container.md](docs/container.md) for the exact rule and why.
 
 For diagnostics you can run an interactive `/bin/sh` shell instead of espbrew —
 add `-it --entrypoint /bin/sh` to the command above.
