@@ -93,36 +93,56 @@ docker run --rm -p 8080:8080 ghcr.io/georgik/espbrew-go:latest
 ### Running with a serial device attached
 
 To let espbrew see and flash an ESP32 connected to your host, run the container as
-your host user (uid/gid `1000` here — match your own `id -u`/`id -g`) and mount the
-device node. This is the same recipe `orchestrion shell` produces:
+your host user via `--userns=keep-id` and mount the device node. This is the same
+recipe `orchestrion shell` produces:
 
 ```bash
 # Linux — device node is usually /dev/ttyACM0 (USB CDC) or /dev/ttyUSB0 (FTDI/CH340/CP210x)
-podman run --rm --userns=keep-id --user=1000:1000 --group-add=keep-groups --device=/dev/ttyACM0:rwm -p 8081:8080 ghcr.io/georgik/espbrew-go:latest
-docker run --rm --userns=keep-id --user=1000:1000 --group-add=keep-groups --device=/dev/ttyACM0:rwm -p 8081:8080 ghcr.io/georgik/espbrew-go:latest
+# NOTE: `-e HOME=/tmp` is required under keep-id (see the "State directory" note
+# below) until the image is rebuilt with a writable state dir.
+podman run --rm -p 8081:8080 --userns=keep-id --group-add=keep-groups --device=/dev/ttyACM0:rwm -e HOME=/tmp ghcr.io/georgik/espbrew-go:latest
+docker run --rm -p 8081:8080 --userns=keep-id --group-add=keep-groups --device=/dev/ttyACM0:rwm -e HOME=/tmp ghcr.io/georgik/espbrew-go:latest
 ```
 
-- `--userns=keep-id --user=1000:1000` runs the container as the host user. This is
-  required to reach the device: a podless container remaps the node to
-  `nobody:nogroup` and root cannot open it (see below).
-- `--group-add=keep-groups` maps the host user's supplementary groups so the
-  remapped device's group permission bits are honoured.
+- `--userns=keep-id` runs the container as your current host user so file
+  ownership is preserved. Do **not** hard-code `--user=1000:1000` unless your
+  uid/gid are exactly 1000; `keep-id` maps to whatever your user actually is.
+- `--group-add=keep-groups` carries your host user's supplementary groups
+  (harmless and recommended, but see the critical note below).
 - `--device=/dev/ttyACM0:rwm` injects the node at the same path inside the
   container; `:rwm` grants read/write/mmap for flashing.
+
+> **Host prerequisite — the device must be world-accessible.** Because the
+> container runs in a rootless user namespace, the host `dialout` group cannot be
+> represented inside it, so the node is remapped to `nobody:nogroup` and its group
+> permission bits are **not** honoured. `--group-add=keep-groups` alone does **not**
+> let espbrew open the device. On Linux you must make the node world-readable /
+> writable (`0666`) with a small `udev` rule (for example
+> `SUBSYSTEM=="tty", MODE="0666"`). See
+> [container.md](docs/container.md) for the exact rule and why.
+>
+> **State directory.** Under `keep-id` the container process runs as your host
+> user, so the image default `HOME=/` is not writable and espbrew aborts with
+> `mkdir /.espbrew: permission denied`. Two options:
+>
+> 1. **Quick / throwaway:** pass `-e HOME=/tmp` (used above). State is lost on restart.
+> 2. **Persistent (recommended for a leader):** bind-mount a state dir owned by
+>    your user — create it first, then mount it and point `HOME` at it:
+>    ```bash
+>    mkdir -p espbrew-state
+>    podman run --rm -p 8081:8080 --userns=keep-id --group-add=keep-groups \
+>      --device=/dev/ttyACM0:rwm \
+>      -v "$(pwd)/espbrew-state":/state -e HOME=/state \
+>      ghcr.io/georgik/espbrew-go:latest
+>    ```
+> Rebuilding the image (see below) makes the default `/.espbrew` world-writable,
+> so neither `-e HOME=/tmp` nor the bind-mount is needed.
 
 For diagnostics you can run an interactive `/bin/sh` shell instead of espbrew —
 add `-it --entrypoint /bin/sh` to the command above.
 
-- The only host-side prerequisite is that the podman/docker user can open
-  `/dev/ttyACM0` (group `dialout` on Linux) — see
-  [platform-support.md](docs/platform-support.md).
-- For full details, multiple devices, and troubleshooting see
-  [container.md](docs/container.md).
-
-The host user running podman/docker must itself be able to reach the device —
-see [platform-support.md](docs/platform-support.md) (add the user to the `dialout`
-group and log back in). For deployment details, multiple devices, and
-verification see [container.md](docs/container.md).
+For full details, the host `udev` prerequisite, verification, and troubleshooting,
+see [container.md](docs/container.md).
 
 See [docs/ci_setup.md](docs/ci_setup.md) for details on how the image is built
 and published (including the manual workflow trigger).

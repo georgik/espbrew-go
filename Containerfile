@@ -42,6 +42,14 @@ RUN curl -fSL --retry 3 -o /usr/local/bin/espbrew \
     && chmod +x /usr/local/bin/espbrew \
     && echo "Bundled espbrew version: ${ESPBREW_VERSION}"
 
+# espbrew stores its state (database, bootloaders, captures) in ~/.espbrew, and
+# HOME defaults to "/" in this image. Under `podman --userns=keep-id` the
+# container process runs as the *host* user (not container root), so "/" is not
+# writable and `mkdir /.espbrew` fails with "permission denied". Create the state
+# dir now (as root, at build time) and make it world-writable so it can be
+# created by either uid 0 (bare run) or the mapped host user (keep-id run).
+RUN mkdir -p /.espbrew && chmod 777 /.espbrew
+
 # The cluster dashboard + API listen here.
 EXPOSE 8080
 
