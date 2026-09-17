@@ -600,7 +600,7 @@ When using cluster mode, the snap command communicates with the cluster leader v
 
 ## See Also
 
-- [Hash-Based Flash Detection](hash_based_flash.md) - Flash optimization details
+- [Hash-Based Flash Detection](hash-based-flash.md) - Flash optimization details
 - [Cluster Usage](cluster.md) - Multi-node setup
 - [HTTP API Reference](api.md) - REST and WebSocket endpoints
-- [Image Mapping](image_mapping.md) - Device mapping and screenshot extraction
+- [Image Mapping](image-mapping.md) - Device mapping and screenshot extraction
