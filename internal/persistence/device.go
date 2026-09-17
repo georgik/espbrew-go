@@ -7,7 +7,7 @@ import (
 
 	bolt "go.etcd.io/bbolt"
 
-	"codeberg.org/georgik/espbrew-go/pkg/protocol"
+	"github.com/georgik/espbrew-go/pkg/protocol"
 )
 
 // BackendConfigData wraps backend-specific configuration for JSON storage

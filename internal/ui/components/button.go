@@ -4,7 +4,7 @@
 package components
 
 import (
-	"codeberg.org/georgik/espbrew-go/internal/ui/dom"
+	"github.com/georgik/espbrew-go/internal/ui/dom"
 )
 
 // Button represents a button element

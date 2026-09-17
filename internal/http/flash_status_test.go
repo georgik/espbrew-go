@@ -8,8 +8,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"codeberg.org/georgik/espbrew-go/internal/flashhash"
-	"codeberg.org/georgik/espbrew-go/internal/persistence"
+	"github.com/georgik/espbrew-go/internal/flashhash"
+	"github.com/georgik/espbrew-go/internal/persistence"
 	"github.com/gorilla/mux"
 )
 

@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"codeberg.org/georgik/espbrew-go/internal/cluster"
-	"codeberg.org/georgik/espbrew-go/internal/device"
+	"github.com/georgik/espbrew-go/internal/cluster"
+	"github.com/georgik/espbrew-go/internal/device"
 	"github.com/gorilla/websocket"
 	"github.com/rs/zerolog/log"
 	"github.com/stretchr/testify/assert"

@@ -7,7 +7,7 @@ import (
 	"syscall/js"
 	"testing"
 
-	"codeberg.org/georgik/espbrew-go/internal/ui/dom"
+	"github.com/georgik/espbrew-go/internal/ui/dom"
 )
 
 func TestNewSlider(t *testing.T) {

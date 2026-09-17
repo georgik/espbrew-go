@@ -4,7 +4,7 @@
 package components
 
 import (
-	"codeberg.org/georgik/espbrew-go/internal/ui/dom"
+	"github.com/georgik/espbrew-go/internal/ui/dom"
 )
 
 // Slider represents a range input slider with value display

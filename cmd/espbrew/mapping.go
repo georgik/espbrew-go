@@ -10,8 +10,8 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"codeberg.org/georgik/espbrew-go/internal/inventory"
-	"codeberg.org/georgik/espbrew-go/internal/persistence"
+	"github.com/georgik/espbrew-go/internal/inventory"
+	"github.com/georgik/espbrew-go/internal/persistence"
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
 )

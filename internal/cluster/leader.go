@@ -11,14 +11,14 @@ import (
 	"sync"
 	"time"
 
-	"codeberg.org/georgik/espbrew-go/internal/camera"
-	"codeberg.org/georgik/espbrew-go/internal/config"
-	"codeberg.org/georgik/espbrew-go/internal/device"
-	"codeberg.org/georgik/espbrew-go/internal/flashhash"
-	"codeberg.org/georgik/espbrew-go/internal/inventory"
-	"codeberg.org/georgik/espbrew-go/internal/inventory/rom"
-	"codeberg.org/georgik/espbrew-go/internal/persistence"
-	"codeberg.org/georgik/espbrew-go/pkg/protocol"
+	"github.com/georgik/espbrew-go/internal/camera"
+	"github.com/georgik/espbrew-go/internal/config"
+	"github.com/georgik/espbrew-go/internal/device"
+	"github.com/georgik/espbrew-go/internal/flashhash"
+	"github.com/georgik/espbrew-go/internal/inventory"
+	"github.com/georgik/espbrew-go/internal/inventory/rom"
+	"github.com/georgik/espbrew-go/internal/persistence"
+	"github.com/georgik/espbrew-go/pkg/protocol"
 	"github.com/rs/zerolog/log"
 )
 

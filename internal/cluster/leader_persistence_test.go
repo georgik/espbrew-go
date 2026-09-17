@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"codeberg.org/georgik/espbrew-go/internal/device"
-	"codeberg.org/georgik/espbrew-go/internal/persistence"
-	"codeberg.org/georgik/espbrew-go/pkg/protocol"
+	"github.com/georgik/espbrew-go/internal/device"
+	"github.com/georgik/espbrew-go/internal/persistence"
+	"github.com/georgik/espbrew-go/pkg/protocol"
 )
 
 // TestDevicePersistenceOverRestart verifies that when a device is discovered

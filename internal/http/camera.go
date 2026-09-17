@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"codeberg.org/georgik/espbrew-go/internal/camera"
+	"github.com/georgik/espbrew-go/internal/camera"
 	"github.com/gorilla/mux"
 	"github.com/rs/zerolog/log"
 )

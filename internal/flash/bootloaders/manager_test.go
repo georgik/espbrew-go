@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"codeberg.org/georgik/espbrew-go/internal/chips"
+	"github.com/georgik/espbrew-go/internal/chips"
 )
 
 // TestHTTPDirectAccess verifies URL is accessible via HTTP

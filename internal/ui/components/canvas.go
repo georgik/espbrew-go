@@ -6,8 +6,8 @@ package components
 import (
 	"syscall/js"
 
-	"codeberg.org/georgik/espbrew-go/internal/ui/api"
-	"codeberg.org/georgik/espbrew-go/internal/ui/dom"
+	"github.com/georgik/espbrew-go/internal/ui/api"
+	"github.com/georgik/espbrew-go/internal/ui/dom"
 )
 
 // BoundingBoxEditor is a canvas-based editor for defining device regions

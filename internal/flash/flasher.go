@@ -9,9 +9,9 @@ import (
 	"runtime"
 	"strings"
 
-	"codeberg.org/georgik/espbrew-go/internal/chips"
-	"codeberg.org/georgik/espbrew-go/internal/espflash"
-	"codeberg.org/georgik/espbrew-go/internal/flash/virtual"
+	"github.com/georgik/espbrew-go/internal/chips"
+	"github.com/georgik/espbrew-go/internal/espflash"
+	"github.com/georgik/espbrew-go/internal/flash/virtual"
 	"github.com/rs/zerolog/log"
 )
 

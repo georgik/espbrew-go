@@ -6,7 +6,7 @@ import (
 	"os"
 	"testing"
 
-	"codeberg.org/georgik/espbrew-go/internal/inventory"
+	"github.com/georgik/espbrew-go/internal/inventory"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/assert"

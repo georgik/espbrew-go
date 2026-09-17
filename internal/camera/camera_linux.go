@@ -4,7 +4,7 @@
 package camera
 
 import (
-	linuxcam "codeberg.org/georgik/espbrew-go/internal/camera/linux"
+	linuxcam "github.com/georgik/espbrew-go/internal/camera/linux"
 )
 
 // linuxController wraps the Linux camera to implement Controller interface

@@ -4,8 +4,8 @@ import (
 	"encoding/binary"
 	"fmt"
 
-	"codeberg.org/georgik/espbrew-go/internal/chips"
-	"codeberg.org/georgik/espbrew-go/internal/flash/espfmt"
+	"github.com/georgik/espbrew-go/internal/chips"
+	"github.com/georgik/espbrew-go/internal/flash/espfmt"
 	"github.com/rs/zerolog/log"
 )
 

@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"time"
 
-	"codeberg.org/georgik/espbrew-go/internal/inventory/rom"
+	"github.com/georgik/espbrew-go/internal/inventory/rom"
 )
 
 // ProbeStatus represents the result of a probe attempt

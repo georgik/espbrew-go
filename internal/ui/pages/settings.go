@@ -6,9 +6,9 @@ package pages
 import (
 	"syscall/js"
 
-	"codeberg.org/georgik/espbrew-go/internal/ui/components"
-	"codeberg.org/georgik/espbrew-go/internal/ui/dom"
-	"codeberg.org/georgik/espbrew-go/internal/ui/layout"
+	"github.com/georgik/espbrew-go/internal/ui/components"
+	"github.com/georgik/espbrew-go/internal/ui/dom"
+	"github.com/georgik/espbrew-go/internal/ui/layout"
 )
 
 // Settings renders the settings page

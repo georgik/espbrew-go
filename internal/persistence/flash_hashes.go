@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"codeberg.org/georgik/espbrew-go/internal/flashhash"
+	"github.com/georgik/espbrew-go/internal/flashhash"
 	bolt "go.etcd.io/bbolt"
 )
 

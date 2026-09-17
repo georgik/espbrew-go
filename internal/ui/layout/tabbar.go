@@ -6,7 +6,7 @@ package layout
 import (
 	"syscall/js"
 
-	"codeberg.org/georgik/espbrew-go/internal/ui/dom"
+	"github.com/georgik/espbrew-go/internal/ui/dom"
 )
 
 // Tab defines a navigation tab

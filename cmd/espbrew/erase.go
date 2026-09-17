@@ -6,10 +6,10 @@ import (
 	"os"
 	"time"
 
-	"codeberg.org/georgik/espbrew-go/internal/cluster"
-	"codeberg.org/georgik/espbrew-go/internal/device"
-	"codeberg.org/georgik/espbrew-go/internal/flash"
-	"codeberg.org/georgik/espbrew-go/internal/inventory"
+	"github.com/georgik/espbrew-go/internal/cluster"
+	"github.com/georgik/espbrew-go/internal/device"
+	"github.com/georgik/espbrew-go/internal/flash"
+	"github.com/georgik/espbrew-go/internal/inventory"
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
 )

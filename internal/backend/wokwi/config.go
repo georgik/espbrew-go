@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 
-	"codeberg.org/georgik/espbrew-go/pkg/protocol"
+	"github.com/georgik/espbrew-go/pkg/protocol"
 )
 
 // DefaultChipTypes defines supported ESP chip types for Wokwi

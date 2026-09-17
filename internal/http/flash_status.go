@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"time"
 
-	"codeberg.org/georgik/espbrew-go/internal/flashhash"
-	"codeberg.org/georgik/espbrew-go/internal/persistence"
+	"github.com/georgik/espbrew-go/internal/flashhash"
+	"github.com/georgik/espbrew-go/internal/persistence"
 	"github.com/gorilla/mux"
 	"github.com/rs/zerolog/log"
 )

@@ -14,7 +14,7 @@ import (
 
 	"github.com/rs/zerolog/log"
 
-	"codeberg.org/georgik/espbrew-go/pkg/protocol"
+	"github.com/georgik/espbrew-go/pkg/protocol"
 )
 
 const (

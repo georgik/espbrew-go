@@ -1,8 +1,8 @@
 package cluster
 
 import (
-	"codeberg.org/georgik/espbrew-go/pkg/protocol"
 	"context"
+	"github.com/georgik/espbrew-go/pkg/protocol"
 )
 
 type Node interface {

@@ -10,7 +10,7 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/rs/zerolog/log"
 
-	"codeberg.org/georgik/espbrew-go/internal/persistence"
+	"github.com/georgik/espbrew-go/internal/persistence"
 )
 
 // MappingHandler handles bounding box mapping API requests

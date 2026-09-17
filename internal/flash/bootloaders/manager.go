@@ -11,7 +11,7 @@ import (
 	"path/filepath"
 	"sync"
 
-	"codeberg.org/georgik/espbrew-go/internal/chips"
+	"github.com/georgik/espbrew-go/internal/chips"
 	"github.com/rs/zerolog/log"
 )
 

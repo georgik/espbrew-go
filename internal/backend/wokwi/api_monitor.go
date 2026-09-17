@@ -12,8 +12,8 @@ import (
 
 	"github.com/rs/zerolog/log"
 
-	"codeberg.org/georgik/espbrew-go/internal/backend/wokwi/api"
-	"codeberg.org/georgik/espbrew-go/pkg/protocol"
+	"github.com/georgik/espbrew-go/internal/backend/wokwi/api"
+	"github.com/georgik/espbrew-go/pkg/protocol"
 )
 
 // MonitorMode determines whether to use CLI or API

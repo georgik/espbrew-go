@@ -3,7 +3,7 @@ package main
 import (
 	"fmt"
 
-	"codeberg.org/georgik/espbrew-go/internal/camera"
+	"github.com/georgik/espbrew-go/internal/camera"
 	"github.com/spf13/cobra"
 )
 

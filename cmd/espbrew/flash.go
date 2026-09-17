@@ -6,11 +6,11 @@ import (
 	"os"
 	"time"
 
-	"codeberg.org/georgik/espbrew-go/internal/cluster"
-	"codeberg.org/georgik/espbrew-go/internal/device"
-	flashlib "codeberg.org/georgik/espbrew-go/internal/flash"
-	"codeberg.org/georgik/espbrew-go/internal/inventory"
-	"codeberg.org/georgik/espbrew-go/internal/project"
+	"github.com/georgik/espbrew-go/internal/cluster"
+	"github.com/georgik/espbrew-go/internal/device"
+	flashlib "github.com/georgik/espbrew-go/internal/flash"
+	"github.com/georgik/espbrew-go/internal/inventory"
+	"github.com/georgik/espbrew-go/internal/project"
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
 )

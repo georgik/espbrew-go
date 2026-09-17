@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"codeberg.org/georgik/espbrew-go/internal/flashhash"
+	"github.com/georgik/espbrew-go/internal/flashhash"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

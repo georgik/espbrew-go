@@ -6,7 +6,7 @@ package pages
 import (
 	"syscall/js"
 
-	"codeberg.org/georgik/espbrew-go/internal/ui/layout"
+	"github.com/georgik/espbrew-go/internal/ui/layout"
 )
 
 var (

@@ -8,8 +8,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"codeberg.org/georgik/espbrew-go/internal/camera"
-	"codeberg.org/georgik/espbrew-go/internal/persistence"
+	"github.com/georgik/espbrew-go/internal/camera"
+	"github.com/georgik/espbrew-go/internal/persistence"
 	"github.com/gorilla/mux"
 	"github.com/stretchr/testify/assert"
 )

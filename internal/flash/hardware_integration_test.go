@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"codeberg.org/georgik/espbrew-go/internal/chips"
+	"github.com/georgik/espbrew-go/internal/chips"
 )
 
 // TestHardwareFlashAndVerify tests flashing and reading back to verify

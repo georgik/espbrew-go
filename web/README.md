@@ -238,7 +238,7 @@ ws://host/api/v1/monitor/{port}?baud=115200&reset=1&exit_on=pattern
 ```go
 package pages
 
-import "codeberg.org/georgik/espbrew-go/internal/ui/layout"
+import "github.com/georgik/espbrew-go/internal/ui/layout"
 
 func NewPage(app *layout.App) {
     app.SetTitle("Page Title")

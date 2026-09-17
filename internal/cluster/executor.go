@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"codeberg.org/georgik/espbrew-go/internal/flash"
+	"github.com/georgik/espbrew-go/internal/flash"
 	"github.com/rs/zerolog/log"
 )
 

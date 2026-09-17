@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"testing"
 
-	"codeberg.org/georgik/espbrew-go/internal/flash"
+	"github.com/georgik/espbrew-go/internal/flash"
 )
 
 func TestResolvePreset(t *testing.T) {

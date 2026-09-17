@@ -8,10 +8,10 @@ import (
 	"sync"
 	"time"
 
-	"codeberg.org/georgik/espbrew-go/internal/backend/wokwi"
-	"codeberg.org/georgik/espbrew-go/internal/camera"
-	"codeberg.org/georgik/espbrew-go/internal/monitor"
-	"codeberg.org/georgik/espbrew-go/pkg/protocol"
+	"github.com/georgik/espbrew-go/internal/backend/wokwi"
+	"github.com/georgik/espbrew-go/internal/camera"
+	"github.com/georgik/espbrew-go/internal/monitor"
+	"github.com/georgik/espbrew-go/pkg/protocol"
 	"github.com/google/uuid"
 	"github.com/rs/zerolog/log"
 )

@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"codeberg.org/georgik/espbrew-go/internal/cluster"
+	"github.com/georgik/espbrew-go/internal/cluster"
 	"github.com/gorilla/mux"
 	"github.com/gorilla/websocket"
 	"github.com/rs/zerolog/log"

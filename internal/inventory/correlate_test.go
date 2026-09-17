@@ -1,7 +1,7 @@
 package inventory
 
 import (
-	"codeberg.org/georgik/espbrew-go/internal/device"
+	"github.com/georgik/espbrew-go/internal/device"
 	"testing"
 )
 

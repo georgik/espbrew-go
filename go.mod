@@ -1,9 +1,6 @@
-module codeberg.org/georgik/espbrew-go
+module github.com/georgik/espbrew-go
 
 go 1.26.4
-
-// Use local module for development before publishing to Codeberg
-replace codeberg.org/georgik/espbrew-go => ./
 
 require (
 	github.com/BurntSushi/toml v1.6.0

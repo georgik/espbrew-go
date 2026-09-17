@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"codeberg.org/georgik/espbrew-go/internal/flashhash"
+	"github.com/georgik/espbrew-go/internal/flashhash"
 )
 
 // BackendType defines the type of backend used for device operations

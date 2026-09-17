@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 
-	"codeberg.org/georgik/espbrew-go/internal/chips"
+	"github.com/georgik/espbrew-go/internal/chips"
 )
 
 var (

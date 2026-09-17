@@ -9,10 +9,10 @@ import (
 	"sync"
 	"time"
 
-	"codeberg.org/georgik/espbrew-go/internal/camera"
-	"codeberg.org/georgik/espbrew-go/internal/device"
-	"codeberg.org/georgik/espbrew-go/internal/flash"
-	"codeberg.org/georgik/espbrew-go/pkg/protocol"
+	"github.com/georgik/espbrew-go/internal/camera"
+	"github.com/georgik/espbrew-go/internal/device"
+	"github.com/georgik/espbrew-go/internal/flash"
+	"github.com/georgik/espbrew-go/pkg/protocol"
 	"github.com/rs/zerolog/log"
 )
 

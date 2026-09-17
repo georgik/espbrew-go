@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"codeberg.org/georgik/espbrew-go/internal/persistence"
+	"github.com/georgik/espbrew-go/internal/persistence"
 	"github.com/rs/zerolog/log"
 )
 

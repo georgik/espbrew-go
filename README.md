@@ -28,7 +28,7 @@ ESPBrew is a cluster flashing tool for ESP32. A leader node runs a web dashboard
 
 ```bash
 # Clone repository
-git clone https://codeberg.org/georgik/espbrew-go.git
+git clone https://github.com/georgik/espbrew-go.git
 cd espbrew-go
 
 # Initialize submodules (contains ESP stub loaders)

@@ -9,7 +9,7 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"codeberg.org/georgik/espbrew-go/internal/powercontrol"
+	"github.com/georgik/espbrew-go/internal/powercontrol"
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
 )

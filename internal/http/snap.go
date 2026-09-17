@@ -15,12 +15,12 @@ import (
 	"strings"
 	"time"
 
-	"codeberg.org/georgik/espbrew-go/internal/chips"
-	"codeberg.org/georgik/espbrew-go/internal/cluster"
-	flashlib "codeberg.org/georgik/espbrew-go/internal/flash"
-	"codeberg.org/georgik/espbrew-go/internal/flash/virtual"
-	"codeberg.org/georgik/espbrew-go/internal/persistence"
-	"codeberg.org/georgik/espbrew-go/internal/snap"
+	"github.com/georgik/espbrew-go/internal/chips"
+	"github.com/georgik/espbrew-go/internal/cluster"
+	flashlib "github.com/georgik/espbrew-go/internal/flash"
+	"github.com/georgik/espbrew-go/internal/flash/virtual"
+	"github.com/georgik/espbrew-go/internal/persistence"
+	"github.com/georgik/espbrew-go/internal/snap"
 	"github.com/gorilla/mux"
 	"github.com/rs/zerolog/log"
 )

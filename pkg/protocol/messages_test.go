@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"codeberg.org/georgik/espbrew-go/internal/flashhash"
+	"github.com/georgik/espbrew-go/internal/flashhash"
 )
 
 func TestFlashHashQuerySerialization(t *testing.T) {

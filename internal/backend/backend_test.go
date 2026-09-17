@@ -3,7 +3,7 @@ package backend
 import (
 	"testing"
 
-	"codeberg.org/georgik/espbrew-go/pkg/protocol"
+	"github.com/georgik/espbrew-go/pkg/protocol"
 )
 
 func TestGetBackendConfig_Wokwi(t *testing.T) {

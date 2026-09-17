@@ -6,7 +6,7 @@ package components
 import (
 	"testing"
 
-	"codeberg.org/georgik/espbrew-go/internal/ui/dom"
+	"github.com/georgik/espbrew-go/internal/ui/dom"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

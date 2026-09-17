@@ -6,7 +6,7 @@ package main
 import (
 	"syscall/js"
 
-	"codeberg.org/georgik/espbrew-go/internal/ui"
+	"github.com/georgik/espbrew-go/internal/ui"
 )
 
 func main() {

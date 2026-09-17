@@ -6,10 +6,10 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"codeberg.org/georgik/espbrew-go/internal/cluster"
-	"codeberg.org/georgik/espbrew-go/internal/config"
-	"codeberg.org/georgik/espbrew-go/internal/inventory"
-	"codeberg.org/georgik/espbrew-go/internal/inventory/rom"
+	"github.com/georgik/espbrew-go/internal/cluster"
+	"github.com/georgik/espbrew-go/internal/config"
+	"github.com/georgik/espbrew-go/internal/inventory"
+	"github.com/georgik/espbrew-go/internal/inventory/rom"
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
 )

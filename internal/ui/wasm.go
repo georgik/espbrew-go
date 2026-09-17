@@ -6,10 +6,10 @@ package ui
 import (
 	"syscall/js"
 
-	"codeberg.org/georgik/espbrew-go/internal/ui/api"
-	"codeberg.org/georgik/espbrew-go/internal/ui/components"
-	"codeberg.org/georgik/espbrew-go/internal/ui/layout"
-	"codeberg.org/georgik/espbrew-go/internal/ui/pages"
+	"github.com/georgik/espbrew-go/internal/ui/api"
+	"github.com/georgik/espbrew-go/internal/ui/components"
+	"github.com/georgik/espbrew-go/internal/ui/layout"
+	"github.com/georgik/espbrew-go/internal/ui/pages"
 )
 
 var (

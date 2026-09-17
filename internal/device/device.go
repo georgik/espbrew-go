@@ -1,6 +1,6 @@
 package device
 
-import "codeberg.org/georgik/espbrew-go/pkg/protocol"
+import "github.com/georgik/espbrew-go/pkg/protocol"
 
 type EventType string
 

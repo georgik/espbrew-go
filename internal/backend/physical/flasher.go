@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"codeberg.org/georgik/espbrew-go/pkg/protocol"
+	"github.com/georgik/espbrew-go/pkg/protocol"
 )
 
 // Flasher wraps the existing flash operations for physical devices

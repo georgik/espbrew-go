@@ -8,8 +8,8 @@ import (
 	"os"
 	"time"
 
-	"codeberg.org/georgik/espbrew-go/internal/cluster"
-	"codeberg.org/georgik/espbrew-go/internal/flashhash"
+	"github.com/georgik/espbrew-go/internal/cluster"
+	"github.com/georgik/espbrew-go/internal/flashhash"
 	"github.com/rs/zerolog/log"
 )
 

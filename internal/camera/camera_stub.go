@@ -4,7 +4,7 @@
 package camera
 
 import (
-	stubcam "codeberg.org/georgik/espbrew-go/internal/camera/stub"
+	stubcam "github.com/georgik/espbrew-go/internal/camera/stub"
 )
 
 // newLinuxController is not used on non-Linux platforms

@@ -12,9 +12,9 @@ import (
 	"strings"
 	"testing"
 
-	"codeberg.org/georgik/espbrew-go/internal/cluster"
-	"codeberg.org/georgik/espbrew-go/internal/persistence"
-	"codeberg.org/georgik/espbrew-go/pkg/protocol"
+	"github.com/georgik/espbrew-go/internal/cluster"
+	"github.com/georgik/espbrew-go/internal/persistence"
+	"github.com/georgik/espbrew-go/pkg/protocol"
 )
 
 func TestFlashHandler_handleUpload(t *testing.T) {

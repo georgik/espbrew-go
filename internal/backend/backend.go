@@ -3,9 +3,9 @@ package backend
 import (
 	"fmt"
 
-	"codeberg.org/georgik/espbrew-go/internal/backend/physical"
-	"codeberg.org/georgik/espbrew-go/internal/backend/wokwi"
-	"codeberg.org/georgik/espbrew-go/pkg/protocol"
+	"github.com/georgik/espbrew-go/internal/backend/physical"
+	"github.com/georgik/espbrew-go/internal/backend/wokwi"
+	"github.com/georgik/espbrew-go/pkg/protocol"
 )
 
 // Factory creates backend instances based on device configuration

@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"sync"
 
-	"codeberg.org/georgik/espbrew-go/internal/flash/bootloaders"
+	"github.com/georgik/espbrew-go/internal/flash/bootloaders"
 )
 
 // XtalFrequency represents the crystal oscillator frequency

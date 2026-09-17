@@ -10,11 +10,11 @@ import (
 	"strings"
 	"time"
 
-	"codeberg.org/georgik/espbrew-go/internal/cluster"
-	"codeberg.org/georgik/espbrew-go/internal/device"
-	"codeberg.org/georgik/espbrew-go/internal/inventory"
-	"codeberg.org/georgik/espbrew-go/internal/project"
-	"codeberg.org/georgik/espbrew-go/internal/snap"
+	"github.com/georgik/espbrew-go/internal/cluster"
+	"github.com/georgik/espbrew-go/internal/device"
+	"github.com/georgik/espbrew-go/internal/inventory"
+	"github.com/georgik/espbrew-go/internal/project"
+	"github.com/georgik/espbrew-go/internal/snap"
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
 )

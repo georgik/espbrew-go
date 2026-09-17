@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"time"
 
-	"codeberg.org/georgik/espbrew-go/internal/monitor"
-	"codeberg.org/georgik/espbrew-go/pkg/protocol"
+	"github.com/georgik/espbrew-go/internal/monitor"
+	"github.com/georgik/espbrew-go/pkg/protocol"
 )
 
 // Monitor wraps the existing monitor.StreamSession for physical devices

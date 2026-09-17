@@ -6,8 +6,8 @@ import (
 	"sync"
 	"time"
 
-	"codeberg.org/georgik/espbrew-go/internal/config"
-	"codeberg.org/georgik/espbrew-go/pkg/protocol"
+	"github.com/georgik/espbrew-go/internal/config"
+	"github.com/georgik/espbrew-go/pkg/protocol"
 	"github.com/rs/zerolog/log"
 )
 

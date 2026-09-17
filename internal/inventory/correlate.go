@@ -3,7 +3,7 @@ package inventory
 import (
 	"strings"
 
-	"codeberg.org/georgik/espbrew-go/internal/device"
+	"github.com/georgik/espbrew-go/internal/device"
 )
 
 // PortRecord represents a single serial port with its probe results

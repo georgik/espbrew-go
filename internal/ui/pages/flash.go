@@ -7,12 +7,12 @@ import (
 	"strings"
 	"syscall/js"
 
-	"codeberg.org/georgik/espbrew-go/internal/fileapi"
-	"codeberg.org/georgik/espbrew-go/internal/project"
-	"codeberg.org/georgik/espbrew-go/internal/ui/api"
-	"codeberg.org/georgik/espbrew-go/internal/ui/components"
-	"codeberg.org/georgik/espbrew-go/internal/ui/dom"
-	"codeberg.org/georgik/espbrew-go/internal/ui/layout"
+	"github.com/georgik/espbrew-go/internal/fileapi"
+	"github.com/georgik/espbrew-go/internal/project"
+	"github.com/georgik/espbrew-go/internal/ui/api"
+	"github.com/georgik/espbrew-go/internal/ui/components"
+	"github.com/georgik/espbrew-go/internal/ui/dom"
+	"github.com/georgik/espbrew-go/internal/ui/layout"
 )
 
 var (

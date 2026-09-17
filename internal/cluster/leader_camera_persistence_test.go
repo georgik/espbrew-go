@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"codeberg.org/georgik/espbrew-go/internal/persistence"
-	"codeberg.org/georgik/espbrew-go/pkg/protocol"
+	"github.com/georgik/espbrew-go/internal/persistence"
+	"github.com/georgik/espbrew-go/pkg/protocol"
 )
 
 // TestLeaderCameraSettingsPersistAcrossRestart verifies that camera settings

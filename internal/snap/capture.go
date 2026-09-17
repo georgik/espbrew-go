@@ -8,7 +8,7 @@ import (
 	"image/jpeg"
 	"time"
 
-	"codeberg.org/georgik/espbrew-go/internal/camera"
+	"github.com/georgik/espbrew-go/internal/camera"
 	"github.com/rs/zerolog/log"
 )
 

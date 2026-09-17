@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"codeberg.org/georgik/espbrew-go/internal/snap"
+	"github.com/georgik/espbrew-go/internal/snap"
 )
 
 // TestLocalSnap_BasicFunctionality tests basic snap functionality

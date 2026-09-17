@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"codeberg.org/georgik/espbrew-go/pkg/protocol"
+	"github.com/georgik/espbrew-go/pkg/protocol"
 )
 
 func TestNewFlasher(t *testing.T) {

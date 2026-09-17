@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"codeberg.org/georgik/espbrew-go/internal/flashhash"
+	"github.com/georgik/espbrew-go/internal/flashhash"
 )
 
 // HashCache stores computed flash hashes with expiration

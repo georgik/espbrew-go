@@ -4,8 +4,8 @@ import (
 	"os"
 	"testing"
 
-	"codeberg.org/georgik/espbrew-go/internal/chips"
-	"codeberg.org/georgik/espbrew-go/internal/flash/testutil"
+	"github.com/georgik/espbrew-go/internal/chips"
+	"github.com/georgik/espbrew-go/internal/flash/testutil"
 )
 
 // TestELFSectionDataExtraction verifies section data is read correctly

@@ -6,8 +6,8 @@ import (
 	"os"
 	"time"
 
-	"codeberg.org/georgik/espbrew-go/internal/camera"
-	"codeberg.org/georgik/espbrew-go/internal/cluster"
+	"github.com/georgik/espbrew-go/internal/camera"
+	"github.com/georgik/espbrew-go/internal/cluster"
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
 )

@@ -14,7 +14,7 @@ import (
 	"sync"
 	"time"
 
-	"codeberg.org/georgik/espbrew-go/internal/config"
+	"github.com/georgik/espbrew-go/internal/config"
 	"github.com/gorilla/websocket"
 	"github.com/rs/zerolog/log"
 )
