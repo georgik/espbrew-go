@@ -3,8 +3,14 @@ name: CI
 on:
   push:
     branches: [main, develop]
+    # Skip CI for documentation-only changes; only run when source/build/test
+    # relevant files change. Any change outside docs/** triggers the workflow.
+    paths-ignore:
+      - 'docs/**'
   pull_request:
     branches: [main, develop]
+    paths-ignore:
+      - 'docs/**'
 
 jobs:
   test:
