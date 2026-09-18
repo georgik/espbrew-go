@@ -127,7 +127,7 @@ add `-it --entrypoint /bin/sh` to the command above.
 For full details, the host `udev` prerequisite, verification, and troubleshooting,
 see [container.md](docs/container.md).
 
-See [docs/ci_setup.md](docs/ci_setup.md) for details on how the image is built
+See [docs/ci-setup.md](docs/ci-setup.md) for details on how the image is built
 and published (including the manual workflow trigger).
 
 ## Documentation
@@ -151,8 +151,8 @@ Additional reference documents:
 - [cluster.md](docs/cluster.md) - Multi-node cluster setup and remote operations
 - [snap.md](docs/snap.md) - Flash, monitor, and capture workflow
 - [api.md](docs/api.md) - REST and WebSocket API reference
-- [power_control.md](docs/power_control.md) - USB hub power control details
-- [image_mapping.md](docs/image_mapping.md) - Device-to-camera mapping
+- [power-control.md](docs/power-control.md) - USB hub power control details
+- [image-mapping.md](docs/image-mapping.md) - Device-to-camera mapping
 
 ## Project Structure
 
