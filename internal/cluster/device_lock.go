@@ -156,6 +156,23 @@ func (r *DeviceRegistry) Release(path, owner string) bool {
 	return dev.Release(owner)
 }
 
+// ForceRelease clears any reservation on the device regardless of the current
+// owner. Unlike Release (which requires the caller to match the owner), it is
+// used to recover devices left stuck by a client that failed to release (e.g.
+// a monitor whose release was shadowed by a route bug). It returns the owner
+// that was holding the reservation before the release.
+func (r *DeviceRegistry) ForceRelease(path string) string {
+	r.mu.RLock()
+	dev, exists := r.devices[path]
+	r.mu.RUnlock()
+
+	if !exists {
+		return ""
+	}
+
+	return dev.ForceRelease()
+}
+
 func (r *DeviceRegistry) GetState(path string) DeviceState {
 	r.mu.RLock()
 	dev, exists := r.devices[path]

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
 
@@ -23,6 +24,10 @@ var monitorUpgrader = websocket.Upgrader{
 type MonitorServer struct {
 	streams *monitor.StreamManager
 	mu      sync.RWMutex
+	// resolve maps a device base name (as sent by the CLI) to the full
+	// device path stored on the leader, e.g. "usb-…-if00" ->
+	// "/dev/serial/by-id/usb-…-if00". Nil when no leader registry is wired.
+	resolve func(string) string
 }
 
 func NewMonitorServer() *MonitorServer {
@@ -40,10 +45,19 @@ func (s *MonitorServer) handleMonitorWebSocket(w http.ResponseWriter, r *http.Re
 	vars := mux.Vars(r)
 	portName := vars["port"]
 
+	// Resolve the base name (as sent by the CLI) to the full device path
+	// stored on the leader, e.g. "/dev/serial/by-id/usb-…-if00".
+	if s.resolve != nil {
+		portName = s.resolve(portName)
+	}
+
 	// Reconstruct full port path from name
-	// On Windows, COM ports don't have a /dev/ prefix
+	// On Windows, COM ports don't have a /dev/ prefix. A resolved path is
+	// already absolute, so only prefix /dev/ when it isn't already.
 	var port string
 	if runtime.GOOS == "windows" {
+		port = portName
+	} else if strings.HasPrefix(portName, "/dev/") {
 		port = portName
 	} else {
 		port = "/dev/" + portName

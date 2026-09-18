@@ -62,6 +62,14 @@ func (h *APIHandler) RegisterRoutes(r *mux.Router) {
 	api.HandleFunc("/devices/forgot/{path:.*}", h.handleForgetDevice).Methods("DELETE")
 	// Register specific device routes BEFORE generic /devices/{id} to ensure they match first
 	h.RegisterBackendRoutes(r)
+
+	// Device reservation (use device name without /dev/ prefix).
+	// MUST be registered BEFORE the generic /devices/{id:.*} routes: {id:.*}
+	// matches paths containing slashes (e.g. /dev/serial/by-id/usb-.../reserve),
+	// so registering this route afterwards would let the {id:.*} DELETE route
+	// shadow the reserve DELETE and the monitor could never release a device.
+	api.HandleFunc("/devices/{name}/reserve", h.handleReserveDevice).Methods("POST", "DELETE")
+
 	// Use {id:.*} to match paths with slashes (e.g., /dev/ttyUSB0)
 	api.HandleFunc("/devices/{id:.*}", h.handleDeviceDetail).Methods("GET")
 	api.HandleFunc("/devices/{id:.*}", h.handleUpdateDevice).Methods("PUT", "PATCH")
@@ -69,9 +77,6 @@ func (h *APIHandler) RegisterRoutes(r *mux.Router) {
 	api.HandleFunc("/devices/{id}/captures", h.handleDeviceCaptures).Methods("GET")
 	api.HandleFunc("/cameras", h.handleCameras).Methods("GET")
 	api.HandleFunc("/boards", h.handleBoards).Methods("GET")
-
-	// Device reservation (use device name without /dev/ prefix)
-	api.HandleFunc("/devices/{name}/reserve", h.handleReserveDevice).Methods("POST", "DELETE")
 
 	// Operational mode management
 	api.HandleFunc("/mode", h.handleGetMode).Methods("GET")
@@ -530,8 +535,10 @@ func (h *APIHandler) findDeviceByName(deviceName string) (string, *protocol.Devi
 
 	state := h.leader.State()
 	for path, dev := range state.Devices {
-		// Match by base name
-		if path == "/dev/"+deviceName || path == deviceName {
+		// Match by full path, /dev/<base>, or by base name (handles stable
+		// /dev/serial/by-id/... paths whose base is what callers send).
+		if path == "/dev/"+deviceName || path == deviceName ||
+			strings.HasSuffix(path, "/"+deviceName) || strings.HasSuffix(path, deviceName) {
 			return path, dev, true
 		}
 	}

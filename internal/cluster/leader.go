@@ -578,14 +578,18 @@ func (l *LeaderNode) handleDeviceEvent(event device.DeviceEvent) {
 		existingDev, exists := l.state.Devices[event.Path]
 
 		if exists {
-			// Device exists - update VID/PID/Status but preserve identity
+			// Device exists - update VID/PID/Status but preserve identity.
+			// A reconnect can race with a monitor that released (or whose
+			// release was shadowed by a route bug) and leave a stale reserved
+			// lock behind. Since we report the device as available, reset the
+			// lock to match (Register is idempotent and would not clear it).
 			existingDev.VID = event.VID
 			existingDev.PID = event.PID
 			existingDev.Status = "available"
 			l.state.Devices[event.Path] = existingDev
+			l.devices.ForceRelease(event.Path)
 			log.Info().Str("path", event.Path).Str("device_id", existingDev.DeviceID).
 				Msg("Device re-connected, preserving identity")
-			l.devices.Register(event.Path)
 			return
 		}
 
@@ -638,6 +642,12 @@ func (l *LeaderNode) handleDeviceEvent(event device.DeviceEvent) {
 			Status:       "available",
 		}
 		l.applyDeviceConfig(dev)
+		// Persist the espbrew.toml-derived identity (id, chip, alias) so the
+		// board is selectable by name via `flash --filter-alias <alias>`. The
+		// mapping stays authoritative and is re-applied on every device event.
+		if cfg := l.config.DeviceByPath(dev.Path); cfg != nil {
+			l.persistConfiguredDevice(dev, cfg.Alias)
+		}
 		l.state.Devices[event.Path] = dev
 		l.devices.Register(event.Path)
 
@@ -680,6 +690,63 @@ func (l *LeaderNode) applyDeviceConfig(dev *protocol.DeviceInfo) {
 			log.Debug().Str("path", dev.Path).Str("alias", cfg.Alias).
 				Msg("Applied configured device alias")
 		}
+	}
+}
+
+// persistConfiguredDevice stamps the espbrew.toml-derived identity (id, chip,
+// alias) onto the persistence store. The API's device list and the
+// `flash --filter-alias <alias>` selector both read aliases from this store, so
+// persisting here is what makes a board selectable by the configured alias. The
+// espbrew.toml mapping stays authoritative: the alias is re-applied on every
+// device event, so it is refreshed whenever the file changes or the board
+// reconnects.
+func (l *LeaderNode) persistConfiguredDevice(dev *protocol.DeviceInfo, alias string) {
+	if dev == nil || dev.DeviceID == "" {
+		return
+	}
+
+	now := time.Now()
+	existing, err := l.store.GetDevice(dev.DeviceID)
+	var record *persistence.DeviceRecord
+	if err == nil && existing != nil {
+		record = existing
+	} else {
+		record = &persistence.DeviceRecord{FirstSeen: now}
+	}
+
+	record.DeviceID = dev.DeviceID
+	record.MACAddress = dev.SerialNumber
+	record.ChipType = dev.ChipType
+	record.LastPath = dev.Path
+	record.NodeID = l.id
+	record.LastSeen = now
+	if dev.VID != 0 {
+		record.VID = dev.VID
+	}
+	if dev.PID != 0 {
+		record.PID = dev.PID
+	}
+	if dev.SerialNumber != "" {
+		record.SerialNumber = dev.SerialNumber
+	}
+
+	// Keep the configured alias authoritative while preserving any aliases the
+	// operator may have added separately (dedup, order-preserving).
+	if alias != "" {
+		seen := map[string]bool{}
+		for _, a := range record.Aliases {
+			seen[a] = true
+		}
+		if !seen[alias] {
+			record.Aliases = append(record.Aliases, alias)
+		}
+		if len(record.Aliases) == 0 {
+			record.Aliases = []string{alias}
+		}
+	}
+
+	if err := l.store.SaveDevice(record); err != nil {
+		log.Warn().Err(err).Str("device_id", dev.DeviceID).Msg("Failed to save configured device to persistence")
 	}
 }
 
@@ -1519,7 +1586,11 @@ func (l *LeaderNode) cleanupOrphanedDevices() {
 				log.Warn().Str("path", path).Msg("Releasing orphaned busy device")
 				dev.Status = "available"
 				l.state.Devices[path] = dev
-				l.devices.Release(path, "")
+				// The lock may be owned by a client that failed to release
+				// (e.g. a monitor whose release was shadowed by a route bug).
+				// Release(path, "") is denied for a non-empty owner, so clear
+				// the stale lock directly to keep the reported status truthful.
+				l.devices.ForceRelease(path)
 			}
 		}
 	}

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -106,6 +107,20 @@ func (s *Server) setupRoutes(store *persistence.Store) {
 
 	// Monitor WebSocket routes
 	s.monitor = NewMonitorServer()
+	// Give the monitor handler a way to map the base device name the CLI
+	// sends (e.g. "usb-…-if00") to the full path stored on the leader, so
+	// monitoring works for stable /dev/serial/by-id/ devices.
+	if leader, ok := s.node.(*cluster.LeaderNode); ok {
+		reg := leader.GetDevices()
+		s.monitor.resolve = func(base string) string {
+			for path := range reg.ListDevices() {
+				if filepath.Base(path) == base {
+					return path
+				}
+			}
+			return base
+		}
+	}
 	s.monitor.RegisterRoutes(s.router)
 
 	// WebSocket - override the API placeholder
