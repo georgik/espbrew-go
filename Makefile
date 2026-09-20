@@ -3,7 +3,7 @@
 .PHONY: all build wasm clean test fmt vet lint run e2e demo demo-serve
 
 # Build metadata. VERSION defaults to "dev" (a custom/local build); override with
-# `make build VERSION=v0.4.0` for a tagged release. BUILD_TIME is the UTC time the
+# `make build VERSION=vMAJOR.MINOR.PATCH` for a tagged release. BUILD_TIME is the UTC time the
 # binary is compiled. Both are injected via -ldflags so `espbrew --version` reports
 # them (see cmd/espbrew/main.go). This is the canonical build entry point.
 VERSION ?= dev

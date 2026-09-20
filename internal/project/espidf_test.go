@@ -248,3 +248,185 @@ func TestESPIDFDetector_GetArtifacts(t *testing.T) {
 		})
 	}
 }
+
+// TestESPIDFDetector_GetArtifacts_ExtraPartitions verifies that additional
+// partitions listed in flash_args (beyond bootloader/partitions/app) are detected
+// and keep their flash offsets. This covers the case of a custom partition table
+// that emits extra data images, e.g. a pre-populated FAT storage partition.
+func TestESPIDFDetector_GetArtifacts_ExtraPartitions(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Standard ESP-IDF build layout.
+	if err := os.MkdirAll(filepath.Join(tmpDir, "bootloader"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(tmpDir, "partition_table"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(tmpDir, "config"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(filepath.Join(tmpDir, "bootloader", "bootloader.bin"), []byte("boot"), 0644)
+	os.WriteFile(filepath.Join(tmpDir, "partition_table", "partition-table.bin"), []byte("part"), 0644)
+	os.WriteFile(filepath.Join(tmpDir, "esp32s3_hello.bin"), []byte("app-image"), 0644)
+	// Extra data partition (e.g. fatfs_create_spiflash_image -> storage.bin).
+	os.WriteFile(filepath.Join(tmpDir, "storage.bin"), []byte("fat-image"), 0644)
+
+	// flash_args lists all four images with their offsets.
+	flashArgs := "--flash-mode dio --flash-freq 80m --flash-size 2MB\n" +
+		"0x0 bootloader/bootloader.bin\n" +
+		"0x8000 partition_table/partition-table.bin\n" +
+		"0x50000 esp32s3_hello.bin\n" +
+		"0x10000 storage.bin\n"
+	os.WriteFile(filepath.Join(tmpDir, "flash_args"), []byte(flashArgs), 0644)
+
+	d := &ESPIDFDetector{}
+	artifacts, err := d.GetArtifacts(tmpDir)
+	if err != nil {
+		t.Fatalf("GetArtifacts: %v", err)
+	}
+
+	// Standard slots still resolved.
+	if artifacts.Bootloader == "" || artifacts.Partitions == "" || artifacts.App == "" {
+		t.Fatalf("standard slots not fully resolved: %+v", artifacts)
+	}
+
+	// Exactly one extra file: storage.bin at 0x10000.
+	if len(artifacts.ExtraFiles) != 1 {
+		t.Fatalf("expected 1 extra file, got %d: %+v", len(artifacts.ExtraFiles), artifacts.ExtraFiles)
+	}
+	ef := artifacts.ExtraFiles[0]
+	if ef.Offset != 0x10000 {
+		t.Fatalf("expected extra offset 0x10000, got 0x%x", ef.Offset)
+	}
+	if filepath.Base(ef.Path) != "storage.bin" {
+		t.Fatalf("expected extra file storage.bin, got %s", ef.Path)
+	}
+}
+
+// TestESPIDFDetector_GetArtifacts_NoExtraPartitions verifies that a project whose
+// flash_args only lists the standard three images yields no extra files.
+func TestESPIDFDetector_GetArtifacts_NoExtraPartitions(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	if err := os.MkdirAll(filepath.Join(tmpDir, "bootloader"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(tmpDir, "partition_table"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(filepath.Join(tmpDir, "bootloader", "bootloader.bin"), []byte("boot"), 0644)
+	os.WriteFile(filepath.Join(tmpDir, "partition_table", "partition-table.bin"), []byte("part"), 0644)
+	os.WriteFile(filepath.Join(tmpDir, "firmware.bin"), []byte("app"), 0644)
+
+	// flash_args with only the standard three images.
+	flashArgs := "--flash-mode dio --flash-freq 80m --flash-size 4MB\n" +
+		"0x0 bootloader/bootloader.bin\n" +
+		"0x8000 partition_table/partition-table.bin\n" +
+		"0x10000 firmware.bin\n"
+	os.WriteFile(filepath.Join(tmpDir, "flash_args"), []byte(flashArgs), 0644)
+
+	d := &ESPIDFDetector{}
+	artifacts, err := d.GetArtifacts(tmpDir)
+	if err != nil {
+		t.Fatalf("GetArtifacts: %v", err)
+	}
+
+	if len(artifacts.ExtraFiles) != 0 {
+		t.Fatalf("expected no extra files, got %d: %+v", len(artifacts.ExtraFiles), artifacts.ExtraFiles)
+	}
+}
+
+// TestESPIDFDetector_GetArtifacts_ExtraPartitionMissingFile verifies that a
+// flash_args entry pointing at a missing file is skipped (not panic/err).
+func TestESPIDFDetector_GetArtifacts_ExtraPartitionMissingFile(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	if err := os.MkdirAll(filepath.Join(tmpDir, "bootloader"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(tmpDir, "partition_table"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(filepath.Join(tmpDir, "bootloader", "bootloader.bin"), []byte("boot"), 0644)
+	os.WriteFile(filepath.Join(tmpDir, "partition_table", "partition-table.bin"), []byte("part"), 0644)
+	os.WriteFile(filepath.Join(tmpDir, "firmware.bin"), []byte("app"), 0644)
+
+	// flash_args references a nonexistent extra.bin.
+	flashArgs := "--flash-mode dio --flash-freq 80m --flash-size 4MB\n" +
+		"0x0 bootloader/bootloader.bin\n" +
+		"0x8000 partition_table/partition-table.bin\n" +
+		"0x10000 firmware.bin\n" +
+		"0x50000 missing.bin\n"
+	os.WriteFile(filepath.Join(tmpDir, "flash_args"), []byte(flashArgs), 0644)
+
+	d := &ESPIDFDetector{}
+	artifacts, err := d.GetArtifacts(tmpDir)
+	if err != nil {
+		t.Fatalf("GetArtifacts: %v", err)
+	}
+
+	if len(artifacts.ExtraFiles) != 0 {
+		t.Fatalf("expected missing file to be skipped, got %d: %+v", len(artifacts.ExtraFiles), artifacts.ExtraFiles)
+	}
+}
+
+// TestESPIDFDetector_GetArtifacts_FlashFiles verifies that BuildArtifacts.FlashFiles
+// is the authoritative, ordered flash plan parsed from flash_args, with each image
+// resolved to an absolute path and its real flash offset. This guards the regression
+// where the factory app (0x50000) was flashed at the preset 0x10000 and never booted.
+func TestESPIDFDetector_GetArtifacts_FlashFiles(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	if err := os.MkdirAll(filepath.Join(tmpDir, "bootloader"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(tmpDir, "partition_table"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(filepath.Join(tmpDir, "bootloader", "bootloader.bin"), []byte("boot"), 0644)
+	os.WriteFile(filepath.Join(tmpDir, "partition_table", "partition-table.bin"), []byte("part"), 0644)
+	os.WriteFile(filepath.Join(tmpDir, "esp32s3_hello.bin"), []byte("app-image"), 0644)
+	os.WriteFile(filepath.Join(tmpDir, "storage.bin"), []byte("fat-image"), 0644)
+
+	// flash_args lists all four images with their real offsets.
+	flashArgs := "--flash-mode dio --flash-freq 80m --flash-size 2MB\n" +
+		"0x0 bootloader/bootloader.bin\n" +
+		"0x8000 partition_table/partition-table.bin\n" +
+		"0x50000 esp32s3_hello.bin\n" +
+		"0x10000 storage.bin\n"
+	os.WriteFile(filepath.Join(tmpDir, "flash_args"), []byte(flashArgs), 0644)
+
+	d := &ESPIDFDetector{}
+	artifacts, err := d.GetArtifacts(tmpDir)
+	if err != nil {
+		t.Fatalf("GetArtifacts: %v", err)
+	}
+
+	// All four images are present, in flash_args order, at their real offsets.
+	if len(artifacts.FlashFiles) != 4 {
+		t.Fatalf("expected 4 flash files, got %d: %+v", len(artifacts.FlashFiles), artifacts.FlashFiles)
+	}
+
+	want := []struct {
+		base   string
+		offset uint32
+	}{
+		{"bootloader.bin", 0x0},
+		{"partition-table.bin", 0x8000},
+		{"esp32s3_hello.bin", 0x50000},
+		{"storage.bin", 0x10000},
+	}
+	for i, w := range want {
+		if filepath.Base(artifacts.FlashFiles[i].Path) != w.base {
+			t.Errorf("flash file[%d] path = %s, want %s", i, artifacts.FlashFiles[i].Path, w.base)
+		}
+		if artifacts.FlashFiles[i].Offset != w.offset {
+			t.Errorf("flash file[%d] offset = 0x%x, want 0x%x", i, artifacts.FlashFiles[i].Offset, w.offset)
+		}
+		// Paths must be absolute so the client can read them from anywhere.
+		if !filepath.IsAbs(artifacts.FlashFiles[i].Path) {
+			t.Errorf("flash file[%d] path %s is not absolute", i, artifacts.FlashFiles[i].Path)
+		}
+	}
+}

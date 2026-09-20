@@ -105,6 +105,17 @@ var projectRegistry = func() *project.Registry {
 	return r
 }()
 
+// detectedExtraFiles holds partition images discovered during autodetection that are
+// beyond the standard bootloader/partitions/app trio (e.g. a custom FAT storage
+// partition). They are flashed after the standard images in runFlashRemoteMultiImage.
+var detectedExtraFiles []project.ExtraFile
+
+// detectedFlashFiles is the authoritative, ordered flash plan discovered from the
+// build's flash_args (bootloader/partitions/app + any extra partitions), each with
+// its real flash offset. When non-empty it drives runFlashRemoteMultiImage so every
+// image lands at its true partition offset rather than a preset one.
+var detectedFlashFiles []project.FlashFile
+
 func runFlash(cmd *cobra.Command, args []string) error {
 	if flashOpts.clusterURL != "" {
 		return runFlashRemote(args)
@@ -140,10 +151,20 @@ func runFlashRemote(args []string) error {
 							flashOpts.app = artifacts.App
 						}
 
+						// Capture any extra partition images (beyond bootloader/partitions/app)
+						// so runFlashRemoteMultiImage can flash them too.
+						detectedExtraFiles = append([]project.ExtraFile(nil), artifacts.ExtraFiles...)
+
+						// Capture the authoritative flash plan (all images + offsets) so
+						// runFlashRemoteMultiImage flashes each at its real partition offset.
+						detectedFlashFiles = append([]project.FlashFile(nil), artifacts.FlashFiles...)
+
 						log.Debug().
 							Str("bootloader", flashOpts.bootloader).
 							Str("partitions", flashOpts.partitions).
 							Str("app", flashOpts.app).
+							Int("extra_partitions", len(detectedExtraFiles)).
+							Int("flash_files", len(detectedFlashFiles)).
 							Msg("Auto-populated flash paths")
 					}
 				}
@@ -644,6 +665,79 @@ func runBuildDir() error {
 	return nil
 }
 
+// remoteImage is a single binary to flash to an ESP device at a given offset.
+type remoteImage struct {
+	name   string
+	path   string
+	offset int
+}
+
+// buildMultiImageImages assembles the ordered list of images to flash for the
+// multi-image remote path: bootloader, partitions, app, followed by any extra
+// partition images discovered during autodetection (from the build's flash_args /
+// custom partition table). Keeping this in a helper makes the ordering testable
+// without a live cluster.
+// buildMultiImageImages assembles the ordered list of images to flash for the
+// multi-image remote path.
+//
+// When flashFiles is non-empty it is the authoritative flash plan (parsed from the
+// build's flash_args): each image is flashed at the exact offset ESP-IDF assigned
+// to it. This is what makes a custom partition table work — e.g. an app at 0x50000
+// and a storage partition at 0x10000 both land in the right place instead of
+// colliding at a preset offset.
+//
+// When flashFiles is empty (explicit --bootloader/--partitions/--app without a
+// discoverable flash_args), it falls back to the preset offsets for the standard
+// slots and appends any extra partitions discovered during detection.
+func buildMultiImageImages(flashFiles []project.FlashFile, extra []project.ExtraFile) []remoteImage {
+	images := []remoteImage{}
+
+	// Authoritative path: honor flash_args offsets for every image.
+	if len(flashFiles) > 0 {
+		for _, f := range flashFiles {
+			images = append(images, remoteImage{
+				name:   f.Name,
+				path:   f.Path,
+				offset: int(f.Offset),
+			})
+		}
+		return images
+	}
+
+	// Fallback path: preset offsets for the standard slots.
+
+	// Determine bootloader offset based on chip
+	// Default to 0x0 (ESP32-S3 and most newer chips)
+	// For ESP32/ESP32-S2, user must specify --chip explicitly
+	bootloaderOffset := 0x0
+	if flashOpts.chip != "auto" && flashOpts.chip != "" {
+		if off, ok := flashlib.BootloaderOffset(flashOpts.chip); ok {
+			bootloaderOffset = int(off)
+		}
+	}
+
+	if flashOpts.bootloader != "" {
+		images = append(images, remoteImage{name: "bootloader", path: flashOpts.bootloader, offset: bootloaderOffset})
+	}
+	if flashOpts.partitions != "" {
+		images = append(images, remoteImage{name: "partitions", path: flashOpts.partitions, offset: flashlib.PresetOffsetPartitions})
+	}
+	if flashOpts.app != "" {
+		images = append(images, remoteImage{name: "app", path: flashOpts.app, offset: flashlib.PresetOffsetApp})
+	}
+
+	// Extra partitions keep their flash_args order and are flashed last.
+	for _, ef := range extra {
+		images = append(images, remoteImage{
+			name:   ef.Name,
+			path:   ef.Path,
+			offset: int(ef.Offset),
+		})
+	}
+
+	return images
+}
+
 func runFlashRemoteMultiImage() error {
 	// Resolve device from inventory if --device specified
 	if flashOpts.deviceID != "" {
@@ -686,33 +780,7 @@ func runFlashRemoteMultiImage() error {
 		devicePath = flashOpts.port
 	}
 
-	type remoteImage struct {
-		name   string
-		path   string
-		offset int
-	}
-
-	var images []remoteImage
-
-	// Determine bootloader offset based on chip
-	// Default to 0x0 (ESP32-S3 and most newer chips)
-	// For ESP32/ESP32-S2, user must specify --chip explicitly
-	bootloaderOffset := 0x0
-	if flashOpts.chip != "auto" && flashOpts.chip != "" {
-		if off, ok := flashlib.BootloaderOffset(flashOpts.chip); ok {
-			bootloaderOffset = int(off)
-		}
-	}
-
-	if flashOpts.bootloader != "" {
-		images = append(images, remoteImage{name: "bootloader", path: flashOpts.bootloader, offset: bootloaderOffset})
-	}
-	if flashOpts.partitions != "" {
-		images = append(images, remoteImage{name: "partitions", path: flashOpts.partitions, offset: flashlib.PresetOffsetPartitions})
-	}
-	if flashOpts.app != "" {
-		images = append(images, remoteImage{name: "app", path: flashOpts.app, offset: flashlib.PresetOffsetApp})
-	}
+	images := buildMultiImageImages(detectedFlashFiles, detectedExtraFiles)
 
 	log.Info().Int("images", len(images)).Str("device", devicePath).Msg("Multi-image flash via cluster")
 
