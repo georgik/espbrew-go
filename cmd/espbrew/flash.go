@@ -105,6 +105,11 @@ var projectRegistry = func() *project.Registry {
 	return r
 }()
 
+// detectedExtraFiles holds partition images discovered during autodetection that are
+// beyond the standard bootloader/partitions/app trio (e.g. a custom FAT storage
+// partition). They are flashed after the standard images in runFlashRemoteMultiImage.
+var detectedExtraFiles []project.ExtraFile
+
 func runFlash(cmd *cobra.Command, args []string) error {
 	if flashOpts.clusterURL != "" {
 		return runFlashRemote(args)
@@ -140,10 +145,15 @@ func runFlashRemote(args []string) error {
 							flashOpts.app = artifacts.App
 						}
 
+						// Capture any extra partition images (beyond bootloader/partitions/app)
+						// so runFlashRemoteMultiImage can flash them too.
+						detectedExtraFiles = append([]project.ExtraFile(nil), artifacts.ExtraFiles...)
+
 						log.Debug().
 							Str("bootloader", flashOpts.bootloader).
 							Str("partitions", flashOpts.partitions).
 							Str("app", flashOpts.app).
+							Int("extra_partitions", len(detectedExtraFiles)).
 							Msg("Auto-populated flash paths")
 					}
 				}
@@ -644,6 +654,53 @@ func runBuildDir() error {
 	return nil
 }
 
+// remoteImage is a single binary to flash to an ESP device at a given offset.
+type remoteImage struct {
+	name   string
+	path   string
+	offset int
+}
+
+// buildMultiImageImages assembles the ordered list of images to flash for the
+// multi-image remote path: bootloader, partitions, app, followed by any extra
+// partition images discovered during autodetection (from the build's flash_args /
+// custom partition table). Keeping this in a helper makes the ordering testable
+// without a live cluster.
+func buildMultiImageImages(extra []project.ExtraFile) []remoteImage {
+	images := []remoteImage{}
+
+	// Determine bootloader offset based on chip
+	// Default to 0x0 (ESP32-S3 and most newer chips)
+	// For ESP32/ESP32-S2, user must specify --chip explicitly
+	bootloaderOffset := 0x0
+	if flashOpts.chip != "auto" && flashOpts.chip != "" {
+		if off, ok := flashlib.BootloaderOffset(flashOpts.chip); ok {
+			bootloaderOffset = int(off)
+		}
+	}
+
+	if flashOpts.bootloader != "" {
+		images = append(images, remoteImage{name: "bootloader", path: flashOpts.bootloader, offset: bootloaderOffset})
+	}
+	if flashOpts.partitions != "" {
+		images = append(images, remoteImage{name: "partitions", path: flashOpts.partitions, offset: flashlib.PresetOffsetPartitions})
+	}
+	if flashOpts.app != "" {
+		images = append(images, remoteImage{name: "app", path: flashOpts.app, offset: flashlib.PresetOffsetApp})
+	}
+
+	// Extra partitions keep their flash_args order and are flashed last.
+	for _, ef := range extra {
+		images = append(images, remoteImage{
+			name:   ef.Name,
+			path:   ef.Path,
+			offset: int(ef.Offset),
+		})
+	}
+
+	return images
+}
+
 func runFlashRemoteMultiImage() error {
 	// Resolve device from inventory if --device specified
 	if flashOpts.deviceID != "" {
@@ -686,33 +743,7 @@ func runFlashRemoteMultiImage() error {
 		devicePath = flashOpts.port
 	}
 
-	type remoteImage struct {
-		name   string
-		path   string
-		offset int
-	}
-
-	var images []remoteImage
-
-	// Determine bootloader offset based on chip
-	// Default to 0x0 (ESP32-S3 and most newer chips)
-	// For ESP32/ESP32-S2, user must specify --chip explicitly
-	bootloaderOffset := 0x0
-	if flashOpts.chip != "auto" && flashOpts.chip != "" {
-		if off, ok := flashlib.BootloaderOffset(flashOpts.chip); ok {
-			bootloaderOffset = int(off)
-		}
-	}
-
-	if flashOpts.bootloader != "" {
-		images = append(images, remoteImage{name: "bootloader", path: flashOpts.bootloader, offset: bootloaderOffset})
-	}
-	if flashOpts.partitions != "" {
-		images = append(images, remoteImage{name: "partitions", path: flashOpts.partitions, offset: flashlib.PresetOffsetPartitions})
-	}
-	if flashOpts.app != "" {
-		images = append(images, remoteImage{name: "app", path: flashOpts.app, offset: flashlib.PresetOffsetApp})
-	}
+	images := buildMultiImageImages(detectedExtraFiles)
 
 	log.Info().Int("images", len(images)).Str("device", devicePath).Msg("Multi-image flash via cluster")
 

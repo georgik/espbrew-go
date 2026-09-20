@@ -2,7 +2,10 @@ package project
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
+
+	"github.com/georgik/espbrew-go/internal/flash"
 )
 
 // ESPIDFDetector detects ESP-IDF projects
@@ -78,5 +81,69 @@ func (d *ESPIDFDetector) GetArtifacts(buildDir string) (*BuildArtifacts, error) 
 		}
 	}
 
+	// Honor the partition table: the build's flash_args lists every image that must
+	// be flashed, including extra data partitions that are not part of the standard
+	// bootloader/partitions/app trio (for example a pre-populated FAT image emitted
+	// by fatfs_create_spiflash_image, e.g. storage.bin). Detect those here so they
+	// are flashed instead of silently dropped.
+	artifacts.ExtraFiles = d.detectExtraFiles(buildDir, artifacts)
+
 	return artifacts, nil
+}
+
+// detectExtraFiles parses the build's flash_args and returns the images that are
+// not the standard bootloader/partitions/app slots, preserving their flash offsets.
+// This is what makes additional partitions (from a custom partitions.csv) reachable.
+func (d *ESPIDFDetector) detectExtraFiles(buildDir string, artifacts *BuildArtifacts) []ExtraFile {
+	data, err := os.ReadFile(artifacts.FlashArgs)
+	if err != nil {
+		// No flash_args -> nothing extra to discover; fall back to the standard slots.
+		return nil
+	}
+
+	fa, err := flash.ParseFlashArgs(data)
+	if err != nil {
+		// A malformed flash_args should not break detection; ignore it.
+		return nil
+	}
+
+	// Collect the resolved absolute paths of the standard slots so we can skip them.
+	standard := make(map[string]bool)
+	for _, p := range []string{artifacts.Bootloader, artifacts.Partitions, artifacts.App} {
+		if p == "" {
+			continue
+		}
+		if abs, err := filepath.Abs(p); err == nil {
+			standard[abs] = true
+		}
+	}
+
+	var extra []ExtraFile
+	seen := make(map[string]bool)
+	for _, f := range fa.Files {
+		resolved := resolveBuildPath(buildDir, f.Path)
+		if resolved == "" {
+			// File referenced by flash_args is missing on disk; skip it.
+			continue
+		}
+
+		abs, err := filepath.Abs(resolved)
+		if err != nil {
+			abs = resolved
+		}
+
+		// Skip anything that is one of the standard slots, and avoid duplicates.
+		if standard[abs] || seen[abs] {
+			continue
+		}
+		seen[abs] = true
+
+		extra = append(extra, ExtraFile{
+			Path:   resolved,
+			Offset: f.Offset,
+			Name:   filepath.Base(resolved),
+		})
+	}
+
+	return extra
 }
