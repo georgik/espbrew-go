@@ -98,13 +98,13 @@ image lives next to the code that produced it.
   `espbrew cluster --role leader --port 8080` (mirrors `cluster.sh`). Base image is `debian:bookworm-slim`
   because the release binary is glibc-linked (Alpine/musl would not run it).
 - **`.github/workflows/publish-image.yml`** — triggered **manually** (`workflow_dispatch`). Bundles a
-  configurable release tag (default `v0.3.1`), builds the image with `docker/build-push-action`, and
+  configurable release tag (default `vMAJOR.MINOR.PATCH`), builds the image with `docker/build-push-action`, and
   pushes it to `ghcr.io/<owner>/<repo>`.
 
 #### Use
 
 1. Go to `<repo> -> Actions -> Publish Image -> Run workflow`.
-2. Set **espbrew release tag to bundle** (e.g. `v0.3.1`) and optionally an extra image tag.
+2. Set **espbrew release tag to bundle** (e.g. `vMAJOR.MINOR.PACH`) and optionally an extra image tag.
 3. After it finishes, pull and run:
 
    ```bash

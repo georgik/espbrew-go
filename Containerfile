@@ -11,7 +11,7 @@
 #     ./espbrew cluster --role leader --port 8080
 #
 # To bundle a different release version, rebuild with:
-#     docker build --build-arg ESPBREW_VERSION=v0.4.0 -t ghcr.io/<owner>/<repo> .
+#     docker build --build-arg ESPBREW_VERSION=v0.6.0 -t ghcr.io/<owner>/<repo> .
 #
 # Base image note: the release binary is dynamically linked against glibc
 # (interpreter /lib64/ld-linux-x86-64.so.2, NEEDED libc.so.6), so the base
@@ -20,7 +20,7 @@
 # ---------------------------------------------------------------------------
 
 # --- release asset to bundle ------------------------------------------------
-ARG ESPBREW_VERSION=v0.4.0
+ARG ESPBREW_VERSION=v0.6.0
 ARG BINARY_NAME=espbrew-linux-amd64        # linux/amd64 asset (see release.yml)
 ARG RELEASE_URL=https://github.com/georgik/espbrew-go/releases/download
 
