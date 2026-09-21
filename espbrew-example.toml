@@ -1,0 +1,27 @@
+# This is example configuration for espbrew
+# To activate it rename the file to espbrew.toml.
+# mv espbrew-example.toml espbrew.toml
+
+[[devices]]
+path = "/dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_98:88:E0:D4:D2:58-if00"
+id   = "esp-98:88:E0:D4:D2:58-if00"
+alias = "esp32-c3-lcdkit"
+chip  = "ESP32-C3"
+description = "ESP32-C3 LcdKit"
+
+[[devices]]
+path = "/dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_30:30:F9:5A:8F:D4-if00"
+id   = "esp-30:30:F9:5A:8F:D4-if00"
+alias = "esp32-s3-box-3"
+chip  = "ESP32-S3"
+description = "ESP32-S3-Box-3"
+
+# Companion USB-UART console on the ESP32-S3-BOX-3. It is a Silicon Labs CP2102N
+# bridge, not an ESP32, so it can never be flashed. Mark it disabled so it is
+# shown in the API as disabled (and flash skips it) instead of appearing as an
+# "unconfigured" port.
+[[devices]]
+path = "/dev/serial/by-id/usb-Silicon_Labs_CP2102N_USB_to_UART_Bridge_Controller_8af3c1772ebef011a552c67948e9de0f-if00-port0"
+disabled = true
+description = "ESP32-S3-Box-3 USB-UART console (not flashable)"
+
