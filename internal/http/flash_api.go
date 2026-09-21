@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/georgik/espbrew-go/internal/chips"
 	"github.com/georgik/espbrew-go/internal/cluster"
 	"github.com/google/uuid"
 	"github.com/gorilla/mux"
@@ -344,6 +345,15 @@ func (h *PeerFlashHandler) handleFlashSubmit(w http.ResponseWriter, r *http.Requ
 		DevicePath: req.DevicePath,
 		Status:     cluster.JobPending,
 		CreatedAt:  time.Now(),
+	}
+
+	// Resolve the target chip from the peer's device registry so ELF->image
+	// conversion uses the correct chip id (the flasher defaults to
+	// ESP32-S3 otherwise, which other chips reject at boot).
+	if dev, ok := state.Devices[req.DevicePath]; ok {
+		if chip, ok := chips.ParseChip(dev.ChipType); ok {
+			job.Chip = chip
+		}
 	}
 
 	// Execute flash synchronously

@@ -5,6 +5,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/georgik/espbrew-go/internal/chips"
 	"github.com/google/uuid"
 	"github.com/rs/zerolog/log"
 )
@@ -44,6 +45,7 @@ type Job struct {
 	EraseAll     bool
 	EraseAddress uint32
 	EraseSize    uint32
+	Chip         chips.Chip // Target chip, for ELF->image conversion (0 = auto/unknown)
 	Status       JobStatus
 	Progress     int
 	CreatedAt    time.Time

@@ -211,7 +211,7 @@ func runFlashRemote(args []string) error {
 		}
 
 		// Filter devices based on criteria
-		filtered, err := filterDevices(devices)
+		filtered, err := filterDevices(devices, flashOpts.filterBoardModel, flashOpts.filterChip, flashOpts.filterAlias, flashOpts.filterTags)
 		if err != nil {
 			return err
 		}
@@ -225,7 +225,7 @@ func runFlashRemote(args []string) error {
 		}
 
 		if devicePath == "" {
-			return fmt.Errorf("no matching devices on cluster (use --filter-board/--filter-tag/--filter-chip to specify criteria)")
+			return fmt.Errorf("no matching devices on cluster (use --filter-board/--filter-tag/--filter-chip/--filter-alias to specify criteria)")
 		}
 
 		log.Info().Str("device", devicePath).Msg("Auto-selected available device")
@@ -759,7 +759,7 @@ func runFlashRemoteMultiImage() error {
 		}
 
 		// Filter devices based on criteria
-		filtered, err := filterDevices(devices)
+		filtered, err := filterDevices(devices, flashOpts.filterBoardModel, flashOpts.filterChip, flashOpts.filterAlias, flashOpts.filterTags)
 		if err != nil {
 			return err
 		}
@@ -868,86 +868,4 @@ func runFlashRemoteMultiImage() error {
 	}
 
 	return nil
-}
-
-// filterDevices filters devices based on CLI filter criteria
-func filterDevices(devices []cluster.DeviceInfo) ([]cluster.DeviceInfo, error) {
-	// If no filters specified, return all devices
-	if flashOpts.filterBoardModel == "" && len(flashOpts.filterTags) == 0 && flashOpts.filterChip == "" && flashOpts.filterAlias == "" {
-		return devices, nil
-	}
-
-	log.Info().
-		Str("board", flashOpts.filterBoardModel).
-		Strs("tags", flashOpts.filterTags).
-		Str("chip", flashOpts.filterChip).
-		Str("alias", flashOpts.filterAlias).
-		Msg("Filtering devices")
-
-	// Filter devices by matching against API-provided metadata
-	var filtered []cluster.DeviceInfo
-	for _, d := range devices {
-		// Check if device matches all filter criteria
-		if matchesFilters(d) {
-			filtered = append(filtered, d)
-			log.Info().Str("device", d.Path).
-				Str("board", d.BoardModel).
-				Strs("tags", d.Tags).
-				Strs("aliases", d.Aliases).
-				Msg("Device matches filter")
-		}
-	}
-
-	log.Info().Int("total", len(devices)).Int("matched", len(filtered)).Msg("Device filter results")
-
-	if len(filtered) == 0 {
-		return nil, fmt.Errorf("no devices match the specified filters")
-	}
-
-	return filtered, nil
-}
-
-// matchesFilters checks if a device from the API matches the filter criteria
-func matchesFilters(d cluster.DeviceInfo) bool {
-	// Check board model filter
-	if flashOpts.filterBoardModel != "" && d.BoardModel != flashOpts.filterBoardModel {
-		return false
-	}
-
-	// Check chip type filter
-	if flashOpts.filterChip != "" && d.ChipType != flashOpts.filterChip {
-		return false
-	}
-
-	// Check alias filter (device must have the specified alias)
-	if flashOpts.filterAlias != "" {
-		found := false
-		for _, alias := range d.Aliases {
-			if alias == flashOpts.filterAlias {
-				found = true
-				break
-			}
-		}
-		if !found {
-			return false
-		}
-	}
-
-	// Check tags filter (all specified tags must be present)
-	if len(flashOpts.filterTags) > 0 {
-		for _, requiredTag := range flashOpts.filterTags {
-			found := false
-			for _, deviceTag := range d.Tags {
-				if deviceTag == requiredTag {
-					found = true
-					break
-				}
-			}
-			if !found {
-				return false
-			}
-		}
-	}
-
-	return true
 }

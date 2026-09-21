@@ -38,6 +38,12 @@ var monitorOpts struct {
 	duration    int
 	noRaw       bool
 	resetFirst  bool
+	// Device filtering (mirrors flash so monitor can select a device by
+	// alias, chip, board model, or tags when auto-detecting the port).
+	filterBoardModel string   // Filter by board model (e.g., "ESP32-S3-BOX")
+	filterTags       []string // Filter by tags (all must match)
+	filterChip       string   // Filter by chip type (e.g., "ESP32-S3")
+	filterAlias      string   // Filter by alias (e.g., production-esp1)
 }
 
 func init() {
@@ -49,6 +55,11 @@ func init() {
 	monitorCmd.Flags().IntVar(&monitorOpts.duration, "duration", 0, "Auto-exit after N seconds (0=no limit)")
 	monitorCmd.Flags().BoolVar(&monitorOpts.noRaw, "no-raw", false, "Skip raw terminal mode (for testing)")
 	monitorCmd.Flags().BoolVar(&monitorOpts.resetFirst, "reset", false, "Reset device before monitoring (captures boot logs)")
+	// Device filtering (select the board by alias/chip/board/tags when auto-detecting)
+	monitorCmd.Flags().StringVar(&monitorOpts.filterBoardModel, "filter-board", "", "Filter devices by board model (e.g., ESP32-S3-BOX)")
+	monitorCmd.Flags().StringSliceVar(&monitorOpts.filterTags, "filter-tag", []string{}, "Filter devices by tags (can be specified multiple times, all must match)")
+	monitorCmd.Flags().StringVar(&monitorOpts.filterChip, "filter-chip", "", "Filter devices by chip type (e.g., ESP32-S3)")
+	monitorCmd.Flags().StringVar(&monitorOpts.filterAlias, "filter-alias", "", "Filter devices by alias (e.g., production-esp1)")
 
 	rootCmd.AddCommand(monitorCmd)
 }
@@ -71,8 +82,15 @@ func runMonitorRemote() error {
 			return fmt.Errorf("list devices: %w", err)
 		}
 
-		// Find first available device
-		for _, d := range devices {
+		// Filter devices based on criteria (alias, chip, board, tags) so the
+		// monitor can select a board by the same selectors as `flash`.
+		filtered, err := filterDevices(devices, monitorOpts.filterBoardModel, monitorOpts.filterChip, monitorOpts.filterAlias, monitorOpts.filterTags)
+		if err != nil {
+			return err
+		}
+
+		// Find first available device from filtered list
+		for _, d := range filtered {
 			if d.State == "available" {
 				devicePath = d.Path
 				break
@@ -80,7 +98,7 @@ func runMonitorRemote() error {
 		}
 
 		if devicePath == "" {
-			return fmt.Errorf("no available devices on cluster")
+			return fmt.Errorf("no available devices on cluster (use --filter-board/--filter-tag/--filter-chip/--filter-alias to specify criteria)")
 		}
 
 		log.Info().Str("device", devicePath).Msg("Auto-selected available device")

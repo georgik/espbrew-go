@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/georgik/espbrew-go/internal/chips"
 	"github.com/rs/zerolog/log"
 )
 
@@ -47,15 +48,16 @@ func (c *PeerJobClient) SetTimeout(timeout time.Duration) {
 
 // JobAssignRequest is sent from leader to peer to assign a job.
 type JobAssignRequest struct {
-	JobID        string `json:"job_id"`
-	JobType      string `json:"job_type"` // "flash" or "erase"
-	DevicePath   string `json:"device_path"`
-	Firmware     string `json:"firmware"`      // Firmware path (for flash jobs)
-	Offset       int    `json:"offset"`        // Flash offset (for flash jobs)
-	Erase        bool   `json:"erase"`         // Enable erase before flash
-	EraseAll     bool   `json:"erase_all"`     // For erase jobs
-	EraseAddress uint32 `json:"erase_address"` // For erase jobs
-	EraseSize    uint32 `json:"erase_size"`    // For erase jobs
+	JobID        string     `json:"job_id"`
+	JobType      string     `json:"job_type"` // "flash" or "erase"
+	DevicePath   string     `json:"device_path"`
+	Firmware     string     `json:"firmware"`       // Firmware path (for flash jobs)
+	Offset       int        `json:"offset"`         // Flash offset (for flash jobs)
+	Erase        bool       `json:"erase"`          // Enable erase before flash
+	EraseAll     bool       `json:"erase_all"`      // For erase jobs
+	EraseAddress uint32     `json:"erase_address"`  // For erase jobs
+	EraseSize    uint32     `json:"erase_size"`     // For erase jobs
+	Chip         chips.Chip `json:"chip,omitempty"` // Target chip (for flash ELF->image conversion)
 }
 
 // JobAssignResponse is the peer's response to a job assignment.
@@ -77,6 +79,7 @@ func (c *PeerJobClient) AssignJob(ctx context.Context, job *Job) (*JobAssignResp
 		EraseAll:     job.EraseAll,
 		EraseAddress: job.EraseAddress,
 		EraseSize:    job.EraseSize,
+		Chip:         job.Chip,
 	}
 
 	if job.Type == JobTypeFlash {

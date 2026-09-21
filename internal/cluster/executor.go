@@ -155,6 +155,7 @@ func (e *JobExecutor) executeFlash(job *Job) error {
 		Port:     job.DevicePath,
 		Firmware: firmware,
 		Offset:   job.Offset,
+		Chip:     job.Chip,
 		Progress: make(chan int, 10),
 	}
 

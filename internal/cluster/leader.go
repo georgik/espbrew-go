@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/georgik/espbrew-go/internal/camera"
+	"github.com/georgik/espbrew-go/internal/chips"
 	"github.com/georgik/espbrew-go/internal/config"
 	"github.com/georgik/espbrew-go/internal/device"
 	"github.com/georgik/espbrew-go/internal/flashhash"
@@ -101,6 +102,23 @@ func (l *LeaderNode) Start(ctx context.Context) error {
 
 	log.Info().Str("node_id", l.id).Msg("Starting leader node")
 
+	// Load the espbrew.toml device mapping FIRST. It is authoritative for
+	// device identity; persistence only augments it with soft attributes
+	// (operator-added aliases, tags, protected/disabled state). Loading it
+	// before the watcher starts means the mapping is in place before any
+	// device event is processed.
+	if len(l.config.Devices) > 0 {
+		log.Info().Int("count", len(l.config.Devices)).
+			Str("path", l.configPath).
+			Msg("Loaded espbrew.toml device mapping (authoritative)")
+		for _, d := range l.config.Devices {
+			log.Debug().Str("path", d.Path).Str("alias", d.Alias).Str("chip", d.ChipType).
+				Msg("Configured device from espbrew.toml")
+		}
+	} else {
+		log.Warn().Msg("No devices configured in espbrew.toml - only auto-detected/unknown ports will appear")
+	}
+
 	// Start mDNS (skip in test mode)
 	if !l.config.DisablemDNS {
 		l.mdns = NewmDNSService(l.id, "leader", l.config.HTTPPort)
@@ -144,7 +162,9 @@ func (l *LeaderNode) Start(ctx context.Context) error {
 	// Discover cameras on startup
 	l.discoverCameras()
 
-	// Load persisted devices from store
+	// Load persisted devices from store. Persistence only augments the
+	// espbrew.toml mapping (soft attributes) - the mapping itself was loaded
+	// above, before the watcher started.
 	l.loadPersistedDevices()
 
 	// Report espbrew.toml device mapping presence (auto-discovery stays off)
@@ -487,6 +507,17 @@ func (l *LeaderNode) EnqueueJobWithOffsetAndErase(firmwarePath, devicePath strin
 
 	job := l.queue.EnqueueFlash(firmwarePath, devicePath, offset, erase)
 
+	// Derive the target chip from the device registry so the ELF->image
+	// conversion uses the correct chip id and address map. Without this the
+	// flasher falls back to ESP32-S3, which produces images other chips reject
+	// (e.g. ESP32-C3 boards boot with "Invalid chip id. Expected 5 read 9").
+	// The registry is the authoritative source for chip identity, so this
+	// matches whatever alias/selector the client used to pick the device.
+	if chip, ok := chips.ParseChip(dev.ChipType); ok {
+		job.Chip = chip
+		log.Debug().Str("device", devicePath).Str("chip", chip.String()).Msg("Flash job chip resolved from device")
+	}
+
 	// Reserve device for this job
 	if !l.devices.Reserve(devicePath, job.ID) {
 		l.queue.Complete(job.ID, fmt.Errorf("device reservation failed"))
@@ -574,95 +605,200 @@ func (l *LeaderNode) handleDeviceEvent(event device.DeviceEvent) {
 
 	switch event.Type {
 	case device.DeviceAdded:
-		// Check if device already exists in memory
-		existingDev, exists := l.state.Devices[event.Path]
+		// espbrew.toml mapping for this port, computed up front so we can
+		// recognize ports the operator intentionally disabled. A disabled port
+		// never gets a usable identity, so it must not log a "not found"
+		// warning when there is no persisted record.
+		cfg := l.config.DeviceByPath(event.Path)
+		disabledInConfig := cfg != nil && cfg.Disabled
 
-		if exists {
-			// Device exists - update VID/PID/Status but preserve identity.
-			// A reconnect can race with a monitor that released (or whose
-			// release was shadowed by a route bug) and leave a stale reserved
-			// lock behind. Since we report the device as available, reset the
-			// lock to match (Register is idempotent and would not clear it).
-			existingDev.VID = event.VID
-			existingDev.PID = event.PID
-			existingDev.Status = "available"
-			l.state.Devices[event.Path] = existingDev
-			l.devices.ForceRelease(event.Path)
-			log.Info().Str("path", event.Path).Str("device_id", existingDev.DeviceID).
-				Msg("Device re-connected, preserving identity")
+		// Load any persisted record (soft attributes: aliases, tags, state).
+		persisted, err := l.store.GetDeviceByPath(event.Path)
+		if err != nil {
+			if !disabledInConfig {
+				log.Warn().Err(err).Str("path", event.Path).Msg("Failed to load persisted device")
+			}
+		}
+
+		// A port espbrew.toml explicitly disables (e.g. a companion USB-UART
+		// console on the board) is not flashable and is not given a usable
+		// identity. It is logged here and otherwise ignored - espbrew.toml
+		// re-applies the disabled flag on every device event, so it needs no
+		// store record.
+		if disabledInConfig {
+			log.Info().Str("path", event.Path).Msg(
+				"Device disabled in espbrew.toml - not flashable")
 			return
 		}
 
-		// Not in memory - check persistence for device with this path
-		persisted, err := l.store.GetDeviceByPath(event.Path)
-		if err == nil && persisted != nil {
-			// Device exists in persistence - restore it
-			status := "available"
-			if persisted.Disabled {
-				status = "disabled"
+		// Build the in-memory device. Seed from memory or persistence when
+		// present so soft attributes survive; identity is then overridden by
+		// espbrew.toml when a mapping is present.
+		existingDev, existsInMem := l.state.Devices[event.Path]
+		var record *persistence.DeviceRecord
+		dev := &protocol.DeviceInfo{
+			Path:     event.Path,
+			RealPath: event.RealPath,
+			NodeID:   l.id,
+			VID:      event.VID,
+			PID:      event.PID,
+			Status:   "available",
+		}
+		if existingDev != nil {
+			// Reconnect: preserve identity + soft attributes, refresh status.
+			copySoftAttributes(dev, existingDev)
+		}
+		if persisted != nil {
+			record = persisted
+			// Seed identity from persistence (overridden by espbrew.toml below).
+			seedFromRecord(dev, record)
+		}
+		if record == nil {
+			record = &persistence.DeviceRecord{FirstSeen: time.Now()}
+			if dev.SerialNumber == "" {
+				dev.SerialNumber = event.Serial
 			}
-			dev := &protocol.DeviceInfo{
-				Path:            event.Path,
-				RealPath:        event.RealPath,
-				DeviceID:        persisted.DeviceID,
-				ChipType:        persisted.ChipType,
-				SerialNumber:    persisted.MACAddress,
-				VID:             event.VID,
-				PID:             event.PID,
-				NodeID:          l.id,
-				Status:          status,
-				Disabled:        persisted.Disabled,
-				DisabledReason:  persisted.DisabledReason,
-				DisabledBy:      persisted.DisabledBy,
-				DisabledAt:      persisted.DisabledAt,
-				Protected:       persisted.Protected,
-				ProtectedReason: persisted.ProtectedReason,
-				ProtectedBy:     persisted.ProtectedBy,
-				ProtectedAt:     persisted.ProtectedAt,
+		}
+
+		// espbrew.toml is authoritative for identity. It wins over any
+		// persisted identity, and the merged record is persisted so the API
+		// reflects the configured alias/chip. Soft attributes on the record
+		// (operator-added aliases, tags, protected/disabled state) are kept.
+		if cfg != nil {
+			if cfg.ID != "" {
+				dev.DeviceID = cfg.ID
+				record.DeviceID = cfg.ID
 			}
+			if cfg.ChipType != "" {
+				dev.ChipType = cfg.ChipType
+				record.ChipType = cfg.ChipType
+			}
+			if cfg.Alias != "" {
+				// The API reads aliases from persistence, so stamp them onto the
+				// record. protocol.DeviceInfo carries no Aliases field.
+				record.Aliases = prependAlias(cfg.Alias, record.Aliases)
+			}
+			if cfg.Description != "" {
+				record.Description = cfg.Description
+			}
+		}
+
+		// Persist known ports (configured via espbrew.toml or previously seen)
+		// so their identity/aliases survive a restart. Unknown ports are only
+		// reported via discovery and never get a store record.
+		if cfg != nil || persisted != nil {
+			record.LastPath = dev.Path
+			record.NodeID = l.id
+			record.LastSeen = time.Now()
+			if dev.VID != 0 {
+				record.VID = dev.VID
+			}
+			if dev.PID != 0 {
+				record.PID = dev.PID
+			}
+			if dev.SerialNumber != "" {
+				record.SerialNumber = dev.SerialNumber
+			}
+			if record.FirstSeen.IsZero() {
+				record.FirstSeen = time.Now()
+			}
+			if err := l.store.SaveDevice(record); err != nil {
+				log.Warn().Err(err).Str("device_id", dev.DeviceID).Msg("Failed to persist device")
+			}
+		}
+
+		// Reconnect bookkeeping: a reconnect can race with a monitor that
+		// released (or whose release was shadowed by a route bug) and leave a
+		// stale reserved lock behind. Register is idempotent and would not
+		// clear it, so reset the lock to match.
+		if existsInMem {
+			l.state.Devices[event.Path] = dev
+			l.devices.ForceRelease(event.Path)
+		} else {
 			l.state.Devices[event.Path] = dev
 			l.devices.Register(event.Path)
-			log.Info().Str("path", event.Path).Str("device_id", persisted.DeviceID).
-				Msg("Device restored from persistence")
-			return
 		}
 
-		// Truly new device - create fresh entry. Auto-discovery is disabled:
-		// we never probe a port on connect (that blocked the port and collided
-		// with flashing). Identity comes from the explicit espbrew.toml mapping
-		// when present; otherwise the port is listed as available and unconfigured
-		// so it can be probed or configured on demand.
-		dev := &protocol.DeviceInfo{
-			Path:         event.Path,
-			RealPath:     event.RealPath,
-			VID:          event.VID,
-			PID:          event.PID,
-			SerialNumber: event.Serial,
-			NodeID:       l.id,
-			Status:       "available",
-		}
-		l.applyDeviceConfig(dev)
-		// Persist the espbrew.toml-derived identity (id, chip, alias) so the
-		// board is selectable by name via `flash --filter-alias <alias>`. The
-		// mapping stays authoritative and is re-applied on every device event.
-		if cfg := l.config.DeviceByPath(dev.Path); cfg != nil {
-			l.persistConfiguredDevice(dev, cfg.Alias)
-		}
-		l.state.Devices[event.Path] = dev
-		l.devices.Register(event.Path)
-
-		if dev.DeviceID == "" {
+		switch {
+		case cfg != nil:
+			log.Info().Str("path", dev.Path).Str("device_id", dev.DeviceID).
+				Str("alias", cfg.Alias).Str("chip", dev.ChipType).
+				Msg("Device configured from espbrew.toml")
+		case existsInMem:
+			log.Info().Str("path", dev.Path).Str("device_id", dev.DeviceID).
+				Msg("Device re-connected, preserving identity")
+		default:
 			log.Info().Str("path", event.Path).Msg(
 				"Device present, unconfigured - run 'espbrew device probe <port>' or add it to espbrew.toml")
-		} else {
-			log.Info().Str("path", event.Path).Str("device_id", dev.DeviceID).
-				Msg("Device added on leader")
 		}
 
 	case device.DeviceRemoved:
 		delete(l.state.Devices, event.Path)
 		log.Info().Str("path", event.Path).Msg("Device removed from leader")
 	}
+}
+
+// copySoftAttributes copies the identity + soft attributes from one in-memory
+// device to another, leaving the caller's VID/PID/Status/RealPath untouched.
+func copySoftAttributes(dst, src *protocol.DeviceInfo) {
+	if src == nil {
+		return
+	}
+	dst.DeviceID = src.DeviceID
+	dst.ChipType = src.ChipType
+	dst.SerialNumber = src.SerialNumber
+	dst.Name = src.Name
+	dst.Disabled = src.Disabled
+	dst.DisabledReason = src.DisabledReason
+	dst.DisabledBy = src.DisabledBy
+	dst.DisabledAt = src.DisabledAt
+	dst.Protected = src.Protected
+	dst.ProtectedReason = src.ProtectedReason
+	dst.ProtectedBy = src.ProtectedBy
+	dst.ProtectedAt = src.ProtectedAt
+	dst.AccessError = src.AccessError
+	dst.Backend = src.Backend
+	dst.BackendConfig = src.BackendConfig
+}
+
+// seedFromRecord seeds identity + soft attributes on dev from a persisted
+// record. Identity is intentionally NOT authoritative here - espbrew.toml
+// overrides it afterwards when a mapping is present.
+func seedFromRecord(dev *protocol.DeviceInfo, record *persistence.DeviceRecord) {
+	if record == nil {
+		return
+	}
+	if dev.DeviceID == "" {
+		dev.DeviceID = record.DeviceID
+	}
+	if dev.ChipType == "" {
+		dev.ChipType = record.ChipType
+	}
+	if dev.SerialNumber == "" {
+		dev.SerialNumber = record.MACAddress
+	}
+	if dev.Name == "" {
+		dev.Name = record.Name
+	}
+	dev.Disabled = record.Disabled
+	if record.Disabled {
+		dev.Status = "disabled"
+	}
+}
+
+// prependAlias puts the espbrew.toml alias first (authoritative) while
+// preserving any additional aliases the operator added, deduplicated.
+func prependAlias(primary string, existing []string) []string {
+	out := make([]string, 0, len(existing)+1)
+	out = append(out, primary)
+	seen := map[string]bool{primary: true}
+	for _, a := range existing {
+		if !seen[a] {
+			seen[a] = true
+			out = append(out, a)
+		}
+	}
+	return out
 }
 
 // applyDeviceConfig stamps the identity from espbrew.toml onto a freshly
@@ -693,62 +829,6 @@ func (l *LeaderNode) applyDeviceConfig(dev *protocol.DeviceInfo) {
 	}
 }
 
-// persistConfiguredDevice stamps the espbrew.toml-derived identity (id, chip,
-// alias) onto the persistence store. The API's device list and the
-// `flash --filter-alias <alias>` selector both read aliases from this store, so
-// persisting here is what makes a board selectable by the configured alias. The
-// espbrew.toml mapping stays authoritative: the alias is re-applied on every
-// device event, so it is refreshed whenever the file changes or the board
-// reconnects.
-func (l *LeaderNode) persistConfiguredDevice(dev *protocol.DeviceInfo, alias string) {
-	if dev == nil || dev.DeviceID == "" {
-		return
-	}
-
-	now := time.Now()
-	existing, err := l.store.GetDevice(dev.DeviceID)
-	var record *persistence.DeviceRecord
-	if err == nil && existing != nil {
-		record = existing
-	} else {
-		record = &persistence.DeviceRecord{FirstSeen: now}
-	}
-
-	record.DeviceID = dev.DeviceID
-	record.MACAddress = dev.SerialNumber
-	record.ChipType = dev.ChipType
-	record.LastPath = dev.Path
-	record.NodeID = l.id
-	record.LastSeen = now
-	if dev.VID != 0 {
-		record.VID = dev.VID
-	}
-	if dev.PID != 0 {
-		record.PID = dev.PID
-	}
-	if dev.SerialNumber != "" {
-		record.SerialNumber = dev.SerialNumber
-	}
-
-	// Keep the configured alias authoritative while preserving any aliases the
-	// operator may have added separately (dedup, order-preserving).
-	if alias != "" {
-		seen := map[string]bool{}
-		for _, a := range record.Aliases {
-			seen[a] = true
-		}
-		if !seen[alias] {
-			record.Aliases = append(record.Aliases, alias)
-		}
-		if len(record.Aliases) == 0 {
-			record.Aliases = []string{alias}
-		}
-	}
-
-	if err := l.store.SaveDevice(record); err != nil {
-		log.Warn().Err(err).Str("device_id", dev.DeviceID).Msg("Failed to save configured device to persistence")
-	}
-}
 
 // logConfiguredDevices reports, at startup, whether each espbrew.toml device is
 // currently present on the host. Absent ports are visible to the operator
@@ -760,6 +840,12 @@ func (l *LeaderNode) logConfiguredDevices() {
 
 	for _, cfg := range l.config.Devices {
 		if cfg.Path == "" {
+			continue
+		}
+
+		// Ports espbrew.toml disables are reported on connect (see
+		// handleDeviceEvent), not here.
+		if cfg.Disabled {
 			continue
 		}
 

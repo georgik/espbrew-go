@@ -70,6 +70,10 @@ cd esp-idf-project
 idf.py build
 ./espbrew --cluster http://leader:8080 flash    # Auto-populates bootloader, partitions, app
 ./espbrew --cluster http://leader:8080 flash --no-detect  # Disable auto-detection
+
+# Device selection by identity (shared with `monitor`); no --port needed
+./espbrew --cluster http://leader:8080 flash --filter-alias esp32-c3-lcdkit
+./espbrew --cluster http://leader:8080 flash --filter-chip ESP32-S3
 ```
 
 ### Monitor
@@ -80,6 +84,22 @@ idf.py build
 ./espbrew monitor --reset         # Reset to capture boot logs
 ./espbrew monitor --exit-on "ready" # Exit on pattern
 ```
+
+**Cluster device selection:** When running against a cluster (`--cluster`) without `--port`,
+the monitor auto-selects the first available device. You can narrow the selection the same way
+`flash` does, most commonly by `alias` so a board resolves to the right physical port:
+
+```bash
+# Select the board by its espbrew.toml alias (mirrors flash --filter-alias)
+./espbrew --cluster http://leader:8080 monitor --filter-alias esp32-c3-lcdkit
+
+# Other selectors, all shared with `flash`
+./espbrew --cluster http://leader:8080 monitor --filter-chip ESP32-S3     # all S3 boards
+./espbrew --cluster http://leader:8080 monitor --filter-board ESP32-S3-BOX-3
+./espbrew --cluster http://leader:8080 monitor --filter-tag bench
+```
+
+When `--port` is given, no filtering is applied and that port is used directly.
 
 ### Web Serial Monitor
 

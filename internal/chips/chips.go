@@ -1,5 +1,7 @@
 package chips
 
+import "strings"
+
 // Chip type for ESP chips
 type Chip int
 
@@ -43,6 +45,36 @@ func (c Chip) String() string {
 		return "unknown"
 	}
 }
+
+// ParseChip parses a chip type string (e.g. "ESP32-C3", "esp32s3", "ESP32")
+// into a Chip. It is case-insensitive and tolerates hyphens, so it accepts both
+// the registry/API form ("ESP32-C3") and the lowercase String() form ("esp32c3").
+// The second return value reports whether the string matched a known chip.
+func ParseChip(s string) (Chip, bool) {
+	key := chipKey(s)
+	if c, ok := chipKeyIndex[key]; ok {
+		return c, true
+	}
+	return 0, false
+}
+
+// chipKey normalizes a chip name for lookup: lowercase, trimmed, hyphens
+// removed (e.g. "ESP32-C3" -> "esp32c3").
+func chipKey(s string) string {
+	return strings.ReplaceAll(strings.ToLower(strings.TrimSpace(s)), "-", "")
+}
+
+var chipKeyIndex = func() map[string]Chip {
+	m := make(map[string]Chip)
+	known := []Chip{
+		ChipESP32, ChipESP32S2, ChipESP32S3, ChipESP32C3, ChipESP32C6,
+		ChipESP32H2, ChipESP32C2, ChipESP32C5, ChipESP32C61, ChipESP32P4,
+	}
+	for _, c := range known {
+		m[chipKey(c.String())] = c
+	}
+	return m
+}()
 
 // ESPChipID returns the actual ESP chip ID for image encoding
 func (c Chip) ESPChipID() uint16 {

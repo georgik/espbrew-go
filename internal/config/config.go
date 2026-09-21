@@ -13,6 +13,11 @@ type DeviceConfig struct {
 	ChipType    string `mapstructure:"chip" toml:"chip"`
 	Alias       string `mapstructure:"alias" toml:"alias"`
 	Description string `mapstructure:"description" toml:"description"`
+	// Disabled marks a port that espbrew.toml intentionally excludes from
+	// flashing (e.g. a companion USB-UART console on the board). Such a port is
+	// recorded and shown in the API as disabled, and flash skips it, but it is
+	// never given a usable flashing identity.
+	Disabled bool `mapstructure:"disabled" toml:"disabled"`
 }
 
 // StringID is a stable key for a device config (path, since ports are the
