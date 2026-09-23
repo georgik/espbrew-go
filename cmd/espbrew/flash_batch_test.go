@@ -312,9 +312,5 @@ func TestReportBatch(t *testing.T) {
 }
 
 func baseName(p string) string {
-	n := strings.LastIndex(p, "/")
-	if n < 0 {
-		return p
-	}
-	return p[n+1:]
+	return filepath.Base(p)
 }

@@ -22,35 +22,48 @@ func resetCIOpts() {
 }
 
 // withCIEnv runs fn with the provided CI env vars set, restoring them after.
+//
+// It first snapshots and clears *all* known CI env keys so the test observes
+// only the vars it explicitly sets. Without this, the ambient CI environment
+// (e.g. GITHUB_ACTIONS=1 inside GitHub Actions) leaks in and makes the
+// "clean env" assertions fail when the suite runs inside a pipeline.
 func withCIEnv(t *testing.T, vars map[string]string, fn func()) {
 	t.Helper()
-	orig := map[string]string{} // vars that existed before, with their values
-	added := []string{}         // vars that did not exist before and must be unset
-	for k, v := range vars {
-		if ev, ok := os.LookupEnv(k); ok {
-			orig[k] = ev
+
+	orig := map[string]string{} // original value for keys that existed
+	missing := []string{}       // keys that did not exist before
+	for _, k := range ciEnvKeys {
+		if v, ok := os.LookupEnv(k); ok {
+			orig[k] = v
 		} else {
-			added = append(added, k)
+			missing = append(missing, k)
 		}
+	}
+	for _, k := range ciEnvKeys {
+		os.Unsetenv(k)
+	}
+
+	// Apply the test-provided vars on top of the clean slate.
+	for k, v := range vars {
 		if v == "" {
 			os.Unsetenv(k)
 		} else {
 			os.Setenv(k, v)
 		}
 	}
-	// Restore immediately after fn() (not via t.Cleanup) so sibling test blocks
-	// observe a clean environment. defer also fires if fn panics.
-	defer restoreEnv(orig, added)
-	fn()
-}
 
-func restoreEnv(orig map[string]string, added []string) {
-	for _, k := range added {
-		os.Unsetenv(k)
-	}
-	for k, v := range orig {
-		os.Setenv(k, v)
-	}
+	// Restore all CI keys to their original ambient state after fn(). defer
+	// also fires if fn panics.
+	defer func() {
+		for _, k := range missing {
+			os.Unsetenv(k)
+		}
+		for k, v := range orig {
+			os.Setenv(k, v)
+		}
+	}()
+
+	fn()
 }
 
 func TestIsCIEnvironment(t *testing.T) {
@@ -117,10 +130,12 @@ func TestCIModePrecedence(t *testing.T) {
 	})
 
 	// Auto-detection: no flags, no CI env.
-	resetCIOpts()
-	if ciModeEnabled() {
-		t.Error("expected interactive mode with no CI env and no flags")
-	}
+	withCIEnv(t, nil, func() {
+		resetCIOpts()
+		if ciModeEnabled() {
+			t.Error("expected interactive mode with no CI env and no flags")
+		}
+	})
 }
 
 func TestCIAnnotations(t *testing.T) {

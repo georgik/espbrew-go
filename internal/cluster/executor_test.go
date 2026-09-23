@@ -30,12 +30,15 @@ func TestJobExecutor_Submit(t *testing.T) {
 
 	executor.Submit(job)
 
-	// Job was submitted (execution may fail due to no device)
+	// Job was submitted (execution may fail due to no device). The executor
+	// fails fast when no device is registered, so the result is available
+	// almost immediately; the timeout is only a safety net and stays well
+	// under the 5s per-test budget.
 	select {
 	case result := <-executor.Results():
 		assert.Equal(t, job.ID, result.Job.ID)
 		assert.NotNil(t, result) // May have error
-	case <-time.After(5 * time.Second):
+	case <-time.After(3 * time.Second):
 		t.Log("No result within timeout (expected if no device)")
 	}
 }
