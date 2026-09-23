@@ -527,19 +527,62 @@ type ReserveDeviceRequest struct {
 	TTL      int    `json:"ttl"`
 }
 
-// findDeviceByName looks up a device by its base name (without /dev/ prefix)
-func (h *APIHandler) findDeviceByName(deviceName string) (string, *protocol.DeviceInfo, bool) {
-	if h.leader == nil {
-		return "", nil, false
+// findDeviceByName looks up a device by its base name, its full path, or one
+// of its configured aliases. The server is the single source of truth for alias
+// resolution: a client (flash/monitor/flash-batch) may address a board by alias
+// and the server maps it to the real /dev path, so the client never needs to
+// know the path.
+func (h *APIHandler) findDeviceByName(name string) (string, *protocol.DeviceInfo, bool) {
+	return resolveDeviceName(h.store, h.node.State(), name)
+}
+
+// resolveDeviceName resolves a device by alias or path. Aliases are
+// authoritative and looked up in the persistence store; the live device path
+// comes from the node's device state. This is the single place where alias ->
+// path resolution happens: clients address boards by alias and the server maps
+// them to the real /dev path, never exposing the path to the client.
+func resolveDeviceName(store *persistence.Store, state *cluster.ClusterState, name string) (string, *protocol.DeviceInfo, bool) {
+	// 1. The store is authoritative for aliases. Match the record to the
+	// current live device by last path, then by device ID.
+	if store != nil && name != "" {
+		if rec, err := store.GetDeviceByAlias(name); err == nil && rec != nil {
+			if path, dev, ok := matchLiveDevice(state, rec); ok {
+				return path, dev, true
+			}
+		}
 	}
 
-	state := h.leader.State()
+	// 2. Fall back to matching the name as a path (full path, /dev/<base>, or
+	// bare base name) in the live state. This preserves backward compatibility
+	// for callers that send a real path.
+	if state != nil {
+		for path, dev := range state.Devices {
+			if path == "/dev/"+name || path == name ||
+				strings.HasSuffix(path, "/"+name) || strings.HasSuffix(path, name) {
+				return path, dev, true
+			}
+		}
+	}
+
+	return "", nil, false
+}
+
+// matchLiveDevice finds the current live device that corresponds to a persisted
+// device record, preferring a path match on LastPath, then a device-ID match.
+func matchLiveDevice(state *cluster.ClusterState, rec *persistence.DeviceRecord) (string, *protocol.DeviceInfo, bool) {
+	if state == nil || rec == nil {
+		return "", nil, false
+	}
 	for path, dev := range state.Devices {
-		// Match by full path, /dev/<base>, or by base name (handles stable
-		// /dev/serial/by-id/... paths whose base is what callers send).
-		if path == "/dev/"+deviceName || path == deviceName ||
-			strings.HasSuffix(path, "/"+deviceName) || strings.HasSuffix(path, deviceName) {
+		if rec.LastPath != "" && path == rec.LastPath {
 			return path, dev, true
+		}
+	}
+	if rec.DeviceID != "" {
+		for path, dev := range state.Devices {
+			if dev.DeviceID == rec.DeviceID {
+				return path, dev, true
+			}
 		}
 	}
 	return "", nil, false

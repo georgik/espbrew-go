@@ -31,7 +31,7 @@ func TestFlashHandler_handleUpload(t *testing.T) {
 		InitialMode:        "operational",
 	}, store)
 
-	handler := NewFlashHandler(master, os.TempDir(), nil)
+	handler := NewFlashHandler(master, store, os.TempDir(), nil)
 
 	// Create test firmware
 	testData := []byte("test firmware data")
@@ -91,7 +91,7 @@ func TestFlashHandler_handleUpload_NoFile(t *testing.T) {
 		InitialMode:        "operational",
 	}, store)
 
-	handler := NewFlashHandler(master, os.TempDir(), nil)
+	handler := NewFlashHandler(master, store, os.TempDir(), nil)
 
 	req := httptest.NewRequest("POST", "/api/v1/flash/upload", strings.NewReader(""))
 	req.Header.Set("Content-Type", "multipart/form-data")
@@ -126,7 +126,7 @@ func TestFlashHandler_handleFlashSubmit(t *testing.T) {
 		Status: "available",
 	})
 
-	handler := NewFlashHandler(master, os.TempDir(), nil)
+	handler := NewFlashHandler(master, store, os.TempDir(), nil)
 
 	// Create test firmware file
 	testData := []byte("test firmware")
@@ -199,7 +199,7 @@ func TestFlashHandler_handleFlashSubmit_DeviceNotFound(t *testing.T) {
 		InitialMode:        "operational",
 	}, store)
 
-	handler := NewFlashHandler(master, os.TempDir(), nil)
+	handler := NewFlashHandler(master, store, os.TempDir(), nil)
 
 	// First upload a file so we get past that check
 	testData := []byte("test firmware")
@@ -258,7 +258,7 @@ func TestFlashHandler_handleEraseSubmit(t *testing.T) {
 		Status: "available",
 	})
 
-	handler := NewFlashHandler(master, os.TempDir(), nil)
+	handler := NewFlashHandler(master, store, os.TempDir(), nil)
 
 	req := EraseSubmitRequest{
 		DevicePath: "/dev/ttyUSB0",
@@ -310,7 +310,7 @@ func TestFlashHandler_handleEraseSubmit_DeviceNotFound(t *testing.T) {
 		InitialMode:        "operational",
 	}, store)
 
-	handler := NewFlashHandler(master, os.TempDir(), nil)
+	handler := NewFlashHandler(master, store, os.TempDir(), nil)
 
 	req := EraseSubmitRequest{
 		DevicePath: "/dev/nonexistent",
@@ -351,7 +351,7 @@ func TestFlashHandler_handleEraseSubmit_RegionErase(t *testing.T) {
 		Status: "available",
 	})
 
-	handler := NewFlashHandler(master, os.TempDir(), nil)
+	handler := NewFlashHandler(master, store, os.TempDir(), nil)
 
 	req := EraseSubmitRequest{
 		DevicePath: "/dev/ttyUSB0",
@@ -388,5 +388,75 @@ func TestFlashHandler_handleEraseSubmit_RegionErase(t *testing.T) {
 
 	if submitResp.DevicePath != "/dev/ttyUSB0" {
 		t.Errorf("expected /dev/ttyUSB0, got %s", submitResp.DevicePath)
+	}
+}
+
+// TestFlashHandler_handleEraseSubmit_ByAlias verifies that in cluster mode the
+// erase handler resolves a board by alias (not by the absolute path), keeping
+// the server the single source of truth for the real /dev path.
+func TestFlashHandler_handleEraseSubmit_ByAlias(t *testing.T) {
+	store, err := persistence.Open(persistence.DefaultConfig(t.TempDir() + "/test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	// Persist a device record whose alias maps to /dev/ttyUSB0.
+	if err := store.SaveDevice(&persistence.DeviceRecord{
+		DeviceID: "esp-aa:bb:cc:dd:ee:ff",
+		Aliases:  []string{"prod-esp32"},
+		LastPath: "/dev/ttyUSB0",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	master := cluster.NewLeaderNode("test-master", &cluster.LeaderConfig{
+		DisablemDNS:        true,
+		DisableMaintenance: true,
+		InitialMode:        "operational",
+	}, store)
+
+	// The live device is addressed on the cluster only by its alias.
+	master.RegisterDevice(&protocol.DeviceInfo{
+		Path:     "/dev/ttyUSB0",
+		DeviceID: "esp-aa:bb:cc:dd:ee:ff",
+		VID:      0x4348,
+		PID:      0x0028,
+		Status:   "available",
+	})
+
+	handler := NewFlashHandler(master, store, os.TempDir(), nil)
+
+	// Client sends only the alias; no absolute path is transmitted.
+	req := EraseSubmitRequest{
+		DeviceAlias: "prod-esp32",
+		EraseAll:    true,
+		ClientID:    "test-client",
+	}
+
+	body, _ := json.Marshal(req)
+	httpReq := httptest.NewRequest("POST", "/api/v1/flash/erase", bytes.NewReader(body))
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	w := httptest.NewRecorder()
+	handler.handleEraseSubmit(w, httpReq)
+
+	resp := w.Result()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d: %s", resp.StatusCode, string(body))
+	}
+
+	var submitResp EraseSubmitResponse
+	if err := json.NewDecoder(resp.Body).Decode(&submitResp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+
+	// The server resolved the alias to the real path internally.
+	if submitResp.DevicePath != "/dev/ttyUSB0" {
+		t.Errorf("expected resolved /dev/ttyUSB0, got %s", submitResp.DevicePath)
+	}
+	if submitResp.JobID == "" {
+		t.Fatal("expected job_id")
 	}
 }

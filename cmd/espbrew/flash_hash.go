@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"time"
 
@@ -14,8 +15,10 @@ import (
 )
 
 // checkFlashStatusOptimization performs hash-based flash detection
-// It queries the server for flash status and logs optimization opportunities
-func checkFlashStatusOptimization(client *cluster.Client, devicePath, firmwarePath string) error {
+// It queries the server for flash status and logs optimization opportunities.
+// selector is what the client asks the server to address the board by (alias
+// preferred, port fallback); the server resolves it to the real path.
+func checkFlashStatusOptimization(client *cluster.Client, selector, firmwarePath string) error {
 	log.Info().Msg("Checking flash status for optimization opportunities...")
 
 	// 1. Determine chip type and get appropriate flash layout
@@ -74,9 +77,10 @@ func checkFlashStatusOptimization(client *cluster.Client, devicePath, firmwarePa
 		return nil
 	}
 
-	// 4. Query server flash status
+	// 4. Query server flash status. Address the board by the selector (alias
+	// preferred) so the server can resolve it to the real device path.
 	statusReq := flashhash.FlashStatusRequest{
-		DeviceID: devicePath, // Use device path as ID for now
+		DeviceID: selector,
 		Regions:  regionsToCheck,
 	}
 
@@ -85,8 +89,9 @@ func checkFlashStatusOptimization(client *cluster.Client, devicePath, firmwarePa
 		return fmt.Errorf("marshal status request: %w", err)
 	}
 
-	// Build URL for flash status endpoint
-	statusURL := client.BaseURL() + "/api/v1/devices/" + devicePath + "/flash-status"
+	// Build URL for flash status endpoint. Escape the selector so aliases and
+	// paths both map to a single path segment the server can resolve.
+	statusURL := client.BaseURL() + "/api/v1/devices/" + url.PathEscape(selector) + "/flash-status"
 
 	httpClient := &http.Client{
 		Timeout: 10 * time.Second,

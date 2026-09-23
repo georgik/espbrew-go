@@ -13,8 +13,11 @@ Note: Windows users should use `espbrew.exe` instead of `./espbrew` in the examp
 ### Device Management (Cluster)
 
 ```bash
-# List all cluster devices with detailed information
+# List all cluster devices with detailed information (includes an ALIASES column)
 ./espbrew --cluster http://leader:8080 device list
+
+# List cluster devices as JSON (aliases, tags, status) for scripting
+./espbrew --cluster http://leader:8080 device list --json
 
 # Delete a device record
 ./espbrew --cluster http://leader:8080 device delete /dev/serial/by-id/usb-Espressif_...

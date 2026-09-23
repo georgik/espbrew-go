@@ -329,7 +329,7 @@ func TestFlashAPI_DisabledDeviceBlocked(t *testing.T) {
 	})
 
 	progress := NewProgressHandler(master, nil)
-	flashHandler := NewFlashHandler(master, t.TempDir(), progress)
+	flashHandler := NewFlashHandler(master, store, t.TempDir(), progress)
 	router := mux.NewRouter()
 	flashHandler.RegisterRoutes(router)
 

@@ -340,6 +340,7 @@ type FlashUploadResponse struct {
 
 type FlashSubmitRequest struct {
 	DevicePath  string                 `json:"device_path"`
+	DeviceAlias string                 `json:"device_alias,omitempty"`
 	FileID      string                 `json:"file_id"`
 	FirmwareURL string                 `json:"firmware_url,omitempty"`
 	Options     map[string]interface{} `json:"options,omitempty"`
@@ -356,11 +357,12 @@ type FlashSubmitResponse struct {
 
 // EraseSubmitRequest represents a request to erase flash memory
 type EraseSubmitRequest struct {
-	DevicePath string `json:"device_path"`
-	Address    uint32 `json:"address,omitempty"`
-	Size       uint32 `json:"size,omitempty"`
-	EraseAll   bool   `json:"erase_all"`
-	ClientID   string `json:"client_id,omitempty"`
+	DevicePath  string `json:"device_path"`
+	DeviceAlias string `json:"device_alias,omitempty"`
+	Address     uint32 `json:"address,omitempty"`
+	Size        uint32 `json:"size,omitempty"`
+	EraseAll    bool   `json:"erase_all"`
+	ClientID    string `json:"client_id,omitempty"`
 }
 
 // EraseSubmitResponse represents the response from an erase job submission

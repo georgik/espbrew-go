@@ -74,22 +74,32 @@ func runMonitorCmd(cmd *cobra.Command, args []string) error {
 func runMonitorRemote() error {
 	client := cluster.NewClient(monitorOpts.clusterURL)
 
-	// Get available devices if port not specified
+	// Select the board by the selector we hand to the server. The server
+	// resolves it (alias -> device) — the client never needs the real path.
+	// --filter-alias is the preferred selector; --port is an explicit path.
+	selector := monitorOpts.filterAlias
+	if selector == "" {
+		selector = monitorOpts.port
+	}
+
 	var devicePath string
-	if monitorOpts.port == "" {
+	if selector != "" {
+		devicePath = selector
+		log.Info().Str("selector", selector).Msg("Selecting device by selector (server resolves)")
+	} else {
+		// No selector: auto-detect. List the cluster devices and pick the
+		// first available one matching any chip/board/tags filter. Prefer
+		// --filter-alias to keep resolution on the server.
 		devices, err := client.ListDevices()
 		if err != nil {
 			return fmt.Errorf("list devices: %w", err)
 		}
 
-		// Filter devices based on criteria (alias, chip, board, tags) so the
-		// monitor can select a board by the same selectors as `flash`.
 		filtered, err := filterDevices(devices, monitorOpts.filterBoardModel, monitorOpts.filterChip, monitorOpts.filterAlias, monitorOpts.filterTags)
 		if err != nil {
 			return err
 		}
 
-		// Find first available device from filtered list
 		for _, d := range filtered {
 			if d.State == "available" {
 				devicePath = d.Path
@@ -102,8 +112,6 @@ func runMonitorRemote() error {
 		}
 
 		log.Info().Str("device", devicePath).Msg("Auto-selected available device")
-	} else {
-		devicePath = monitorOpts.port
 	}
 
 	// Reserve device for monitoring

@@ -57,7 +57,7 @@ var eraseOpts struct {
 
 func init() {
 	eraseCmd.Flags().StringVar(&eraseOpts.clusterURL, "cluster", os.Getenv("ESPBREW_CLUSTER"), "Cluster URL for remote erase")
-	eraseCmd.Flags().StringVar(&eraseOpts.deviceID, "device", "", "Device selection by ID, alias, or MAC (from inventory)")
+	eraseCmd.Flags().StringVar(&eraseOpts.deviceID, "device", "", "Device selection by alias or path; in cluster mode the server resolves it (local mode uses inventory)")
 	eraseCmd.Flags().StringVarP(&eraseOpts.port, "port", "p", "", "Serial port (auto-detect if empty)")
 	eraseCmd.Flags().StringVar(&eraseOpts.address, "address", "0", "Start address for region erase (hex format)")
 	eraseCmd.Flags().StringVar(&eraseOpts.size, "size", "0", "Size for region erase (hex format)")
@@ -75,20 +75,23 @@ func runErase(cmd *cobra.Command, args []string) error {
 }
 
 func runEraseRemote() error {
-	// Resolve device from inventory if --device specified
-	if eraseOpts.deviceID != "" {
-		port, err := resolveEraseDevice()
-		if err != nil {
-			return err
-		}
-		eraseOpts.port = port
-	}
-
 	client := cluster.NewClient(eraseOpts.clusterURL)
 
-	// Get available devices if port not specified
-	var devicePath string
-	if eraseOpts.port == "" {
+	// selector: what the client asks the server to address the board by.
+	// --device (alias/ID/MAC) is the primary selector; the server is the
+	// single source of truth that maps it to a real /dev path. --port is the
+	// fallback for backward compatibility.
+	selector := eraseOpts.deviceID
+	if selector == "" {
+		selector = eraseOpts.port
+	}
+
+	// devicePath is only used for local logging. In auto-detect mode (no
+	// --device, no --port) the client must pick a board, so the resolved path
+	// becomes the selector. When a selector is available the server resolves
+	// the real path, so the client never needs to know or send it.
+	devicePath := selector
+	if selector == "" {
 		devices, err := client.ListDevices()
 		if err != nil {
 			return fmt.Errorf("list devices: %w", err)
@@ -107,8 +110,7 @@ func runEraseRemote() error {
 		}
 
 		log.Info().Str("device", devicePath).Msg("Auto-selected available device")
-	} else {
-		devicePath = eraseOpts.port
+		selector = devicePath
 	}
 
 	// Parse address and size
@@ -132,14 +134,21 @@ func runEraseRemote() error {
 		Bool("erase_all", eraseAll).Uint32("address", address).Uint32("size", size).
 		Msg("Submitting erase job to cluster")
 
-	// Submit erase job
-	eraseResp, err := client.SubmitErase(cluster.EraseSubmitRequest{
-		DevicePath: devicePath,
-		Address:    address,
-		Size:       size,
-		EraseAll:   eraseAll,
-		ClientID:   "espbrew-cli",
-	})
+	// Submit erase job. Address the board by selector (alias) when available so
+	// the server remains the single source of truth for the real path.
+	eraseReq := cluster.EraseSubmitRequest{
+		Address:  address,
+		Size:     size,
+		EraseAll: eraseAll,
+		ClientID: "espbrew-cli",
+	}
+	if eraseOpts.deviceID != "" {
+		eraseReq.DeviceAlias = eraseOpts.deviceID
+	} else {
+		eraseReq.DevicePath = selector
+	}
+
+	eraseResp, err := client.SubmitErase(eraseReq)
 	if err != nil {
 		return fmt.Errorf("submit erase: %w", err)
 	}

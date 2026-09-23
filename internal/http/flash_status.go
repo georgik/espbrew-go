@@ -14,6 +14,10 @@ import (
 // FlashStatusHandler handles flash status queries
 type FlashStatusHandler struct {
 	store *persistence.Store
+	// resolve maps the selector (alias or path) the CLI sends to the live
+	// device's stored hash key (device ID). It is nil in tests that do not
+	// wire alias resolution, in which case the raw selector is used.
+	resolve func(name string) string
 }
 
 // NewFlashStatusHandler creates a new flash status handler
@@ -58,6 +62,18 @@ func (h *FlashStatusHandler) handleFlashStatus(w http.ResponseWriter, r *http.Re
 		return
 	}
 
+	// The client addresses the board by alias or path; the server is the
+	// single source of truth. Resolve the selector to the device's stored hash
+	// key so the stored hashes can be looked up. If the selector cannot be
+	// resolved (e.g. an older client sending a raw path), fall back to the raw
+	// selector to preserve backward compatibility.
+	lookupID := deviceID
+	if h.resolve != nil {
+		if resolved := h.resolve(deviceID); resolved != "" {
+			lookupID = resolved
+		}
+	}
+
 	log.Info().
 		Str("device_id", deviceID).
 		Int("regions", len(req.Regions)).
@@ -72,7 +88,7 @@ func (h *FlashStatusHandler) handleFlashStatus(w http.ResponseWriter, r *http.Re
 	}
 
 	// Get job hashes for this device (most recent job)
-	jobHashes, err := h.getLatestJobHashes(deviceID)
+	jobHashes, err := h.getLatestJobHashes(lookupID)
 	if err != nil || jobHashes == nil {
 		log.Warn().Err(err).Str("device_id", deviceID).Msg("No job hashes found, full flash required")
 		respondJSON(w, flashhash.FlashStatusResponse{

@@ -215,6 +215,12 @@ List and manage devices across the cluster:
 ./espbrew --cluster http://leader:8080 device delete esp-30:30:f9:5a:a3:a0
 ```
 
+`device list` prints one row per cluster device with an **ALIASES** column (comma-separated) —
+this is the command to see which aliases the server knows before flashing by name. Use `--json`
+to get the full device records (including `aliases`, `tags`, `status`, `node_id`) for scripting.
+Aliases are the selector used by `flash --filter-alias`, `monitor --filter-alias`, and
+`flash-batch`.
+
 **Device Record Fields:**
 
 - `path`: Stable device identifier (by-id on Linux)

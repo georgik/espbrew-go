@@ -12,6 +12,7 @@ import (
 
 	"github.com/georgik/espbrew-go/internal/chips"
 	"github.com/georgik/espbrew-go/internal/cluster"
+	"github.com/georgik/espbrew-go/internal/persistence"
 	"github.com/google/uuid"
 	"github.com/gorilla/mux"
 	"github.com/rs/zerolog/log"
@@ -19,13 +20,15 @@ import (
 
 type FlashHandler struct {
 	leader    *cluster.LeaderNode
+	store     *persistence.Store
 	uploadDir string
 	progress  *ProgressHandler
 }
 
-func NewFlashHandler(leader *cluster.LeaderNode, uploadDir string, progress *ProgressHandler) *FlashHandler {
+func NewFlashHandler(leader *cluster.LeaderNode, store *persistence.Store, uploadDir string, progress *ProgressHandler) *FlashHandler {
 	return &FlashHandler{
 		leader:    leader,
+		store:     store,
 		uploadDir: uploadDir,
 		progress:  progress,
 	}
@@ -45,6 +48,7 @@ type FlashUploadResponse struct {
 
 type FlashSubmitRequest struct {
 	DevicePath  string                 `json:"device_path"`
+	DeviceAlias string                 `json:"device_alias,omitempty"`
 	FileID      string                 `json:"file_id"`
 	FirmwareURL string                 `json:"firmware_url,omitempty"`
 	Options     map[string]interface{} `json:"options,omitempty"`
@@ -114,13 +118,33 @@ func (h *FlashHandler) handleFlashSubmit(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	// Resolve the addressed board to its real /dev path. Clients address a
+	// board by alias; the alias is the primary selector and the server is the
+	// single source of truth for mapping it to a path. An explicit DevicePath
+	// is still accepted for backward compatibility.
+	var devicePath string
+	switch {
+	case req.DeviceAlias != "":
+		resolvedPath, _, ok := resolveDeviceName(h.store, h.leader.State(), req.DeviceAlias)
+		if !ok {
+			respondError(w, http.StatusNotFound, "device not found")
+			return
+		}
+		devicePath = resolvedPath
+	case req.DevicePath != "":
+		devicePath = req.DevicePath
+	default:
+		respondError(w, http.StatusBadRequest, "device alias or path required")
+		return
+	}
+
 	// Check if device is disabled
-	if IsDeviceDisabled(h.leader.State(), req.DevicePath) {
+	if IsDeviceDisabled(h.leader.State(), devicePath) {
 		respondError(w, http.StatusForbidden, "device is disabled and cannot be flashed")
 		return
 	}
 	// Check if device is protected (read-only mode - allows monitoring but not flashing)
-	if IsDeviceProtected(h.leader.State(), req.DevicePath) {
+	if IsDeviceProtected(h.leader.State(), devicePath) {
 		respondError(w, http.StatusForbidden, "device is protected and cannot be flashed (monitoring only)")
 		return
 	}
@@ -143,7 +167,7 @@ func (h *FlashHandler) handleFlashSubmit(w http.ResponseWriter, r *http.Request)
 	}
 
 	// Enqueue job with offset and erase option
-	job, err := h.leader.EnqueueJobWithOffsetAndErase(firmwarePath, req.DevicePath, req.Offset, req.Erase)
+	job, err := h.leader.EnqueueJobWithOffsetAndErase(firmwarePath, devicePath, req.Offset, req.Erase)
 	if err != nil {
 		respondError(w, http.StatusConflict, err.Error())
 		return
@@ -156,23 +180,24 @@ func (h *FlashHandler) handleFlashSubmit(w http.ResponseWriter, r *http.Request)
 
 	log.Info().
 		Str("job_id", job.ID).
-		Str("device", req.DevicePath).
+		Str("device", devicePath).
 		Str("client_id", req.ClientID).
 		Msg("Remote flash job created")
 
 	respondJSON(w, FlashSubmitResponse{
 		JobID:      job.ID,
 		Status:     string(job.Status),
-		DevicePath: req.DevicePath,
+		DevicePath: devicePath,
 	})
 }
 
 type EraseSubmitRequest struct {
-	DevicePath string `json:"device_path"`
-	Address    uint32 `json:"address,omitempty"`
-	Size       uint32 `json:"size,omitempty"`
-	EraseAll   bool   `json:"erase_all"`
-	ClientID   string `json:"client_id,omitempty"`
+	DevicePath  string `json:"device_path"`
+	DeviceAlias string `json:"device_alias,omitempty"`
+	Address     uint32 `json:"address,omitempty"`
+	Size        uint32 `json:"size,omitempty"`
+	EraseAll    bool   `json:"erase_all"`
+	ClientID    string `json:"client_id,omitempty"`
 }
 
 type EraseSubmitResponse struct {
@@ -193,9 +218,23 @@ func (h *FlashHandler) handleEraseSubmit(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Validate request
-	if req.DevicePath == "" {
-		respondError(w, http.StatusBadRequest, "device_path required")
+	// Resolve the addressed board to its real /dev path. Clients address a
+	// board by alias; the alias is the primary selector and the server is the
+	// single source of truth for mapping it to a path. An explicit DevicePath
+	// is still accepted for backward compatibility.
+	var devicePath string
+	switch {
+	case req.DeviceAlias != "":
+		resolvedPath, _, ok := resolveDeviceName(h.store, h.leader.State(), req.DeviceAlias)
+		if !ok {
+			respondError(w, http.StatusNotFound, "device not found")
+			return
+		}
+		devicePath = resolvedPath
+	case req.DevicePath != "":
+		devicePath = req.DevicePath
+	default:
+		respondError(w, http.StatusBadRequest, "device alias or path required")
 		return
 	}
 
@@ -205,18 +244,18 @@ func (h *FlashHandler) handleEraseSubmit(w http.ResponseWriter, r *http.Request)
 	}
 
 	// Check if device is disabled
-	if IsDeviceDisabled(h.leader.State(), req.DevicePath) {
+	if IsDeviceDisabled(h.leader.State(), devicePath) {
 		respondError(w, http.StatusForbidden, "device is disabled and cannot be erased")
 		return
 	}
 	// Check if device is protected (read-only mode)
-	if IsDeviceProtected(h.leader.State(), req.DevicePath) {
+	if IsDeviceProtected(h.leader.State(), devicePath) {
 		respondError(w, http.StatusForbidden, "device is protected and cannot be erased")
 		return
 	}
 
 	// Enqueue erase job
-	job, err := h.leader.EnqueueEraseJob(req.DevicePath, req.EraseAll, req.Address, req.Size)
+	job, err := h.leader.EnqueueEraseJob(devicePath, req.EraseAll, req.Address, req.Size)
 	if err != nil {
 		respondError(w, http.StatusConflict, err.Error())
 		return
@@ -229,7 +268,7 @@ func (h *FlashHandler) handleEraseSubmit(w http.ResponseWriter, r *http.Request)
 
 	log.Info().
 		Str("job_id", job.ID).
-		Str("device", req.DevicePath).
+		Str("device", devicePath).
 		Bool("erase_all", req.EraseAll).
 		Uint32("address", req.Address).
 		Uint32("size", req.Size).
@@ -239,7 +278,7 @@ func (h *FlashHandler) handleEraseSubmit(w http.ResponseWriter, r *http.Request)
 	respondJSON(w, EraseSubmitResponse{
 		JobID:      job.ID,
 		Status:     string(job.Status),
-		DevicePath: req.DevicePath,
+		DevicePath: devicePath,
 	})
 }
 

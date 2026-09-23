@@ -169,12 +169,6 @@ func runBatch(cmd *cobra.Command, args []string) error {
 func flashBoard(client *cluster.Client, board batchBoardConfig) boardResult {
 	res := boardResult{alias: board.Alias, optional: board.Optional}
 
-	devicePath, err := resolveBatchDevice(client, board.Alias)
-	if err != nil {
-		failOrSkip(&res, board, fmt.Errorf("resolve device: %w", err))
-		return res
-	}
-
 	images, err := resolveBoardImages(board.BuildDir)
 	if err != nil {
 		failOrSkip(&res, board, fmt.Errorf("resolve images: %w", err))
@@ -192,12 +186,14 @@ func flashBoard(client *cluster.Client, board batchBoardConfig) boardResult {
 			return res
 		}
 
+		// Address the board by alias. The server resolves alias -> device, so
+		// the client never needs (or learns) the physical /dev path.
 		flashResp, err := client.SubmitFlash(cluster.FlashSubmitRequest{
-			DevicePath: devicePath,
-			FileID:     uploadResp.FileID,
-			ClientID:   "espbrew-cli",
-			Offset:     img.offset,
-			Erase:      board.Erase,
+			DeviceAlias: board.Alias,
+			FileID:      uploadResp.FileID,
+			ClientID:    "espbrew-cli",
+			Offset:      img.offset,
+			Erase:       board.Erase,
 		})
 		if err != nil {
 			failOrSkip(&res, board, fmt.Errorf("submit %s: %w", img.name, err))

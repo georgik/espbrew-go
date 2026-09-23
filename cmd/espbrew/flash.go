@@ -202,9 +202,21 @@ func runFlashRemote(args []string) error {
 
 	client := cluster.NewClient(flashOpts.clusterURL)
 
-	// Get available devices if port not specified
-	var devicePath string
-	if flashOpts.port == "" {
+	// selector is what the client asks the server to address the board by.
+	// The alias is the primary selector (the server is the single source of
+	// truth that maps it to a real /dev path); the port is the fallback for
+	// backward compatibility.
+	selector := flashOpts.filterAlias
+	if selector == "" {
+		selector = flashOpts.port
+	}
+
+	// devicePath is only used for local logging. In auto-detect mode (no
+	// alias, no port) the client must pick a board, so the resolved path
+	// becomes the selector. When an alias is available the server resolves
+	// the real path, so the client never needs to know or send it.
+	devicePath := selector
+	if selector == "" {
 		devices, err := client.ListDevices()
 		if err != nil {
 			return fmt.Errorf("list devices: %w", err)
@@ -229,15 +241,15 @@ func runFlashRemote(args []string) error {
 		}
 
 		log.Info().Str("device", devicePath).Msg("Auto-selected available device")
-	} else {
-		devicePath = flashOpts.port
+		selector = devicePath
 	}
 
 	log.Info().Str("cluster", flashOpts.clusterURL).Str("device", devicePath).Msg("Uploading firmware to cluster")
 
-	// Hash-based flash detection (skip if disabled)
+	// Hash-based flash detection (skip if disabled). Address the board by the
+	// selector (alias preferred) so the server can resolve it to the real path.
 	if !flashOpts.skipHashCheck {
-		if err := checkFlashStatusOptimization(client, devicePath, firmwarePath); err != nil {
+		if err := checkFlashStatusOptimization(client, selector, firmwarePath); err != nil {
 			log.Warn().Err(err).Msg("Hash-based optimization failed, proceeding with full flash")
 		}
 	}
@@ -250,12 +262,18 @@ func runFlashRemote(args []string) error {
 
 	log.Info().Str("file_id", uploadResp.FileID).Int64("size", uploadResp.Size).Msg("Firmware uploaded")
 
-	// Submit flash job
+	// Submit flash job. Address the board by alias when one is available so the
+	// server remains the single source of truth for the real /dev path;
+	// otherwise fall back to the explicit path/port.
 	submitReq := cluster.FlashSubmitRequest{
-		DevicePath: devicePath,
-		FileID:     uploadResp.FileID,
-		ClientID:   "espbrew-cli",
-		Erase:      flashOpts.erase,
+		FileID:   uploadResp.FileID,
+		ClientID: "espbrew-cli",
+		Erase:    flashOpts.erase,
+	}
+	if flashOpts.filterAlias != "" {
+		submitReq.DeviceAlias = flashOpts.filterAlias
+	} else {
+		submitReq.DevicePath = selector
 	}
 
 	flashResp, err := client.SubmitFlash(submitReq)
@@ -739,20 +757,31 @@ func buildMultiImageImages(flashFiles []project.FlashFile, extra []project.Extra
 }
 
 func runFlashRemoteMultiImage() error {
-	// Resolve device from inventory if --device specified
+	client := cluster.NewClient(flashOpts.clusterURL)
+
+	// Address the board by alias (server resolves) or an explicit path.
+	// --device resolves to a path via the local inventory.
+	selector := flashOpts.filterAlias
 	if flashOpts.deviceID != "" {
 		port, err := resolveDevice()
 		if err != nil {
 			return err
 		}
-		flashOpts.port = port
+		selector = port
+	}
+	if selector == "" {
+		selector = flashOpts.port
 	}
 
-	client := cluster.NewClient(flashOpts.clusterURL)
-
-	// Get available devices if port not specified
+	// devicePath is only for local logging; the submit addresses the board by
+	// selector (alias preferred).
 	var devicePath string
-	if flashOpts.port == "" {
+	if selector != "" {
+		devicePath = selector
+		log.Info().Str("device", devicePath).Msg("Addressing board by selector (server resolves)")
+	} else {
+		// No selector: auto-detect. List the cluster devices and pick the first
+		// available one matching any chip/board/tags filter.
 		devices, err := client.ListDevices()
 		if err != nil {
 			return fmt.Errorf("list devices: %w", err)
@@ -776,8 +805,6 @@ func runFlashRemoteMultiImage() error {
 		}
 
 		log.Info().Str("device", devicePath).Msg("Auto-selected available device")
-	} else {
-		devicePath = flashOpts.port
 	}
 
 	images := buildMultiImageImages(detectedFlashFiles, detectedExtraFiles)
@@ -804,13 +831,20 @@ func runFlashRemoteMultiImage() error {
 			return fmt.Errorf("upload %s: %w", img.name, err)
 		}
 
-		// Submit flash job with offset
+		// Address the board by selector. Send the alias only when --filter-alias
+		// is explicitly set (the server resolves it); otherwise send the
+		// resolved path, which covers --device, --port, and auto-detect
+		// (no selector): the client picked a board and must address it by path.
 		submitReq := cluster.FlashSubmitRequest{
-			DevicePath: devicePath,
-			FileID:     uploadResp.FileID,
-			ClientID:   "espbrew-cli",
-			Offset:     img.offset,
-			Erase:      flashOpts.erase,
+			FileID:   uploadResp.FileID,
+			ClientID: "espbrew-cli",
+			Offset:   img.offset,
+			Erase:    flashOpts.erase,
+		}
+		if flashOpts.filterAlias != "" {
+			submitReq.DeviceAlias = flashOpts.filterAlias
+		} else {
+			submitReq.DevicePath = devicePath
 		}
 
 		flashResp, err := client.SubmitFlash(submitReq)

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -74,6 +73,16 @@ func (s *Server) setupRoutes(store *persistence.Store) {
 
 	// Flash status routes
 	flashStatusHandler := NewFlashStatusHandler(store)
+	// Address the board by alias or path; the server resolves the selector to
+	// the device's stored hash key so flash-status queries work by alias.
+	if leader, ok := s.node.(*cluster.LeaderNode); ok {
+		flashStatusHandler.resolve = func(name string) string {
+			if _, dev, ok := resolveDeviceName(store, leader.State(), name); ok && dev != nil {
+				return dev.DeviceID
+			}
+			return ""
+		}
+	}
 	flashStatusHandler.RegisterRoutes(s.router)
 
 	// Snap API routes
@@ -93,7 +102,7 @@ func (s *Server) setupRoutes(store *persistence.Store) {
 		progressHandler := NewProgressHandler(leader, s.hub)
 		progressHandler.RegisterRoutes(s.router)
 
-		flashHandler := NewFlashHandler(leader, os.TempDir(), progressHandler)
+		flashHandler := NewFlashHandler(leader, store, os.TempDir(), progressHandler)
 		flashHandler.RegisterRoutes(s.router)
 
 		// Read-flash handler
@@ -107,18 +116,15 @@ func (s *Server) setupRoutes(store *persistence.Store) {
 
 	// Monitor WebSocket routes
 	s.monitor = NewMonitorServer()
-	// Give the monitor handler a way to map the base device name the CLI
-	// sends (e.g. "usb-…-if00") to the full path stored on the leader, so
-	// monitoring works for stable /dev/serial/by-id/ devices.
+	// Give the monitor handler a way to map the base device name or alias the
+	// CLI sends to the full path stored on the leader, so monitoring works for
+	// both stable /dev/serial/by-id/ devices and boards addressed by alias.
 	if leader, ok := s.node.(*cluster.LeaderNode); ok {
-		reg := leader.GetDevices()
-		s.monitor.resolve = func(base string) string {
-			for path := range reg.ListDevices() {
-				if filepath.Base(path) == base {
-					return path
-				}
+		s.monitor.resolve = func(name string) string {
+			if path, _, ok := resolveDeviceName(store, leader.State(), name); ok {
+				return path
 			}
-			return base
+			return name
 		}
 	}
 	s.monitor.RegisterRoutes(s.router)

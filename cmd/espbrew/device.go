@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"text/tabwriter"
@@ -117,6 +118,7 @@ type deviceFlags struct {
 
 var deviceOpts deviceFlags
 var deviceClusterAddr string
+var deviceListJSON bool
 
 func init() {
 	rootCmd.AddCommand(deviceCmd)
@@ -137,6 +139,9 @@ func init() {
 	// Discover flags
 	deviceDiscoverCmd.Flags().DurationVar(&discoverOpts.timeout, "timeout", 5*time.Second, "Per-port probe timeout")
 	deviceDiscoverCmd.Flags().BoolVar(&discoverOpts.save, "save", false, "Record discovered devices to espbrew.toml on the leader")
+
+	// List flags
+	deviceListCmd.Flags().BoolVar(&deviceListJSON, "json", false, "Output as JSON")
 
 	// Add flags
 	deviceAddCmd.Flags().StringVar(&addOpts.id, "id", "", "Device ID (defaults to MAC-derived ID)")
@@ -170,6 +175,26 @@ func runDeviceList(cmd *cobra.Command, args []string) error {
 	}
 
 	devices := inv.List()
+
+	if deviceListJSON {
+		out := make([]map[string]any, 0, len(devices))
+		for _, dev := range devices {
+			out = append(out, map[string]any{
+				"id":       dev.DeviceID,
+				"name":     nameOrDefault(dev.Name),
+				"chip":     dev.ChipType,
+				"revision": dev.ChipRev,
+				"psram":    formatBytes(int64(dev.PSRAMSize)),
+				"flash":    formatBytes(int64(dev.FlashSize)),
+				"aliases":  dev.Aliases,
+				"tags":     dev.Tags,
+			})
+		}
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(out)
+	}
+
 	if len(devices) == 0 {
 		log.Info().Msg("No devices in inventory")
 		return nil
@@ -206,6 +231,12 @@ func runDeviceListCluster(clusterAddr string) error {
 	if len(devices) == 0 {
 		log.Info().Msg("No devices on cluster")
 		return nil
+	}
+
+	if deviceListJSON {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(devices)
 	}
 
 	tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
