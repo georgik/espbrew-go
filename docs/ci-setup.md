@@ -30,6 +30,27 @@ scripts/
 └── create-release.sh     # Release creation helper
 ```
 
+## Flash Batch in CI
+
+`espbrew flash-batch` is the multi-board flash command used by a consumer CI to flash
+every board from a manifest onto a self-hosted hardware runner.
+Boards flash in parallel (the cluster leader's worker pool handles
+concurrency); multi-image flashes within a board run sequentially.
+
+```bash
+# Single source of truth: boards.yaml (alias -> build_dir). See docs/cli-commands.md.
+./espbrew --cluster "$ESPBREW_CLUSTER" flash-batch \
+  --manifest boards.yaml \
+  --monitor-duration 15 \
+  --exit-on-error "abort() was called"
+```
+
+- **Exit code:** non-zero if any non-`optional` board fails, so the step fails the run.
+- **CI output:** auto-detected via `GITHUB_ACTIONS`; concise annotations instead of the
+  progress bar. Override with `--ci` / `--interactive` / `--quiet` / `--verbose`.
+- **Artifact-driven alternative:** `flash-batch --artifacts-dir tmp-artifacts` derives one
+  board per downloaded build artifact dir (alias from the dir name via `--artifacts-layout`).
+
 ## Build Limitations
 
 ### V4L2 Camera Support

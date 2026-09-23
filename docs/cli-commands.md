@@ -76,6 +76,57 @@ idf.py build
 ./espbrew --cluster http://leader:8080 flash --filter-chip ESP32-S3
 ```
 
+### Flash Batch (multi-board manifest)
+
+Flash and monitor **every board in a manifest** in a single invocation. This is the
+CI-friendly entrypoint: the shell no longer loops, backgrounds processes, tracks PID
+files, or prints a summary. Each board flashes in its own goroutine (the cluster
+leader's worker pool runs them concurrently); within a board, multi-image flashes run
+sequentially because the leader reserves the device per job.
+
+```bash
+# Manifest-driven: explicit alias -> build_dir mapping (single source of truth)
+./espbrew --cluster http://leader:8080 flash-batch --manifest boards.yaml
+
+# Artifact-driven: derive one board per downloaded build/ artifact dir
+./espbrew --cluster http://leader:8080 flash-batch --artifacts-dir tmp-artifacts
+
+# Flash + monitor each board (monitor duration in seconds)
+./espbrew --cluster http://leader:8080 flash-batch --manifest boards.yaml --monitor-duration 15
+
+# Fail a board if its serial output shows a boot crash
+./espbrew --cluster http://leader:8080 flash-batch --manifest boards.yaml --exit-on-error "abort() was called"
+```
+
+**Manifest format** (YAML or JSON; a leading `{` selects JSON):
+
+```yaml
+boards:
+  - alias: esp32-s3-box-3          # must match espbrew.toml / cluster alias
+    build_dir: raylib/examples/esp32s3/espressif-esp32-s3-box-3_hello/build
+    erase: false                   # optional; erase chip before flashing
+    monitor:                       # optional per-board monitor overrides
+      duration: 10                 # seconds (overrides --monitor-duration)
+      exit_on_error: "abort() was called"
+      exit_on: "boot ok"
+  - alias: m5stack-core2
+    build_dir: ./m5stack-core2/build
+    optional: true                 # a failure here skips instead of failing the batch
+```
+
+**Behaviour:**
+- Each board resolves its device by `alias` (same `--filter-alias` matching as `flash`).
+- Images come from the board's `build/flash_args` (real offsets honoured) or ESP-IDF
+  project detection — no `--chip` needed.
+- Boards flash in parallel; images within a board flash one at a time.
+- Exits **non-zero** if any non-`optional` board fails, so the CI step fails.
+- Optional boards (`optional: true`) that fail are skipped and never fail the batch.
+
+**CI output:** when run under GitHub Actions (`GITHUB_ACTIONS=1`) espbrew prints a
+concise, annotation-rich report (`::group::`, `::notice::`, `::warning::`, `::error::`)
+instead of the interactive progress bar. Override with `--ci`, `--interactive`,
+`--quiet`/`-q`, or `--verbose`/`-v`.
+
 ### Monitor
 
 ```bash

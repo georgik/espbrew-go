@@ -18,7 +18,9 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, windows-latest]
+        # Pinned to ubuntu-24.04 (was ubuntu-latest) so the run does not
+        # silently migrate to Ubuntu 26 on 2026-10-19 (see GH runner-images#14748).
+        os: [ubuntu-24.04, ubuntu-24.04-arm, macos-latest, windows-latest]
         go-version: ['1.26']
       fail-fast: false
 
@@ -45,7 +47,9 @@ jobs:
 
   wasm:
     name: Build WASM
-    runs-on: ubuntu-latest
+    # Pinned to ubuntu-24.04 (was ubuntu-latest) so the run does not silently
+    # migrate to Ubuntu 26 on 2026-10-19 (see GH runner-images#14748).
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
@@ -64,7 +68,9 @@ jobs:
 
   lint:
     name: Lint
-    runs-on: ubuntu-latest
+    # Pinned to ubuntu-24.04 (was ubuntu-latest) so the run does not silently
+    # migrate to Ubuntu 26 on 2026-10-19 (see GH runner-images#14748).
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
