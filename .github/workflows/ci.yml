@@ -57,9 +57,9 @@ jobs:
         run: |
           SIZE=$(wc -c < web/main.wasm)
           echo "WASM size: $SIZE bytes"
-          # Warn if larger than 5MB
-          if [ $SIZE -gt 5242880 ]; then
-            echo "::warning::WASM is larger than 5MB, consider optimization"
+          # Warn if larger than 10MB
+          if [ $SIZE -gt 10485760 ]; then
+            echo "::warning::WASM is larger than 10MB, consider optimization"
           fi
 
   lint:

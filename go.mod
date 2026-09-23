@@ -8,6 +8,7 @@ require (
 	github.com/gorilla/mux v1.8.1
 	github.com/gorilla/websocket v1.5.3
 	github.com/hashicorp/mdns v1.0.7
+	github.com/pelletier/go-toml/v2 v2.2.4
 	github.com/pion/mediadevices v0.10.0
 	github.com/prometheus/client_golang v1.24.1
 	github.com/rs/zerolog v1.35.1
@@ -18,6 +19,7 @@ require (
 	github.com/vladimirvivien/go4vl v0.5.0
 	go.bug.st/serial v1.8.0
 	go.etcd.io/bbolt v1.5.0
+	go.yaml.in/yaml/v3 v3.0.5
 	golang.org/x/sys v0.48.0
 	golang.org/x/term v0.46.0
 )
@@ -33,7 +35,6 @@ require (
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/miekg/dns v1.1.72 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
-	github.com/pelletier/go-toml/v2 v2.2.4 // indirect
 	github.com/pion/datachannel v1.5.10 // indirect
 	github.com/pion/dtls/v3 v3.0.8 // indirect
 	github.com/pion/ice/v4 v4.0.13 // indirect
@@ -59,7 +60,6 @@ require (
 	github.com/spf13/cast v1.10.0 // indirect
 	github.com/subosito/gotenv v1.6.0 // indirect
 	github.com/wlynxg/anet v0.0.5 // indirect
-	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	golang.org/x/crypto v0.54.0 // indirect
 	golang.org/x/image v0.23.0 // indirect
 	golang.org/x/mod v0.37.0 // indirect

@@ -143,6 +143,16 @@ func runMonitorRemoteStream(monitorClient *cluster.MonitorClient) error {
 	// Create unbuffered writer for immediate output in raw mode
 	stdoutWriter := &bufioWriter{w: os.Stdout}
 
+	// In CI mode, monitoring is non-interactive: stream the serial output inside
+	// a collapsible GitHub group and annotate exit patterns instead of dumping
+	// raw bytes into the main log. Raw terminal mode is disabled so the run is
+	// fully non-interactive.
+	if ciModeEnabled() {
+		monitorOpts.noRaw = true
+		ciGroup(fmt.Sprintf("%s — monitor (%ds)", monitorLabel(), monitorOpts.duration))
+		defer ciEndGroup()
+	}
+
 	fmt.Printf("Remote monitor on %s @ %d baud\r\n", monitorOpts.port, monitorOpts.baud)
 	if !monitorOpts.noRaw {
 		fmt.Printf("CTRL+R to reset, CTRL+C to exit\r\n")
@@ -243,9 +253,11 @@ func runMonitorRemoteStream(monitorClient *cluster.MonitorClient) error {
 			// Check exit patterns
 			dataStr := string(data)
 			if monitorOpts.exitOnError != "" && contains(dataStr, monitorOpts.exitOnError) {
+				ciError(fmt.Sprintf("%s: boot crash — %s", monitorLabel(), monitorOpts.exitOnError))
 				exitCh <- monitorExit{success: false, message: fmt.Sprintf("Error pattern matched: %s", monitorOpts.exitOnError)}
 			}
 			if monitorOpts.exitOn != "" && contains(dataStr, monitorOpts.exitOn) {
+				ciNotice(fmt.Sprintf("%s: boot ok — %s", monitorLabel(), monitorOpts.exitOn))
 				exitCh <- monitorExit{success: true, message: fmt.Sprintf("Success pattern matched: %s", monitorOpts.exitOn)}
 			}
 
@@ -465,6 +477,20 @@ func indexOf(s, substr string) int {
 		}
 	}
 	return -1
+}
+
+// monitorLabel returns the label used for CI annotations and the collapsible
+// group title around the monitor serial stream: the configured alias when
+// selecting by alias, otherwise the raw port, otherwise "monitor".
+func monitorLabel() string {
+	switch {
+	case monitorOpts.filterAlias != "":
+		return monitorOpts.filterAlias
+	case monitorOpts.port != "":
+		return monitorOpts.port
+	default:
+		return "monitor"
+	}
 }
 
 // bufioWriter wraps stdout with explicit flush for raw mode

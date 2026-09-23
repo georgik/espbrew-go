@@ -829,7 +829,6 @@ func (l *LeaderNode) applyDeviceConfig(dev *protocol.DeviceInfo) {
 	}
 }
 
-
 // logConfiguredDevices reports, at startup, whether each espbrew.toml device is
 // currently present on the host. Absent ports are visible to the operator
 // without being auto-probed or resurrected from hidden persistence.

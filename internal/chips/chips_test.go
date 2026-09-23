@@ -4,9 +4,9 @@ import "testing"
 
 func TestParseChip(t *testing.T) {
 	tests := []struct {
-		input    string
-		want     Chip
-		wantOK   bool
+		input  string
+		want   Chip
+		wantOK bool
 	}{
 		// Registry/API form (uppercase, hyphenated).
 		{"ESP32", ChipESP32, true},

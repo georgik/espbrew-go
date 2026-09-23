@@ -53,7 +53,6 @@ var cfg struct {
 	httpPort    int
 	leaderAddr  string
 	nodeID      string
-	logLevel    string
 	cfgFile     string
 	workers     int
 	disablemDNS bool
@@ -67,6 +66,23 @@ func init() {
 	// Registering a non-empty Version makes cobra add a global `--version`
 	// flag and print the banner for `espbrew --version` (and `espbrew version`).
 	rootCmd.Version = versionString()
+
+	// Global output-control flags (persistent: inherited by every subcommand).
+	// These let espbrew behave like every other GitHub tool in CI while keeping
+	// the rich interactive experience for a human at a console. See ci.go.
+	f := rootCmd.Flags()
+	f.BoolVar(&ciOpts.forceCI, "ci", false, "Force CI mode (concise output, GitHub annotations, no progress bar)")
+	f.BoolVar(&ciOpts.forceInter, "interactive", false, "Force interactive mode (override CI auto-detection)")
+	f.BoolVarP(&ciOpts.quiet, "quiet", "q", false, "Reduce output (implies CI-style logging)")
+	f.BoolVarP(&ciOpts.verbose, "verbose", "v", false, "Verbose output (more Debug lines, even in CI)")
+	f.StringVar(&ciOpts.logLevel, "log-level", "info", "Log level: debug, info, warn, error")
+
+	// Resolve the global log level once flags are parsed (before any command
+	// body runs) so flash/monitor/cluster all honour --ci/--quiet/--verbose.
+	rootCmd.PersistentPreRunE = func(cmd *cobra.Command, args []string) error {
+		zerolog.SetGlobalLevel(resolveLogLevel())
+		return nil
+	}
 }
 
 var clusterCmd = &cobra.Command{
@@ -82,15 +98,15 @@ func init() {
 	clusterCmd.Flags().IntVarP(&cfg.httpPort, "port", "p", 8080, "HTTP port")
 	clusterCmd.Flags().StringVar(&cfg.leaderAddr, "leader", os.Getenv("ESPBREW_LEADER"), "Leader address (for peers)")
 	clusterCmd.Flags().StringVar(&cfg.nodeID, "node-id", "", "Node ID (default: hostname)")
-	clusterCmd.Flags().StringVar(&cfg.logLevel, "log-level", "info", "Log level: debug, info, warn, error")
 	clusterCmd.Flags().IntVar(&cfg.workers, "workers", 2, "Number of flash workers")
 	clusterCmd.Flags().BoolVar(&cfg.disablemDNS, "no-mdns", false, "Disable mDNS discovery")
 	clusterCmd.Flags().BoolVar(&cfg.devMode, "dev-mode", false, "Enable developer mode (unsafe for production)")
 }
 
 func main() {
-	// Set up console logging for all commands
-	zerolog.SetGlobalLevel(zerolog.InfoLevel)
+	// Set up console logging for all commands. The level itself is resolved after
+	// flag parsing in PersistentPreRunE (see ci.go / resolveLogLevel) so the
+	// --ci/--quiet/--verbose/--log-level flags are honoured for every command.
 	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr, TimeFormat: "15:04:05"})
 
 	if err := rootCmd.Execute(); err != nil {
@@ -100,7 +116,7 @@ func main() {
 }
 
 func runServer(cmd *cobra.Command, args []string) error {
-	level, _ := zerolog.ParseLevel(cfg.logLevel)
+	level := resolveLogLevel()
 	zerolog.SetGlobalLevel(level)
 	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr})
 

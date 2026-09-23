@@ -782,6 +782,12 @@ func runFlashRemoteMultiImage() error {
 
 	images := buildMultiImageImages(detectedFlashFiles, detectedExtraFiles)
 
+	// The alias (if any) is used as the label in concise CI output.
+	flashAlias := flashOpts.filterAlias
+	if flashAlias == "" {
+		flashAlias = "device"
+	}
+
 	log.Info().Int("images", len(images)).Str("device", devicePath).Msg("Multi-image flash via cluster")
 
 	// Flash each image sequentially
@@ -789,8 +795,12 @@ func runFlashRemoteMultiImage() error {
 		log.Info().Str("image", img.name).Str("path", img.path).Int("offset", img.offset).
 			Int("index", i+1).Int("total", len(images)).Msg("Uploading to cluster")
 
+		ciFlashLine(flashAlias, img.name, "flashing…")
+		imageStart := time.Now()
+
 		uploadResp, err := client.UploadFirmware(img.path)
 		if err != nil {
+			ciFlashFail(flashAlias, img.name, err)
 			return fmt.Errorf("upload %s: %w", img.name, err)
 		}
 
@@ -805,6 +815,7 @@ func runFlashRemoteMultiImage() error {
 
 		flashResp, err := client.SubmitFlash(submitReq)
 		if err != nil {
+			ciFlashFail(flashAlias, img.name, err)
 			return fmt.Errorf("submit flash %s: %w", img.name, err)
 		}
 
@@ -814,6 +825,7 @@ func runFlashRemoteMultiImage() error {
 		progressClient, err := client.ConnectProgress(flashResp.JobID)
 		if err != nil {
 			log.Warn().Err(err).Msg("Could not connect to progress WebSocket")
+			ciFlashFail(flashAlias, img.name, err)
 			return fmt.Errorf("monitoring %s: %w", img.name, err)
 		}
 
@@ -822,12 +834,17 @@ func runFlashRemoteMultiImage() error {
 		err = progressClient.Stream(func(msg cluster.ProgressMessage) {
 			switch msg.Type {
 			case "init":
-				if !showedWaiting {
+				// The animated bar is only useful for a human at a console;
+				// in CI mode we print one concise line instead (see ci.go).
+				if !ciModeEnabled() && !showedWaiting {
 					displayProgressBar(0, fmt.Sprintf("%s: pending", img.name))
 					showedWaiting = true
 				}
 			case "progress":
 				showedWaiting = true
+				if ciModeEnabled() {
+					return
+				}
 				if msg.Progress == 0 && msg.Status == "running" {
 					displayProgressBar(0, fmt.Sprintf("%s: preparing...", img.name))
 				} else {
@@ -836,9 +853,15 @@ func runFlashRemoteMultiImage() error {
 			case "complete":
 				completed = true
 				if msg.Status == "completed" {
-					fmt.Printf("\n✓ %s flashed successfully\n", img.name)
+					ciFlashOK(flashAlias, img.name, time.Since(imageStart))
+					if !ciModeEnabled() {
+						fmt.Printf("\n✓ %s flashed successfully\n", img.name)
+					}
 				} else {
-					fmt.Printf("\n✗ %s flash failed: %s\n", img.name, msg.Error)
+					ciFlashFail(flashAlias, img.name, fmt.Errorf("%s", msg.Error))
+					if !ciModeEnabled() {
+						fmt.Printf("\n✗ %s flash failed: %s\n", img.name, msg.Error)
+					}
 				}
 			}
 		})
@@ -854,6 +877,7 @@ func runFlashRemoteMultiImage() error {
 	}
 
 	log.Info().Msg("All images flashed successfully")
+	ciNotice(fmt.Sprintf("%s: flashed %d image(s) via cluster", flashAlias, len(images)))
 
 	if flashOpts.monitorAfter {
 		log.Info().Msg("Starting monitor...")

@@ -578,6 +578,54 @@ func (c *Client) DownloadReadFlash(jobID string) ([]byte, error) {
 	return io.ReadAll(resp.Body)
 }
 
+// ClientJobStatus is the pollable status of a cluster job, returned by GetJob. It is
+// a lightweight projection of the internal Job used by the batch/manifest flash
+// flow to wait for submitted jobs without streaming the progress WebSocket.
+type ClientJobStatus struct {
+	JobID    string
+	Status   string
+	Progress int
+	Error    string
+}
+
+// GetJob fetches the current status of a job via GET /api/v1/jobs/{id}. The
+// leader exposes each queued/running/completed job this way, so the batch
+// command can poll until a job reaches a terminal state (completed/failed).
+func (c *Client) GetJob(jobID string) (*ClientJobStatus, error) {
+	req, err := http.NewRequest("GET", c.baseURL+"/api/v1/jobs/"+jobID, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+
+	resp, err := c.doWithRetry(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var statusResp struct {
+		ID       string `json:"id"`
+		Status   string `json:"status"`
+		Progress int    `json:"progress"`
+		Error    string `json:"error"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&statusResp); err != nil {
+		return nil, fmt.Errorf("decode response: %w", err)
+	}
+
+	return &ClientJobStatus{
+		JobID:    statusResp.ID,
+		Status:   statusResp.Status,
+		Progress: statusResp.Progress,
+		Error:    statusResp.Error,
+	}, nil
+}
+
 func (c *Client) CancelJob(jobID string) error {
 	req, err := http.NewRequest("DELETE", c.baseURL+"/api/v1/jobs/"+jobID, nil)
 	if err != nil {
