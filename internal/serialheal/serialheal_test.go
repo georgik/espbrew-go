@@ -1,26 +1,56 @@
 package serialheal
 
 import (
+	"bufio"
+	"os"
 	"strings"
 	"testing"
 )
 
-func TestIsMountPoint(t *testing.T) {
-	cases := []struct {
-		path string
-		want bool
-	}{
-		{"/", true},
-		{"/proc", true},
-		{"/sys", true},
-		{"/etc/hosts", true},
-		{"/nonexistent-device-node-xyz", false},
-		{"/dev/ttyACM0-does-not-exist", false},
+// mountPointInProcMounts reports whether path is listed as a mount point in
+// /proc/mounts. The test uses it to decide whether the /etc/hosts assertion
+// below applies to the current environment: /etc/hosts is a bind-mounted file
+// only inside containers such as Docker, and a plain file elsewhere.
+func mountPointInProcMounts(path string) bool {
+	f, err := os.Open("/proc/mounts")
+	if err != nil {
+		return false
 	}
-	for _, tc := range cases {
-		if got := IsMountPoint(tc.path); got != tc.want {
-			t.Errorf("IsMountPoint(%q) = %v, want %v", tc.path, got, tc.want)
+	defer f.Close()
+	sc := bufio.NewScanner(f)
+	for sc.Scan() {
+		fields := strings.Fields(sc.Text())
+		if len(fields) >= 2 && fields[1] == path {
+			return true
 		}
+	}
+	return false
+}
+
+func TestIsMountPoint(t *testing.T) {
+	// These paths are always mount points on Linux.
+	for _, p := range []string{"/", "/proc", "/sys"} {
+		if !IsMountPoint(p) {
+			t.Errorf("IsMountPoint(%q) = false, want true", p)
+		}
+	}
+
+	// These paths are never mount points.
+	for _, p := range []string{"/nonexistent-device-node-xyz", "/dev/ttyACM0-does-not-exist"} {
+		if IsMountPoint(p) {
+			t.Errorf("IsMountPoint(%q) = true, want false", p)
+		}
+	}
+
+	// /etc/hosts is a bind-mounted file only inside containers (e.g. Docker).
+	// When the current environment does not bind-mount it, the assertion does
+	// not apply, so skip rather than fail.
+	if mountPointInProcMounts("/etc/hosts") {
+		if !IsMountPoint("/etc/hosts") {
+			t.Errorf("IsMountPoint(/etc/hosts) = false, want true")
+		}
+	} else {
+		t.Skip("/etc/hosts is not a bind mount in this environment")
 	}
 }
 
