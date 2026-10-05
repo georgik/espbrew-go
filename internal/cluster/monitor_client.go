@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -16,17 +16,26 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
-// DeviceName extracts the base device name without the /dev/ prefix
+// DeviceName extracts the base device name without the /dev/ prefix.
+//
+// It deliberately does not use filepath.Base: on Windows that function splits
+// on the backslash separator and keeps the leading "/dev/" prefix
+// (filepath.Base("/dev/ttyUSB0") == "dev/ttyUSB0" there), which would break the
+// URL paths below. Instead we strip a leading "/dev/" and return the final
+// element after both "/" and "\", so the result is identical on Linux, macOS
+// and Windows. On Windows there is no /dev/ prefix at all — serial ports appear
+// as "COM3", "\\.\\COM4" or "\\?\\COM7" — and the same logic collapses all of
+// those to just the port name.
 func DeviceName(devicePath string) string {
 	if devicePath == "" {
 		return ""
 	}
-	base := filepath.Base(devicePath)
-	if base == devicePath {
-		// Already just a name
-		return devicePath
+	name := strings.TrimPrefix(devicePath, "/dev/")
+	name = strings.ReplaceAll(name, "\\", "/")
+	if i := strings.LastIndex(name, "/"); i >= 0 {
+		name = name[i+1:]
 	}
-	return base
+	return name
 }
 
 type MonitorMessage struct {

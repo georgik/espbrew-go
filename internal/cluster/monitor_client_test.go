@@ -11,6 +11,12 @@ func TestDeviceName(t *testing.T) {
 		{"/dev/ttyUSB0", "ttyUSB0"},
 		{"cu.usbmodem1401", "cu.usbmodem1401"},
 		{"ttyUSB0", "ttyUSB0"},
+		// Windows: COM ports have no /dev/ prefix. Both the bare form
+		// ("COM3") and the Windows device-namespace forms
+		// ("\\.\\COM4" / "\\?\\COM7") must collapse to the port name.
+		{"COM3", "COM3"},
+		{"\\.\\COM4", "COM4"},
+		{"\\?\\COM7", "COM7"},
 		{"", ""},
 	}
 
