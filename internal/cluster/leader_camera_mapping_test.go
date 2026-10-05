@@ -21,6 +21,13 @@ func newMappingTestLeader(t *testing.T, devices ...config.DeviceConfig) (*Leader
 	if err != nil {
 		t.Fatalf("Failed to open store: %v", err)
 	}
+	// Close the SQLite handle before t.TempDir()'s cleanup removes the dir.
+	// On Windows an open DB file blocks RemoveAll ("file in use"), so the
+	// store must be closed first. t.Cleanup runs in LIFO order, after the
+	// TempDir cleanup registered above, guaranteeing this ordering.
+	t.Cleanup(func() {
+		_ = store.Close()
+	})
 
 	leader := NewLeaderNode("test-leader", &LeaderConfig{
 		DisablemDNS:        true,
