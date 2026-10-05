@@ -110,11 +110,11 @@ func runBatch(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	if len(manifest.Boards) == 0 {
-		return fmt.Errorf("no boards in manifest")
+		return usageErrf("no boards in manifest")
 	}
 
 	if batchOpts.clusterURL == "" {
-		return fmt.Errorf("--cluster (or ESPBREW_CLUSTER) is required for flash-batch")
+		return usageErrf("--cluster (or ESPBREW_CLUSTER) is required for flash-batch")
 	}
 
 	client := cluster.NewClient(batchOpts.clusterURL)
@@ -482,10 +482,10 @@ func loadManifest() (*batchManifest, error) {
 	case batchOpts.manifestPath != "":
 		data, err := os.ReadFile(batchOpts.manifestPath)
 		if err != nil {
-			return nil, fmt.Errorf("read manifest: %w", err)
+			return nil, usageErrf("read manifest: %s", err)
 		}
 		if err := decodeManifest(data, m); err != nil {
-			return nil, fmt.Errorf("parse manifest: %w", err)
+			return nil, usageErrf("parse manifest: %s", err)
 		}
 	case batchOpts.artifactsDir != "":
 		boards, err := boardsFromArtifacts()
@@ -494,7 +494,7 @@ func loadManifest() (*batchManifest, error) {
 		}
 		m.Boards = boards
 	default:
-		return nil, fmt.Errorf("provide --manifest <file> or --artifacts-dir <dir>")
+		return nil, usageErrf("provide --manifest <file> or --artifacts-dir <dir>")
 	}
 	return m, nil
 }

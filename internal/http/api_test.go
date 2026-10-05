@@ -243,7 +243,7 @@ func TestAPIHandler_HandleNodeJobProgress(t *testing.T) {
 
 	// Create a test job
 	queue := master.GetJobQueue()
-	job := queue.EnqueueFlash("/path/to/firmware.bin", "/dev/ttyUSB0", 0, false)
+	job := queue.EnqueueFlash("/path/to/firmware.bin", "/dev/ttyUSB0", 0, false, "")
 	job.DeviceNode = "test-peer-1"
 
 	// Test progress update
@@ -301,7 +301,7 @@ func TestAPIHandler_HandleNodeJobProgress_Complete(t *testing.T) {
 
 	// Create a test job
 	queue := master.GetJobQueue()
-	job := queue.EnqueueFlash("/path/to/firmware.bin", "/dev/ttyUSB0", 0, false)
+	job := queue.EnqueueFlash("/path/to/firmware.bin", "/dev/ttyUSB0", 0, false, "")
 	job.DeviceNode = "test-peer-1"
 
 	// Test completion
@@ -361,7 +361,7 @@ func TestAPIHandler_HandleNodeJobProgress_Failed(t *testing.T) {
 
 	// Create a test job
 	queue := master.GetJobQueue()
-	job := queue.EnqueueFlash("/path/to/firmware.bin", "/dev/ttyUSB0", 0, false)
+	job := queue.EnqueueFlash("/path/to/firmware.bin", "/dev/ttyUSB0", 0, false, "")
 	job.DeviceNode = "test-peer-1"
 
 	// Test failure
@@ -451,7 +451,7 @@ func TestAPIHandler_HandleNodeJobProgress_NodeMismatch(t *testing.T) {
 
 	// Create a test job assigned to one peer
 	queue := master.GetJobQueue()
-	job := queue.EnqueueFlash("/path/to/firmware.bin", "/dev/ttyUSB0", 0, false)
+	job := queue.EnqueueFlash("/path/to/firmware.bin", "/dev/ttyUSB0", 0, false, "")
 	job.DeviceNode = "peer-1"
 
 	// Try to send progress from a different peer

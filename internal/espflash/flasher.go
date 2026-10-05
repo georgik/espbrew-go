@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/georgik/espbrew-go/internal/serialheal"
 	"github.com/rs/zerolog/log"
 	"go.bug.st/serial"
 )
@@ -180,7 +181,7 @@ func openPortWithRetries(ctx context.Context, portName string, mode *serial.Mode
 			default:
 			}
 		}
-		port, err := serial.Open(portName, mode)
+		port, err := serialheal.Open(portName, mode)
 		if err == nil {
 			return port, nil
 		}
@@ -310,7 +311,7 @@ func (f *Flasher) reopenPort() error {
 		}
 
 		time.Sleep(500 * time.Millisecond)
-		port, err := serial.Open(f.portStr, &serial.Mode{
+		port, err := serialheal.Open(f.portStr, &serial.Mode{
 			BaudRate: f.opts.BaudRate,
 			Parity:   serial.NoParity,
 			DataBits: 8,

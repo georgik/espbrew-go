@@ -8,6 +8,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/georgik/espbrew-go/internal/serialheal"
 	"go.bug.st/serial"
 	"golang.org/x/term"
 
@@ -308,7 +309,7 @@ func runMonitor(portName string, baud int) error {
 		BaudRate: baud,
 	}
 
-	serialPort, err := serial.Open(portName, mode)
+	serialPort, err := serialheal.Open(portName, mode)
 	if err != nil {
 		return fmt.Errorf("open serial port: %w", err)
 	}

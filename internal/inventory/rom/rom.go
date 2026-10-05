@@ -7,6 +7,7 @@ import (
 	"io"
 	"time"
 
+	"github.com/georgik/espbrew-go/internal/serialheal"
 	"go.bug.st/serial"
 )
 
@@ -82,7 +83,7 @@ func Open(portPath string, cfg *Config) (*Connection, error) {
 	mode := &serial.Mode{
 		BaudRate: cfg.BaudRate,
 	}
-	port, err := serial.Open(portPath, mode)
+	port, err := serialheal.Open(portPath, mode)
 	if err != nil {
 		return nil, fmt.Errorf("open port: %w", err)
 	}

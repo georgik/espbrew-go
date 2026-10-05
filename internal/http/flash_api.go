@@ -55,6 +55,9 @@ type FlashSubmitRequest struct {
 	ClientID    string                 `json:"client_id,omitempty"`
 	Offset      int                    `json:"offset,omitempty"`
 	Erase       bool                   `json:"erase,omitempty"`
+	// Diagram is an optional Wokwi diagram.json (board + peripherals) supplied
+	// by the flashing project. It overrides the device default for Wokwi sims.
+	Diagram string `json:"diagram,omitempty"`
 }
 
 type FlashSubmitResponse struct {
@@ -166,8 +169,8 @@ func (h *FlashHandler) handleFlashSubmit(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Enqueue job with offset and erase option
-	job, err := h.leader.EnqueueJobWithOffsetAndErase(firmwarePath, devicePath, req.Offset, req.Erase)
+	// Enqueue job with offset, erase option, and optional Wokwi diagram
+	job, err := h.leader.EnqueueJobWithOffsetAndErase(firmwarePath, devicePath, req.Offset, req.Erase, req.Diagram)
 	if err != nil {
 		respondError(w, http.StatusConflict, err.Error())
 		return

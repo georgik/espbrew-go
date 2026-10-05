@@ -3,6 +3,7 @@ package cluster
 import (
 	"fmt"
 
+	"github.com/georgik/espbrew-go/pkg/protocol"
 	"github.com/rs/zerolog/log"
 )
 
@@ -16,10 +17,57 @@ func (l *LeaderNode) StartJobExecutorWithProgress(workers int, progressCB func(s
 	}
 
 	l.executor = NewJobExecutorWithProgress(workers, progressCB)
+	// For Wokwi devices the "flash" is starting (or reusing) the simulation
+	// rather than writing over a serial port. The session manager assembles the
+	// image (bootloader + partition table + app) and uploads it, then calls
+	// sim:start; `monitor` attaches to the resulting session.
+	l.executor.wokwiHook = l.runWokwiFlash
 	l.executor.Start()
 
 	l.wg.Add(1)
 	go l.handleJobResults()
+}
+
+// runWokwiFlash implements the executor's Wokwi hook. It returns handled=true
+// only for Wokwi devices, in which case it starts (or reuses) the simulation
+// instead of flashing over a serial port.
+func (l *LeaderNode) runWokwiFlash(job *Job) (bool, error) {
+	l.mu.RLock()
+	dev, exists := l.state.Devices[job.DevicePath]
+	l.mu.RUnlock()
+	if !exists || dev.Backend != protocol.BackendWokwi {
+		return false, nil
+	}
+
+	// A flash can carry its own Wokwi diagram (from the project's
+	// diagram.json) that overrides the device default, so a board-specific
+	// diagram is used even for the generic wokwi:<chip> devices. The monitor
+	// reads the diagram from the device's WokwiConfig when it starts.
+	monitorDev := dev
+	if job.Diagram != "" {
+		cfg, ok := dev.BackendConfig.(*protocol.WokwiConfig)
+		if ok {
+			cfgCopy := *cfg
+			cfgCopy.DiagramJSON = job.Diagram
+			monitorDev = &protocol.DeviceInfo{
+				Path:          dev.Path,
+				DeviceID:      dev.DeviceID,
+				ChipType:      dev.ChipType,
+				Backend:       dev.Backend,
+				BackendConfig: &cfgCopy,
+			}
+			log.Info().Str("device", dev.Path).Int("diagram_bytes", len(job.Diagram)).Msg("Using project diagram for Wokwi flash")
+		} else {
+			log.Warn().Str("device", dev.Path).Msg("Job carries a diagram but device has no Wokwi config; ignoring diagram")
+		}
+	}
+
+	// Start (or reuse) the simulation. Get blocks until sim:start has been
+	// sent, so by the time this returns the image is uploaded and running.
+	if _, err := l.wokwiSessions.Get(monitorDev, job.Firmware); err != nil {
+		return true, fmt.Errorf("start wokwi simulation: %w", err)
+	}
+	return true, nil
 }
 
 func (l *LeaderNode) StopJobExecutor() {
@@ -47,6 +95,10 @@ func (l *LeaderNode) handleJobResults() {
 
 		// Complete job in queue
 		l.queue.Complete(job.ID, result.Error)
+
+		// The operation is done: stop holding the board busy and reset its idle
+		// timer so it is powered down after the idle timeout of further use.
+		l.releaseDeviceAfterOp(job.DevicePath)
 
 		if result.Error != nil {
 			log.Error().Err(result.Error).Str("job_id", job.ID).Msg("Job failed")

@@ -49,7 +49,7 @@ const (
 	usbPortFeatSuspend     = 2
 	usbPortFeatOvercurrent = 3
 	usbPortFeatReset       = 4
-	usbPortFeatPower       = 8
+	usbPortFeatPower       = 5
 	usbPortFeatLowSpeed    = 9
 	usbPortFeatHighSpeed   = 10
 	usbPortFeatTest        = 11

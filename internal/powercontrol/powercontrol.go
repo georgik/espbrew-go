@@ -5,6 +5,7 @@ package powercontrol
 import (
 	"errors"
 	"fmt"
+	"path/filepath"
 	"time"
 )
 
@@ -74,17 +75,29 @@ func (c *controller) ListHubs() ([]Hub, error) {
 }
 
 // FindHubByLocation finds a hub by its USB location string.
+//
+// It first checks the enumerated leaf-hub list, then falls back to parsing the
+// hub directly from sysfs. That fallback is required for PARENT hubs: listHubs
+// deliberately skips hubs that carry downstream sub-hubs, but a board can be
+// plugged straight into a parent hub's port (e.g. the esp32-c3-lcdkit sits on
+// hub "3-10", which also carries other devices). In that case the board must be
+// powered by controlling the parent hub, so it has to be findable here.
 func (c *controller) FindHubByLocation(loc string) (*Hub, error) {
 	hubs, err := listHubs()
-	if err != nil {
-		return nil, err
-	}
-	for _, h := range hubs {
-		if h.Location == loc {
-			return &h, nil
+	if err == nil {
+		for _, h := range hubs {
+			if h.Location == loc {
+				return &h, nil
+			}
 		}
 	}
-	return nil, ErrHubNotFound
+	// Fallback: parse the hub straight from sysfs. This covers parent hubs that
+	// listHubs skips. parseHub validates the device class is a USB hub.
+	hub, err := parseHub(loc, filepath.Join(usbDevicesPath, loc))
+	if err != nil {
+		return nil, ErrHubNotFound
+	}
+	return &hub, nil
 }
 
 // FindHubByVendorProduct finds a hub by vendor and product IDs.

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/georgik/espbrew-go/internal/serialheal"
 	"github.com/rs/zerolog/log"
 	"go.bug.st/serial"
 )
@@ -70,7 +71,7 @@ func MonitorBootLog(port string, timeout time.Duration) (*BootLogInfo, error) {
 	var p serial.Port
 	var err error
 	for attempt := 0; attempt < 3; attempt++ {
-		p, err = serial.Open(openPath, mode)
+		p, err = serialheal.Open(openPath, mode)
 		if err == nil {
 			if attempt > 0 {
 				log.Debug().Str("path", openPath).Int("attempt", attempt+1).Msg("Port opened after retry")

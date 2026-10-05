@@ -122,6 +122,69 @@ Full implementation with:
 
 Returns `ErrNotSupported` for all operations. Compiled with `//go:build !linux`.
 
+## Power-Managed Device Auto Sleep/Wake
+
+On top of the raw hub power control above, espbrew can treat selected boards as
+**power-managed**: it powers them off when idle and powers them back on right
+before an operation. This is configured per-device in `espbrew.toml` and driven
+by the `internal/devicesleep` package.
+
+### Configuration
+
+Add `usb_location` and `usb_port` to a `[[devices]]` entry. `usb_location` is the
+sysfs hub location string (e.g. `1-2`) that supplies power to the board;
+`usb_port` is the 1-based port number on that hub the board is plugged into.
+
+```toml
+[[devices]]
+path = "/dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_98:88:E0:D4:D2:58-if00"
+id       = "esp-98:88:E0:D4:D2:58-if00"
+alias    = "esp32-c3-lcdkit"
+chip     = "ESP32-C3"
+usb_location = "1-2"
+usb_port   = 3
+description = "ESP32-C3 LcdKit on a powered hub"
+```
+
+A board is power-managed only when `usb_location` is set (see
+`config.DeviceConfig.PowerManaged` / `PowerLocation`). The pair fully specifies
+where the board sits in the USB tree, which is what espbrew needs to switch its
+power.
+
+### Behavior
+
+- **Sleeping when absent.** If a power-managed board is not present in the live
+  USB tree, espbrew marks it `sleeping` (status `sleeping` in the API) and keeps
+  a record so it can still be addressed by alias.
+- **Wake before use.** When an operation (flash/monitor/erase) targets a
+  sleeping board, espbrew powers the hub port on and waits `WakeDelay`
+  (default **1 s**) for the board to re-enumerate before starting.
+- **Auto power-down.** While an operation runs the board is flagged `busy` and is
+  never powered off. After the operation finishes the idle timer starts; if the
+  board is unused for `IdleTimeout` (default **2 min**), espbrew powers the port
+  off and returns the board to `sleeping`.
+
+This enables cold-start testing (a board that is only ever rebooted never
+exposes hidden peripheral state) and power saving when many boards are
+connected.
+
+### Implementation
+
+- `internal/devicesleep` owns the state machine (sleep/wake/busy/idle timer) and
+  talks to the outside world only through the `Controller` interface, a slice of
+  `powercontrol.PowerController`. The real controller drives the hub on Linux;
+  tests inject an in-memory mock, so the whole behaviour is covered without a
+  physical hub.
+- The leader (`internal/cluster/leader_sleep.go`) reconciles board state against
+  the live USB tree, wakes boards before a job, and runs a background loop that
+  powers down idle boards and mirrors the result onto the live device records.
+
+### Tunables
+
+All timings live in `devicesleep.Config` (`DefaultConfig`): `WakeDelay`
+(1 s), `IdleTimeout` (2 m), `SweepPeriod` (5 s, how often the background loop
+checks). Tests override these via `LeaderConfig.SleepConfig` to run fast.
+
 ## Error Handling
 
 The implementation defines specific error types:

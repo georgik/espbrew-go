@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/georgik/espbrew-go/internal/serialheal"
 	"github.com/rs/zerolog/log"
 	"go.bug.st/serial"
 )
@@ -60,7 +61,7 @@ func (s *StreamSession) Start() error {
 		BaudRate: s.config.BaudRate,
 	}
 
-	port, err := serial.Open(s.config.Port, mode)
+	port, err := serialheal.Open(s.config.Port, mode)
 	if err != nil {
 		return fmt.Errorf("open serial: %w", err)
 	}
@@ -136,7 +137,7 @@ func (s *StreamSession) readLoop() {
 
 					// Try to reopen
 					mode := &serial.Mode{BaudRate: s.config.BaudRate}
-					port, openErr := serial.Open(s.config.Port, mode)
+					port, openErr := serialheal.Open(s.config.Port, mode)
 					if openErr == nil {
 						s.port = port
 						_ = s.port.SetReadTimeout(50 * time.Millisecond)

@@ -18,6 +18,7 @@ import (
 	"github.com/georgik/espbrew-go/internal/cluster"
 	"github.com/georgik/espbrew-go/internal/config"
 	"github.com/georgik/espbrew-go/internal/persistence"
+	"github.com/georgik/espbrew-go/internal/serialheal"
 	"github.com/georgik/espbrew-go/pkg/protocol"
 	"github.com/gorilla/mux"
 	"github.com/rs/zerolog/log"
@@ -69,6 +70,7 @@ func (h *APIHandler) RegisterRoutes(r *mux.Router) {
 	// so registering this route afterwards would let the {id:.*} DELETE route
 	// shadow the reserve DELETE and the monitor could never release a device.
 	api.HandleFunc("/devices/{name}/reserve", h.handleReserveDevice).Methods("POST", "DELETE")
+	api.HandleFunc("/devices/{name}/power", h.handleDevicePower).Methods("POST")
 
 	// Use {id:.*} to match paths with slashes (e.g., /dev/ttyUSB0)
 	api.HandleFunc("/devices/{id:.*}", h.handleDeviceDetail).Methods("GET")
@@ -669,6 +671,75 @@ func (h *APIHandler) handleReserveDevice(w http.ResponseWriter, r *http.Request)
 	}
 
 	respondError(w, http.StatusMethodNotAllowed, "Method not allowed")
+}
+
+// PowerDeviceRequest is the body of a manual power up/down request.
+type PowerDeviceRequest struct {
+	// State is the requested power state: "on"/"up" to wake, "off"/"down" to sleep.
+	State string `json:"state"`
+}
+
+// parsePowerState maps a string state ("on"/"off"/"up"/"down"/...) to a bool.
+// The second return value reports whether the input was recognised.
+func parsePowerState(s string) (on bool, ok bool) {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "on", "up", "true", "1":
+		return true, true
+	case "off", "down", "false", "0":
+		return false, true
+	default:
+		return false, false
+	}
+}
+
+// handleDevicePower handles POST /api/v1/devices/{name}/power. The client sends
+// only the alias (or path); the leader resolves it server-side and switches the
+// board's hub port, so the real /dev path never leaves the cluster host.
+func (h *APIHandler) handleDevicePower(w http.ResponseWriter, r *http.Request) {
+	if h.leader == nil {
+		respondError(w, http.StatusNotImplemented, "Power control is only available on the leader")
+		return
+	}
+
+	vars := mux.Vars(r)
+	deviceName := vars["name"]
+
+	var req PowerDeviceRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, `Invalid request body (use {"state":"on"|"off"})`)
+		return
+	}
+
+	on, ok := parsePowerState(req.State)
+	if !ok {
+		respondError(w, http.StatusBadRequest, "state must be \"on\" or \"off\"")
+		return
+	}
+
+	devicePath, device, exists := h.findDeviceByName(deviceName)
+	if !exists {
+		respondError(w, http.StatusNotFound, "Device not found")
+		return
+	}
+	if device.Disabled {
+		respondError(w, http.StatusForbidden, "Device is disabled and cannot be powered")
+		return
+	}
+
+	if err := h.leader.PowerDevice(devicePath, on); err != nil {
+		respondError(w, http.StatusServiceUnavailable, err.Error())
+		return
+	}
+
+	// Re-read so the response reflects the new power state.
+	_, device, _ = h.findDeviceByName(deviceName)
+	respondJSON(w, map[string]interface{}{
+		"status":   "ok",
+		"device":   deviceName,
+		"path":     devicePath,
+		"power":    on,
+		"sleeping": device.Sleeping,
+	})
 }
 
 func (h *APIHandler) handleCameras(w http.ResponseWriter, r *http.Request) {
@@ -1623,7 +1694,7 @@ func (h *APIHandler) handleResetDevice(w http.ResponseWriter, r *http.Request) {
 	mode := &serial.Mode{
 		BaudRate: 115200,
 	}
-	port, err := serial.Open(devicePath, mode)
+	port, err := serialheal.Open(devicePath, mode)
 	if err != nil {
 		respondError(w, http.StatusServiceUnavailable, "Failed to open device: "+err.Error())
 		return

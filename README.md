@@ -121,6 +121,15 @@ writable (`0666`) with a small `udev` rule (for example
 `SUBSYSTEM=="tty", MODE="0666"`). See
 [container.md](docs/container.md) for the exact rule and why.
 
+**The board must be in its normal operational state (not rebooting) when the container
+starts.** `--device` snapshots the host node's permission bits **once, at container start**
+into a separate inode, so if the ESP32 is rebooting / re-enumerating over USB at that moment
+the container can inherit a `mode 000` or missing node and espbrew gets "Permission denied" —
+even with a `0666` node on the host and correct keep-id / `udev` setup. This is
+intermittent and timing-dependent. Fix the board (flash stable firmware / check the USB
+connection), or restart the container until the node is `0666`. See
+[container.md](docs/container.md).
+
 For diagnostics you can run an interactive `/bin/sh` shell instead of espbrew —
 add `-it --entrypoint /bin/sh` to the command above.
 

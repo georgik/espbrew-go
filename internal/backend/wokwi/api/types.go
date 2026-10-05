@@ -27,23 +27,37 @@ type HelloMessage struct {
 	Type            string `json:"type"`
 	AppVersion      string `json:"appVersion"`
 	ProtocolVersion int    `json:"protocolVersion"`
+	// ServerURL is the endpoint the client connected to (added client-side for logging).
+	ServerURL string `json:"-"`
 }
 
-// ResponseMessage is the response to a command
+// ResponseMessage is the response to a command. Command echoes the requested
+// command name so the client can correlate responses.
 type ResponseMessage struct {
-	ID     string                 `json:"id"`
-	Type   string                 `json:"type"`
-	Result map[string]interface{} `json:"result,omitempty"`
-	Error  *ErrorInfo             `json:"error,omitempty"`
+	ID      string                 `json:"id"`
+	Type    string                 `json:"type"`
+	Command string                 `json:"command,omitempty"`
+	Result  map[string]interface{} `json:"result,omitempty"`
+	Error   *ErrorInfo             `json:"error,omitempty"`
 }
 
-// EventMessage is an unsolicited event from the server
+// EventMessage is an unsolicited event from the server.
+//
+// The Wokwi protocol carries event data under the "payload" key, e.g. a
+// "serial-monitor:data" event is:
+//
+//	{ "type": "event", "event": "serial-monitor:data",
+//	  "payload": { "bytes": [10, 10], "nanos": 123 }, ... }
+//
+// Payload therefore holds that map. Result/Data are retained only for the
+// legacy "hello" message (which ships its fields at the top level).
 type EventMessage struct {
-	Type   string                 `json:"type"`
-	Event  string                 `json:"event"`
-	Nanos  int64                  `json:"nanos,omitempty"`
-	Result map[string]interface{} `json:"result,omitempty"`
-	Data   map[string]interface{} `json:"data,omitempty"`
+	Type    string                 `json:"type"`
+	Event   string                 `json:"event"`
+	Nanos   int64                  `json:"nanos,omitempty"`
+	Payload map[string]interface{} `json:"payload,omitempty"`
+	Result  map[string]interface{} `json:"result,omitempty"`
+	Data    map[string]interface{} `json:"data,omitempty"`
 }
 
 // ErrorInfo represents an error in the protocol
@@ -61,6 +75,10 @@ func (e *ErrorInfo) Error() string {
 type FlashSection struct {
 	Offset int    `json:"offset"`
 	File   string `json:"file"`
+	// Data is optional in-memory content. When set, UploadFirmwareSections
+	// uploads it directly instead of reading File from disk. It is a purely
+	// transient field and is never serialized on the wire (json:"-").
+	Data []byte `json:"-"`
 }
 
 // IdfFirmwareUploadResult is the result of uploading ESP-IDF firmware

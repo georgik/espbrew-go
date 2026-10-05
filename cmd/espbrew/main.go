@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -67,10 +68,24 @@ func init() {
 	// flag and print the banner for `espbrew --version` (and `espbrew version`).
 	rootCmd.Version = versionString()
 
+	// On error we print the message ourselves (see printTopLevelError):
+	// SilenceErrors stops cobra double-printing, and SilenceUsage stops it
+	// dumping the full usage for *every* error. Usage is still shown for
+	// genuine parameter problems — flag parse errors are re-tagged here via
+	// FlagErrorFunc, and espbrew's own parameter checks use usageErrf — while
+	// runtime failures (device not found, connection refused, ...) print only
+	// the error message.
+	rootCmd.SilenceErrors = true
+	rootCmd.SilenceUsage = true
+	rootCmd.SetFlagErrorFunc(func(cmd *cobra.Command, err error) error {
+		usageCmd = cmd
+		return usageErrf("%s", err)
+	})
+
 	// Global output-control flags (persistent: inherited by every subcommand).
 	// These let espbrew behave like every other GitHub tool in CI while keeping
 	// the rich interactive experience for a human at a console. See ci.go.
-	f := rootCmd.Flags()
+	f := rootCmd.PersistentFlags()
 	f.BoolVar(&ciOpts.forceCI, "ci", false, "Force CI mode (concise output, GitHub annotations, no progress bar)")
 	f.BoolVar(&ciOpts.forceInter, "interactive", false, "Force interactive mode (override CI auto-detection)")
 	f.BoolVarP(&ciOpts.quiet, "quiet", "q", false, "Reduce output (implies CI-style logging)")
@@ -79,7 +94,10 @@ func init() {
 
 	// Resolve the global log level once flags are parsed (before any command
 	// body runs) so flash/monitor/cluster all honour --ci/--quiet/--verbose.
+	// Also record which command is running so printTopLevelError can print that
+	// command's usage for parameter/usage errors (see usageCmd).
 	rootCmd.PersistentPreRunE = func(cmd *cobra.Command, args []string) error {
+		usageCmd = cmd
 		zerolog.SetGlobalLevel(resolveLogLevel())
 		return nil
 	}
@@ -103,6 +121,26 @@ func init() {
 	clusterCmd.Flags().BoolVar(&cfg.devMode, "dev-mode", false, "Enable developer mode (unsafe for production)")
 }
 
+// usageCmd is the command whose UsageString is printed alongside a
+// parameter/usage error. It defaults to the root command and is overridden to
+// the offending subcommand (see FlagErrorFunc and the usageErrf call sites) so
+// the most specific usage is shown.
+var usageCmd = rootCmd
+
+// usageError marks a CLI parameter/usage problem (bad flag, missing firmware,
+// unknown preset, ...) so the top-level handler prints usage/help alongside the
+// message. Runtime failures (device not found, connection refused, flash
+// failure, ...) are plain errors and must NOT be tagged, so they never trigger
+// a usage dump.
+type usageError struct{ msg string }
+
+func (e *usageError) Error() string { return e.msg }
+
+// usageErrf builds a parameter/usage error carrying the given message.
+func usageErrf(format string, args ...interface{}) error {
+	return &usageError{msg: fmt.Sprintf(format, args...)}
+}
+
 func main() {
 	// Set up console logging for all commands. The level itself is resolved after
 	// flag parsing in PersistentPreRunE (see ci.go / resolveLogLevel) so the
@@ -110,8 +148,30 @@ func main() {
 	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr, TimeFormat: "15:04:05"})
 
 	if err := rootCmd.Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
+		printTopLevelError(err)
 		os.Exit(1)
+	}
+}
+
+// printTopLevelError prints the error returned by the CLI. Usage/help is shown
+// only for parameter problems (bad flag, missing firmware, unknown preset, ...);
+// runtime failures print just the error message so a failed flash does not dump
+// the man page onto the log.
+func printTopLevelError(err error) {
+	out := os.Stderr
+	fmt.Fprintln(out, rootCmd.ErrPrefix(), err)
+
+	var ue *usageError
+	if errors.As(err, &ue) {
+		fmt.Fprintln(out)
+		fmt.Fprint(out, usageCmd.UsageString())
+		return
+	}
+
+	// Unknown command / subcommand: nudge the user toward help.
+	if strings.Contains(strings.ToLower(err.Error()), "unknown command") {
+		fmt.Fprintln(out)
+		fmt.Fprint(out, fmt.Sprintf("Run '%v --help' for usage.\n", rootCmd.CommandPath()))
 	}
 }
 

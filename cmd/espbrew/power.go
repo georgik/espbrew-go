@@ -222,7 +222,7 @@ func runPowerCycle(cmd *cobra.Command, args []string) error {
 	var port int
 	_, err = fmt.Sscanf(args[0], "%d", &port)
 	if err != nil {
-		return fmt.Errorf("invalid port number: %w", err)
+		return usageErrf("invalid port number: %s", err)
 	}
 
 	log.Info().Int("port", port).Msg("Power cycling")

@@ -1,11 +1,15 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
+	"github.com/georgik/espbrew-go/internal/chips"
 	"github.com/georgik/espbrew-go/internal/cluster"
 	"github.com/georgik/espbrew-go/internal/device"
 	flashlib "github.com/georgik/espbrew-go/internal/flash"
@@ -116,6 +120,19 @@ var detectedExtraFiles []project.ExtraFile
 // image lands at its true partition offset rather than a preset one.
 var detectedFlashFiles []project.FlashFile
 
+// detectedChip holds the ESP chip discovered during project autodetection. It is
+// used to convert the detected ELF into the correct ESP-IDF image format when
+// flashing locally (see resolveFlashChip). Zero means "unknown", in which case
+// the flasher falls back to its default behavior.
+var detectedChip chips.Chip
+
+// detectedDiagram holds the project's Wokwi diagram.json (board + peripherals)
+// discovered during project autodetection. When flashing a Wokwi board it is
+// sent to the leader so the simulation uses the board-specific diagram instead
+// of the device default. Empty means "no diagram.json found" (or a non-Wokwi
+// flash), in which case the leader uses the device default.
+var detectedDiagram string
+
 func runFlash(cmd *cobra.Command, args []string) error {
 	if flashOpts.clusterURL != "" {
 		return runFlashRemote(args)
@@ -123,65 +140,162 @@ func runFlash(cmd *cobra.Command, args []string) error {
 	return runFlashLocal(args)
 }
 
-func runFlashRemote(args []string) error {
-	// Auto-detect project if no paths specified
-	if !flashOpts.noDetect && len(args) == 0 &&
-		flashOpts.bootloader == "" && flashOpts.partitions == "" && flashOpts.app == "" && flashOpts.buildDir == "" {
+// detectAndPopulate runs project autodetection in the current working directory
+// and, when a known ESP project is found, populates the flash options with the
+// discovered build artifacts (overriding only flags the user did not set
+// explicitly). It is shared by both the local and remote flash paths so a bare
+// `espbrew flash` behaves identically whether or not --cluster is given.
+//
+// It is a no-op unless every firmware source is empty (no positional arg, no
+// --bootloader/--partitions/--app, no --build-dir) and autodetection has not
+// been disabled with --no-detect. The discovered flash plan and extra
+// partitions are recorded in the package-level globals so the remote
+// multi-image path can flash each image at its real partition offset.
+func detectAndPopulate(args []string) {
+	if flashOpts.noDetect ||
+		len(args) > 0 ||
+		flashOpts.bootloader != "" || flashOpts.partitions != "" ||
+		flashOpts.app != "" || flashOpts.buildDir != "" {
+		return
+	}
 
-		cwd, err := os.Getwd()
-		if err == nil {
-			projType, detector := projectRegistry.Detect(cwd)
-			if projType != project.ProjectTypeNone {
-				log.Debug().Str("type", string(projType)).Str("dir", cwd).Msg("Detected project")
+	cwd, err := os.Getwd()
+	if err != nil {
+		return
+	}
 
-				buildDir, err := detector.FindBuildDir(cwd)
-				if err == nil {
-					log.Debug().Str("build_dir", buildDir).Msg("Found build directory")
+	projType, detector := projectRegistry.Detect(cwd)
+	if projType == project.ProjectTypeNone {
+		return
+	}
+	log.Info().Str("type", string(projType)).Str("dir", cwd).Msg("Auto-detected project")
 
-					artifacts, err := detector.GetArtifacts(buildDir)
-					if err == nil {
-						// Populate flashOpts from detected artifacts (only if not explicitly set)
-						if flashOpts.bootloader == "" && artifacts.Bootloader != "" {
-							flashOpts.bootloader = artifacts.Bootloader
-						}
-						if flashOpts.partitions == "" && artifacts.Partitions != "" {
-							flashOpts.partitions = artifacts.Partitions
-						}
-						if flashOpts.app == "" && artifacts.App != "" {
-							flashOpts.app = artifacts.App
-						}
+	// Identify the chip so the detected ELF is converted to the correct
+	// ESP-IDF image format when flashing locally. This mirrors what the
+	// cluster's espflash does when it auto-detects the board. An explicit
+	// --chip override takes precedence, so only auto-detect in that case.
+	if flashOpts.chip == "auto" {
+		if chip := detectChipFromProject(cwd, projType); chip != 0 {
+			detectedChip = chip
+			log.Info().Str("chip", chip.String()).Msg("Auto-detected chip from project")
+		}
+	}
 
-						// Capture any extra partition images (beyond bootloader/partitions/app)
-						// so runFlashRemoteMultiImage can flash them too.
-						detectedExtraFiles = append([]project.ExtraFile(nil), artifacts.ExtraFiles...)
+	buildDir, err := detector.FindBuildDir(cwd)
+	if err != nil {
+		log.Debug().Err(err).Str("dir", cwd).Msg("Could not locate build directory")
+		return
+	}
+	log.Debug().Str("build_dir", buildDir).Msg("Found build directory")
 
-						// Capture the authoritative flash plan (all images + offsets) so
-						// runFlashRemoteMultiImage flashes each at its real partition offset.
-						detectedFlashFiles = append([]project.FlashFile(nil), artifacts.FlashFiles...)
+	artifacts, err := detector.GetArtifacts(buildDir)
+	if err != nil {
+		log.Debug().Err(err).Str("build_dir", buildDir).Msg("Could not read build artifacts")
+		return
+	}
 
-						log.Debug().
-							Str("bootloader", flashOpts.bootloader).
-							Str("partitions", flashOpts.partitions).
-							Str("app", flashOpts.app).
-							Int("extra_partitions", len(detectedExtraFiles)).
-							Int("flash_files", len(detectedFlashFiles)).
-							Msg("Auto-populated flash paths")
-					}
+	// Populate flashOpts from detected artifacts (only if not explicitly set).
+	if flashOpts.app == "" && artifacts.App != "" {
+		flashOpts.app = artifacts.App
+		log.Info().Str("app", artifacts.App).Msg("Auto-populated app from detected project")
+	}
+	if flashOpts.bootloader == "" && artifacts.Bootloader != "" {
+		flashOpts.bootloader = artifacts.Bootloader
+	}
+	if flashOpts.partitions == "" && artifacts.Partitions != "" {
+		flashOpts.partitions = artifacts.Partitions
+	}
+
+	// Capture any extra partition images (beyond bootloader/partitions/app)
+	// so runFlashRemoteMultiImage can flash them too.
+	detectedExtraFiles = append([]project.ExtraFile(nil), artifacts.ExtraFiles...)
+
+	// Capture the authoritative flash plan (all images + offsets) so
+	// runFlashRemoteMultiImage flashes each at its real partition offset.
+	detectedFlashFiles = append([]project.FlashFile(nil), artifacts.FlashFiles...)
+
+	// Capture the project's Wokwi diagram.json (board + peripherals) so a
+	// board-specific diagram is used for the Wokwi simulation instead of the
+	// device default. The file lives at the project root; it is optional, so a
+	// missing file simply leaves detectedDiagram empty.
+	if diagram, err := os.ReadFile(filepath.Join(cwd, "diagram.json")); err == nil {
+		detectedDiagram = string(diagram)
+		log.Debug().Str("device", "wokwi").Msg("Auto-detected Wokwi diagram.json")
+	}
+
+	log.Debug().
+		Str("bootloader", flashOpts.bootloader).
+		Str("partitions", flashOpts.partitions).
+		Str("app", flashOpts.app).
+		Int("extra_partitions", len(detectedExtraFiles)).
+		Int("flash_files", len(detectedFlashFiles)).
+		Msg("Auto-populated flash paths")
+}
+
+// detectChipFromProject identifies the ESP chip from a detected project so the
+// local flasher can convert the ELF into the correct image format. For Rust ESP
+// projects the chip is named explicitly in the esp-hal dependency features in
+// Cargo.toml (e.g. "esp32c3"); that is the authoritative signal and avoids
+// flashing a C3 binary as an S3 (or vice-versa). It returns 0 when the chip
+// cannot be determined, letting the flasher fall back to its default.
+func detectChipFromProject(cwd string, projType project.ProjectType) chips.Chip {
+	if projType != project.ProjectTypeRustESP {
+		return 0
+	}
+
+	cargo, err := os.Open(filepath.Join(cwd, "Cargo.toml"))
+	if err != nil {
+		return 0
+	}
+	defer cargo.Close()
+
+	scanner := bufio.NewScanner(cargo)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if !strings.Contains(line, "esp-hal") || !strings.Contains(line, "features") {
+			continue
+		}
+		for _, name := range []string{
+			"esp32c3", "esp32c6", "esp32c2", "esp32c5", "esp32h2",
+			"esp32s3", "esp32s2", "esp32",
+		} {
+			if strings.Contains(line, fmt.Sprintf(`"%s"`, name)) {
+				if chip, ok := chips.ParseChip(name); ok {
+					return chip
 				}
 			}
 		}
 	}
+	return 0
+}
+
+// resolveFlashChip picks the chip used to convert a detected ELF into an
+// ESP-IDF image. An explicit --chip wins; otherwise the chip discovered during
+// project autodetection is used; otherwise it returns 0 and the flasher falls
+// back to its default.
+func resolveFlashChip() chips.Chip {
+	if flashOpts.chip != "" && flashOpts.chip != "auto" {
+		if chip, ok := chips.ParseChip(flashOpts.chip); ok {
+			return chip
+		}
+	}
+	return detectedChip
+}
+
+func runFlashRemote(args []string) error {
+	// Auto-detect project if no paths specified.
+	detectAndPopulate(args)
 
 	// Check for multi-image mode
 	multiImage := flashOpts.bootloader != "" || flashOpts.partitions != "" || flashOpts.app != ""
 	singleImage := !multiImage && len(args) > 0
 
 	if multiImage && len(args) > 0 {
-		return fmt.Errorf("cannot use both multi-image flags and positional firmware argument")
+		return usageErrf("cannot use both multi-image flags and positional firmware argument")
 	}
 
 	if !multiImage && !singleImage {
-		return fmt.Errorf("provide firmware.bin or use --bootloader/--partitions/--app flags or --build-dir")
+		return usageErrf("provide firmware.bin or use --bootloader/--partitions/--app flags or --build-dir")
 	}
 
 	if multiImage {
@@ -269,6 +383,7 @@ func runFlashRemote(args []string) error {
 		FileID:   uploadResp.FileID,
 		ClientID: "espbrew-cli",
 		Erase:    flashOpts.erase,
+		Diagram:  detectedDiagram,
 	}
 	if flashOpts.filterAlias != "" {
 		submitReq.DeviceAlias = flashOpts.filterAlias
@@ -362,6 +477,11 @@ func resolveDevice() (string, error) {
 }
 
 func runFlashLocal(args []string) error {
+	// Auto-detect project type and locate build artifacts when the user did not
+	// specify any firmware path. This mirrors runFlashRemote so a bare
+	// `espbrew flash` in an ESP project flashes the detected binary locally.
+	detectAndPopulate(args)
+
 	// Resolve device from inventory if --device specified
 	if flashOpts.deviceID != "" {
 		port, err := resolveDevice()
@@ -391,11 +511,11 @@ func runFlashLocal(args []string) error {
 	singleImage := !multiImage && len(args) > 0
 
 	if multiImage && len(args) > 0 {
-		return fmt.Errorf("cannot use both multi-image flags and positional firmware argument")
+		return usageErrf("cannot use both multi-image flags and positional firmware argument")
 	}
 
 	if !multiImage && !singleImage {
-		return fmt.Errorf("provide firmware.bin or use --bootloader/--partitions/--app flags or --build-dir")
+		return usageErrf("provide firmware.bin or use --bootloader/--partitions/--app flags or --build-dir")
 	}
 
 	opts := &flashlib.FlasherOptions{
@@ -476,6 +596,7 @@ func runMultiImage(opts *flashlib.FlasherOptions) error {
 			Firmware: data,
 			Offset:   img.offset,
 			Progress: progress,
+			Chip:     resolveFlashChip(),
 		}
 
 		result := flasher.Flash(context.Background(), req)
@@ -529,7 +650,7 @@ func runSingleImage(opts *flashlib.FlasherOptions, firmwarePath string) error {
 		case "app":
 			offset = flashlib.PresetOffsetApp
 		default:
-			return fmt.Errorf("unknown preset: %s (use: bootloader, partitions, app)", flashOpts.preset)
+			return usageErrf("unknown preset: %s (use: bootloader, partitions, app)", flashOpts.preset)
 		}
 		log.Info().Str("preset", flashOpts.preset).Int("offset", offset).Msg("Resolved preset to offset")
 	}
@@ -550,6 +671,7 @@ func runSingleImage(opts *flashlib.FlasherOptions, firmwarePath string) error {
 		Firmware: data,
 		Offset:   offset,
 		Progress: progress,
+		Chip:     resolveFlashChip(),
 	}
 
 	log.Info().Int("bytes", len(data)).Msg("Flashing...")
@@ -658,6 +780,7 @@ func runBuildDir() error {
 			Firmware: data,
 			Offset:   int(file.Offset),
 			Progress: progress,
+			Chip:     resolveFlashChip(),
 		}
 
 		result := flasher.Flash(context.Background(), req)
@@ -840,6 +963,7 @@ func runFlashRemoteMultiImage() error {
 			ClientID: "espbrew-cli",
 			Offset:   img.offset,
 			Erase:    flashOpts.erase,
+			Diagram:  detectedDiagram,
 		}
 		if flashOpts.filterAlias != "" {
 			submitReq.DeviceAlias = flashOpts.filterAlias

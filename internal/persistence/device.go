@@ -419,6 +419,7 @@ func (d *DeviceRecord) ToDeviceInfo() *protocol.DeviceInfo {
 		DeviceID:        d.DeviceID,
 		Name:            d.Name,
 		ChipType:        d.ChipType,
+		Aliases:         d.Aliases, // soft attributes must survive into the API listing
 		NodeID:          d.NodeID,
 		Status:          "available",
 		Disabled:        d.Disabled,

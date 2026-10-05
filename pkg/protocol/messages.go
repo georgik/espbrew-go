@@ -155,20 +155,30 @@ type NodeInfo struct {
 }
 
 type DeviceInfo struct {
-	Path             string             `json:"path"`      // Stable path (by-id on Linux)
-	RealPath         string             `json:"real_path"` // Actual device path (e.g., /dev/ttyUSB0)
-	VID              uint16             `json:"vid"`
-	PID              uint16             `json:"pid"`
-	SerialNumber     string             `json:"serial"`
-	DeviceID         string             `json:"device_id,omitempty"` // Device ID from MAC (esp-xx:xx:xx:xx:xx:xx)
-	ChipType         string             `json:"chip_type,omitempty"` // ESP32, ESP32-S3, ESP32-C3, etc.
-	Name             string             `json:"name,omitempty"`      // Human-readable device label (free-form)
-	NodeID           string             `json:"node_id"`
-	Status           string             `json:"status"` // available, busy, offline
-	Disabled         bool               `json:"disabled"`
-	DisabledReason   string             `json:"disabled_reason,omitempty"`
-	DisabledBy       string             `json:"disabled_by,omitempty"`
-	DisabledAt       time.Time          `json:"disabled_at,omitempty"`
+	Path         string `json:"path"`      // Stable path (by-id on Linux)
+	RealPath     string `json:"real_path"` // Actual device path (e.g., /dev/ttyUSB0)
+	VID          uint16 `json:"vid"`
+	PID          uint16 `json:"pid"`
+	SerialNumber string `json:"serial"`
+	DeviceID     string `json:"device_id,omitempty"` // Device ID from MAC (esp-xx:xx:xx:xx:xx:xx)
+	ChipType     string `json:"chip_type,omitempty"` // ESP32, ESP32-S3, ESP32-C3, etc.
+	Name         string `json:"name,omitempty"`      // Human-readable device label (free-form)
+	// Aliases are addressable names for the device. The cluster API lists
+	// them so a client can select a board via `--filter-alias`; the leader
+	// resolves an alias to a stored path (see resolveDeviceName). Virtual
+	// boards (Wokwi/QEMU) carry a default alias equal to their device ID.
+	Aliases        []string  `json:"aliases,omitempty"`
+	NodeID         string    `json:"node_id"`
+	Status         string    `json:"status"` // available, busy, offline, sleeping
+	Disabled       bool      `json:"disabled"`
+	DisabledReason string    `json:"disabled_reason,omitempty"`
+	DisabledBy     string    `json:"disabled_by,omitempty"`
+	DisabledAt     time.Time `json:"disabled_at,omitempty"`
+	// Sleeping marks a power-managed board whose USB hub port is currently
+	// powered off. Such a board is not present in the live USB tree; an
+	// operation wakes it (powers the port on) before starting. See
+	// config.DeviceConfig.USBLocation.
+	Sleeping         bool               `json:"sleeping"`
 	Protected        bool               `json:"protected"` // Flash-protected mode - can monitor but not flash
 	ProtectedReason  string             `json:"protected_reason,omitempty"`
 	ProtectedBy      string             `json:"protected_by,omitempty"`

@@ -2,6 +2,7 @@ package espfmt
 
 import (
 	"bytes"
+	"crypto/md5"
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
@@ -25,6 +26,24 @@ const (
 	WP_PIN_DISABLED = 0xEE
 	// Flash base address for app image
 	FLASH_BASE = 0x10000
+
+	// Partition table constants (matching ESP-IDF esp_flash_partitions.h).
+	//
+	// The ESP32 bootloader reads the partition table as a fixed 3072-byte
+	// region at offset 0x8000. It is a sequence of 32-byte entries, each
+	// prefixed with the 0x50AA magic. The real partitions are followed by a
+	// single 0xEBEB marker entry whose 16-byte MD5 checksum (computed over
+	// every preceding byte) is stored at entry+16; the remainder is padded
+	// with 0xFF, which the bootloader treats as the terminating entry.
+	//
+	// See: components/bootloader_support/include/esp_flash_partitions.h and
+	// components/esp_partition/partition.c (esp_partition_table_verify).
+	ESP_PARTITION_TABLE_LEN    = 0xC00 // 3072 bytes, ESP_PARTITION_TABLE_MAX_LEN
+	ESP_PARTITION_ENTRY_SIZE   = 32
+	ESP_PARTITION_MAGIC        = 0x50AA
+	ESP_PARTITION_MAGIC_MD5    = 0xEBEB
+	ESP_PARTITION_MD5_OFFSET   = 16
+	ESP_PARTITION_PADDING_BYTE = 0xFF
 )
 
 // Memory region definitions for ESP32-S3
@@ -642,7 +661,17 @@ type ImagePart struct {
 	Data   []byte
 }
 
-// DefaultPartitionTable creates a default partition table for the chip
+// DefaultPartitionTable creates a default partition table for the chip.
+//
+// The output matches the on-flash format expected by the ESP32 bootloader
+// (see components/bootloader_support/include/esp_flash_partitions.h and
+// components/esp_partition/partition.c): a fixed-size region of
+// ESP_PARTITION_TABLE_LEN bytes made up of 32-byte entries. Each real
+// partition is prefixed with the 0x50AA magic; the real partitions are
+// followed by a single 0xEBEB marker entry whose 16-byte MD5 checksum
+// (computed over every preceding byte) is stored at entry+16; the remainder
+// of the region is padded with 0xFF, which the bootloader treats as the
+// terminating entry.
 func DefaultPartitionTable(chip Chip, flashSize uint32) []byte {
 	const (
 		NVS_ADDR      = 0x9000
@@ -669,7 +698,7 @@ func DefaultPartitionTable(chip Chip, flashSize uint32) []byte {
 		appSize = flashSize - appAddr
 	}
 
-	// Build partition table
+	// Build the real partition entries.
 	var buf bytes.Buffer
 
 	// NVS partition
@@ -681,9 +710,26 @@ func DefaultPartitionTable(chip Chip, flashSize uint32) []byte {
 	// Factory app partition
 	writePartition(&buf, "factory", 0x00, 0x00, appAddr, appSize, 0)
 
-	// Padding to fill 32-byte entries
-	for buf.Len()%32 != 0 {
-		buf.WriteByte(0xFF)
+	// Append the MD5 marker entry. The bootloader computes the MD5 over every
+	// byte preceding this entry and compares it against the 16-byte digest
+	// stored at entry+ESP_PARTITION_MD5_OFFSET.
+	markerStart := buf.Len()
+	sum := md5.Sum(buf.Bytes())
+
+	// Marker magic (0xEBEB) followed by 0xFF up to the digest offset, then the
+	// 16-byte MD5 digest itself.
+	var marker [2]byte
+	binary.LittleEndian.PutUint16(marker[:], ESP_PARTITION_MAGIC_MD5)
+	buf.Write(marker[:])
+	digestAbs := markerStart + ESP_PARTITION_MD5_OFFSET
+	for buf.Len() < digestAbs {
+		buf.WriteByte(ESP_PARTITION_PADDING_BYTE)
+	}
+	buf.Write(sum[:])
+
+	// Pad the remainder of the fixed-size table region with 0xFF.
+	for buf.Len() < ESP_PARTITION_TABLE_LEN {
+		buf.WriteByte(ESP_PARTITION_PADDING_BYTE)
 	}
 
 	return buf.Bytes()

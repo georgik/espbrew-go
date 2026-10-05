@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/georgik/espbrew-go/internal/serialheal"
 	"github.com/rs/zerolog/log"
 	"go.bug.st/serial"
 )
@@ -61,7 +62,7 @@ func (m *Monitor) Open() error {
 		BaudRate: m.baudRate,
 	}
 
-	port, err := serial.Open(m.port, mode)
+	port, err := serialheal.Open(m.port, mode)
 	if err != nil {
 		return fmt.Errorf("open serial port %s: %w", m.port, err)
 	}

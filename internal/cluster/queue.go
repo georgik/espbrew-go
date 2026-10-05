@@ -46,13 +46,17 @@ type Job struct {
 	EraseAddress uint32
 	EraseSize    uint32
 	Chip         chips.Chip // Target chip, for ELF->image conversion (0 = auto/unknown)
-	Status       JobStatus
-	Progress     int
-	CreatedAt    time.Time
-	StartedAt    *time.Time
-	CompletedAt  *time.Time
-	Error        string
-	mu           sync.RWMutex
+	// Diagram is an optional Wokwi diagram.json (board + peripherals) supplied
+	// by the flashing project. When set it overrides the device default so a
+	// board-specific diagram is used even for the generic wokwi:<chip> devices.
+	Diagram     string
+	Status      JobStatus
+	Progress    int
+	CreatedAt   time.Time
+	StartedAt   *time.Time
+	CompletedAt *time.Time
+	Error       string
+	mu          sync.RWMutex
 }
 
 type JobQueue struct {
@@ -69,10 +73,10 @@ func NewJobQueue() *JobQueue {
 }
 
 func (q *JobQueue) Enqueue(firmwarePath, devicePath string, offset int) *Job {
-	return q.EnqueueFlash(firmwarePath, devicePath, offset, false)
+	return q.EnqueueFlash(firmwarePath, devicePath, offset, false, "")
 }
 
-func (q *JobQueue) EnqueueFlash(firmwarePath, devicePath string, offset int, erase bool) *Job {
+func (q *JobQueue) EnqueueFlash(firmwarePath, devicePath string, offset int, erase bool, diagram string) *Job {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
@@ -83,6 +87,7 @@ func (q *JobQueue) EnqueueFlash(firmwarePath, devicePath string, offset int, era
 		DevicePath: devicePath,
 		Offset:     offset,
 		Erase:      erase,
+		Diagram:    diagram,
 		Status:     JobPending,
 		CreatedAt:  time.Now(),
 	}

@@ -11,10 +11,12 @@ import (
 	"sync"
 	"time"
 
+	"github.com/georgik/espbrew-go/internal/backend/wokwi"
 	"github.com/georgik/espbrew-go/internal/camera"
 	"github.com/georgik/espbrew-go/internal/chips"
 	"github.com/georgik/espbrew-go/internal/config"
 	"github.com/georgik/espbrew-go/internal/device"
+	"github.com/georgik/espbrew-go/internal/devicesleep"
 	"github.com/georgik/espbrew-go/internal/flashhash"
 	"github.com/georgik/espbrew-go/internal/inventory"
 	"github.com/georgik/espbrew-go/internal/inventory/rom"
@@ -25,23 +27,28 @@ import (
 
 // LeaderNode coordinates the cluster, discovers local devices, and aggregates state from peers.
 type LeaderNode struct {
-	id          string
-	config      *LeaderConfig
-	state       *ClusterState
-	queue       *JobQueue
-	executor    *JobExecutor
-	devices     *DeviceRegistry
-	store       *persistence.Store
-	mu          sync.RWMutex
-	ctx         context.Context
-	cancel      context.CancelFunc
-	wg          sync.WaitGroup
-	mdns        *mDNSService
-	watcher     *device.Watcher
-	mode        protocol.OperationMode
-	modeTimer   *time.Timer
-	modeCancel  context.CancelFunc
-	staticPeers *StaticPeerRegistry
+	id        string
+	config    *LeaderConfig
+	state     *ClusterState
+	queue     *JobQueue
+	executor  *JobExecutor
+	devices   *DeviceRegistry
+	store     *persistence.Store
+	mu        sync.RWMutex
+	ctx       context.Context
+	cancel    context.CancelFunc
+	wg        sync.WaitGroup
+	mdns      *mDNSService
+	watcher   *device.Watcher
+	sleeper   *devicesleep.Manager   // powers idle power-managed boards off; nil if none
+	powerCtrl devicesleep.Controller // injected power controller (tests); nil => real hub
+	// wokwiSessions runs and reuses APIMonitor instances for Wokwi devices so
+	// that `flash` starts the simulation and `monitor` attaches to it.
+	wokwiSessions *wokwi.SessionManager
+	mode          protocol.OperationMode
+	modeTimer     *time.Timer
+	modeCancel    context.CancelFunc
+	staticPeers   *StaticPeerRegistry
 
 	// deviceConfigs is the working copy of the espbrew.toml mapping. It is the
 	// explicit source of truth for device identity (auto-discovery stays off);
@@ -64,6 +71,9 @@ type LeaderConfig struct {
 	InitialMode        string                    // Starting mode (default "discovery")
 	Devices            []config.DeviceConfig     // Explicit espbrew.toml device mapping
 	ConfigPath         string                    // espbrew.toml file (load + write target)
+	// SleepConfig overrides the sleep manager tunables (for tests). Nil =>
+	// devicesleep.DefaultConfig().
+	SleepConfig *devicesleep.Config
 }
 
 func (c *LeaderConfig) DeviceByPath(path string) *config.DeviceConfig {
@@ -94,6 +104,7 @@ func NewLeaderNode(id string, cfg *LeaderConfig, store *persistence.Store) *Lead
 		mode:          initialMode,
 		deviceConfigs: deviceConfigs,
 		configPath:    cfg.ConfigPath,
+		wokwiSessions: wokwi.NewSessionManager(),
 	}
 }
 
@@ -117,6 +128,27 @@ func (l *LeaderNode) Start(ctx context.Context) error {
 		}
 	} else {
 		log.Warn().Msg("No devices configured in espbrew.toml - only auto-detected/unknown ports will appear")
+	}
+
+	// Set up the power-managed device sleep manager. Boards registered with a
+	// USB hub location (config.DeviceConfig.USBLocation) are powered off when
+	// idle and powered on before an operation. The controller is a no-op (with
+	// ErrNotSupported) on platforms without power-controllable hubs, so this is
+	// safe everywhere; it only takes effect where a real hub is present.
+	sleepCfg := devicesleep.DefaultConfig()
+	if l.config.SleepConfig != nil {
+		sleepCfg = *l.config.SleepConfig
+	}
+	l.sleeper = devicesleep.New(l.sleepController(), sleepCfg)
+	numPowerManaged := l.countPowerManagedDevices()
+	l.registerPowerManagedDevices()
+	if numPowerManaged > 0 {
+		// The leader runs the idle sweeper loop itself (not the manager's
+		// internal one) so it can update device records when a board is
+		// powered down.
+		l.wg.Add(1)
+		go l.runDeviceSleepLoop()
+		log.Info().Int("count", numPowerManaged).Msg("Device sleep manager started")
 	}
 
 	// Start mDNS (skip in test mode)
@@ -172,6 +204,11 @@ func (l *LeaderNode) Start(ctx context.Context) error {
 
 	// Register virtual devices
 	l.registerVirtualDevices()
+
+	// Mark power-managed boards that are not present in the live USB tree as
+	// sleeping (and create records for them) so they can still be addressed by
+	// alias and woken on demand. Runs after the watcher has scanned.
+	l.reconcilePowerManagedDevices()
 
 	// Initialize operational mode
 	l.mu.Lock()
@@ -284,6 +321,13 @@ func (l *LeaderNode) GetDeviceFromState(path string) (*protocol.DeviceInfo, bool
 	defer l.mu.RUnlock()
 	dev, exists := l.state.Devices[path]
 	return dev, exists
+}
+
+// WokwiSessions returns the leader's Wokwi session manager. Flash and monitor
+// handlers use it so a Wokwi device runs a single simulation that both commands
+// share (flash starts it, monitor attaches to it).
+func (l *LeaderNode) WokwiSessions() *wokwi.SessionManager {
+	return l.wokwiSessions
 }
 
 // IsDeviceDisabledInState checks if a device is disabled (thread-safe)
@@ -484,10 +528,10 @@ func (l *LeaderNode) EnqueueJob(firmwarePath, devicePath string) (*Job, error) {
 }
 
 func (l *LeaderNode) EnqueueJobWithOffset(firmwarePath, devicePath string, offset int) (*Job, error) {
-	return l.EnqueueJobWithOffsetAndErase(firmwarePath, devicePath, offset, false)
+	return l.EnqueueJobWithOffsetAndErase(firmwarePath, devicePath, offset, false, "")
 }
 
-func (l *LeaderNode) EnqueueJobWithOffsetAndErase(firmwarePath, devicePath string, offset int, erase bool) (*Job, error) {
+func (l *LeaderNode) EnqueueJobWithOffsetAndErase(firmwarePath, devicePath string, offset int, erase bool, diagram string) (*Job, error) {
 	// Check operational mode - flashing not allowed in discovery mode
 	if l.GetMode() == protocol.ModeDiscovery {
 		return nil, fmt.Errorf("flashing not allowed in discovery mode - switch to operational mode first")
@@ -505,7 +549,11 @@ func (l *LeaderNode) EnqueueJobWithOffsetAndErase(firmwarePath, devicePath strin
 		return nil, fmt.Errorf("device is disabled: %s", devicePath)
 	}
 
-	job := l.queue.EnqueueFlash(firmwarePath, devicePath, offset, erase)
+	// Wake a sleeping power-managed board before it is used. This powers its
+	// hub port on and waits for enumeration; it is a no-op otherwise.
+	l.wakeDevice(devicePath)
+
+	job := l.queue.EnqueueFlash(firmwarePath, devicePath, offset, erase, diagram)
 
 	// Derive the target chip from the device registry so the ELF->image
 	// conversion uses the correct chip id and address map. Without this the
@@ -530,6 +578,11 @@ func (l *LeaderNode) EnqueueJobWithOffsetAndErase(firmwarePath, devicePath strin
 	l.state.Devices[devicePath] = dev
 	l.mu.Unlock()
 
+	// Keep the idle sweeper from powering the board off while this job runs.
+	if l.sleeper != nil {
+		l.sleeper.SetBusy(devicePath, true)
+	}
+
 	return job, nil
 }
 
@@ -551,6 +604,9 @@ func (l *LeaderNode) EnqueueEraseJob(devicePath string, eraseAll bool, address, 
 		return nil, fmt.Errorf("device is disabled: %s", devicePath)
 	}
 
+	// Wake a sleeping power-managed board before it is used.
+	l.wakeDevice(devicePath)
+
 	job := l.queue.EnqueueErase(devicePath, eraseAll, address, size)
 
 	// Reserve device for this job
@@ -564,6 +620,11 @@ func (l *LeaderNode) EnqueueEraseJob(devicePath string, eraseAll bool, address, 
 	dev.Status = "busy"
 	l.state.Devices[devicePath] = dev
 	l.mu.Unlock()
+
+	// Keep the idle sweeper from powering the board off while this job runs.
+	if l.sleeper != nil {
+		l.sleeper.SetBusy(devicePath, true)
+	}
 
 	return job, nil
 }
@@ -719,6 +780,16 @@ func (l *LeaderNode) handleDeviceEvent(event device.DeviceEvent) {
 			l.devices.Register(event.Path)
 		}
 
+		// A power-managed board present in the live tree is awake: mirror that
+		// onto the sleep manager so a board that re-appears after being woken
+		// (or that was already up) is not treated as sleeping.
+		if isPowerManagedPath(l, event.Path) {
+			dev.Sleeping = false
+			if l.sleeper != nil {
+				l.sleeper.SetSleeping(event.Path, false)
+			}
+		}
+
 		switch {
 		case cfg != nil:
 			log.Info().Str("path", dev.Path).Str("device_id", dev.DeviceID).
@@ -733,8 +804,24 @@ func (l *LeaderNode) handleDeviceEvent(event device.DeviceEvent) {
 		}
 
 	case device.DeviceRemoved:
-		delete(l.state.Devices, event.Path)
-		log.Info().Str("path", event.Path).Msg("Device removed from leader")
+		// Power-managed boards keep their record (so they stay addressable by
+		// alias) but are marked sleeping while they are absent from the live
+		// USB tree. Plain devices are simply removed.
+		if isPowerManagedPath(l, event.Path) {
+			if dev, ok := l.state.Devices[event.Path]; ok {
+				dev.Sleeping = true
+				dev.Status = "sleeping"
+				l.state.Devices[event.Path] = dev
+			}
+			if l.sleeper != nil {
+				l.sleeper.SetSleeping(event.Path, true)
+			}
+			log.Info().Str("path", event.Path).Msg(
+				"Device left live USB tree - marked sleeping (wakes before use)")
+		} else {
+			delete(l.state.Devices, event.Path)
+			log.Info().Str("path", event.Path).Msg("Device removed from leader")
+		}
 	}
 }
 
@@ -1314,23 +1401,29 @@ func (l *LeaderNode) createDefaultVirtualDevices() {
 	for _, def := range defaultDevices {
 		// Check if device already exists
 		existing, err := l.store.GetDevice(def.deviceID)
-		needsUpdate := false
+		created := false
 
 		if err != nil {
 			// Device doesn't exist, create new
-			needsUpdate = true
+			created = true
 			existing = &persistence.DeviceRecord{
 				DeviceID: def.deviceID,
 				ChipType: def.chipType,
 			}
-		} else {
-			// Device exists, check if it needs updating
-			if existing.Backend == "" || existing.LastPath == "" {
-				needsUpdate = true
-			}
 		}
 
-		if !needsUpdate {
+		// Stamp the default alias (== device ID) unless the operator already
+		// set one. This keeps the device addressable via `--filter-alias`
+		// (e.g. `espbrew ... flash --filter-alias wokwi:esp32-s3`) even though
+		// the Wokwi board has no real serial port. The alias index is rebuilt
+		// by SaveDevice below.
+		hasAlias := len(existing.Aliases) > 0
+		if !hasAlias {
+			existing.Aliases = []string{def.deviceID}
+		}
+
+		// Skip devices that are already fully configured and carry their alias.
+		if !created && existing.Backend != "" && existing.LastPath != "" && hasAlias {
 			continue
 		}
 

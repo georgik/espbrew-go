@@ -203,6 +203,54 @@ readlink -f /dev/serial/by-id/usb-Espressif_ESP32-S3-DevKitC-1_1234567890-if00
 # /dev/ttyACM0  -> then mount that node, as above
 ```
 
+## Device must be in operational state (not rebooting) to mount
+
+`--device` injects the host node **once, at container start**, and Podman/runc copies that
+node's permission bits at that instant. The injected node is a **separate inode** inside the
+container — it does **not** follow the host node afterward.
+
+> **Mechanism note (rootless podman):** `--device` is implemented as a **bind mount of the host device inode** (`pkg/specgen/generate/config_linux.go:addDevice`, rootless branch: `TypeBind`, `Source=/dev/ttyACM0`, `Options=[slave,nosuid,noexec,ro|rw,rbind]`) — not a copy. A bind mount refers to the inode that existed at the source path *at mount time*, so the permission bits are frozen at the start-time inode and the node cannot track a device node later deleted and recreated. (Non-rootless podman instead `mknod`s a fresh node in the container, but the mode is still snapshotted at creation.) A systemd path unit watching `/dev/ttyACM0` to `podman restart` the container is how you make a hub power cycle transparent.
+
+So the board must be in a
+**stable, operational state** when the container starts:
+
+- If the chip is **rebooting / re-enumerating** over USB at that moment, the host
+  `/dev/ttyACM0` node flickers between present and absent (and momentarily hits `mode 000`
+  during re-enumeration). A start that lands on that window injects a `mode 000` or
+  **missing** node, and espbrew (or any tool) gets `EACCES` ("Permission denied") — even
+  though the node is `0666` on the host and the keep-id / `udev` / `dialout` setup is
+  otherwise correct.
+- A node snapshotted as `000` **stays `000` for the container's whole life**; it will not
+  recover when the board comes back. Only **restarting the container** re-snapshots it.
+
+This is a **timing** problem, distinct from the permission/namespace issues above. You see
+it as **intermittent** behaviour: the exact same command sometimes mounts a writable `0666`
+node (board up) and sometimes a `000`/absent node (board mid-reboot).
+
+Diagnose it by watching the host node while nothing is inside the container:
+
+```bash
+# a stable board stays present the whole time; a rebooting board drops out periodically
+for i in $(seq 1 40); do stat -c '%a %U:%G' /dev/ttyACM0 2>&1; sleep 0.25; done
+```
+
+If it drops out periodically, the **board itself is rebooting** (bad/crashing firmware, a
+crash loop, or a flaky USB connection) — fix the board, not the container. A board that
+reboots on a loop (for example one flashed with wrong/buggy firmware) makes the mount
+unreliable until it is running stable firmware and sitting in its normal operational state.
+
+If you cannot avoid a flapping board, only relaunch espbrew once the node is a proper `0666`
+inode (a `000` node never recovers inside a running container):
+
+```bash
+while ! stat -c '%a' /dev/ttyACM0 2>/dev/null | grep -q '^666$'; do sleep 0.3; done
+podman run --rm -p 8081:8080 --userns=keep-id --group-add=keep-groups \
+  --device=/dev/ttyACM0:rwm -e HOME=/tmp ghcr.io/georgik/espbrew-go:latest
+```
+
+(espbrew already retries a busy port, so a *transient* drop during a flash usually recovers
+on its own — this note is about the node being snapshotted bad **at start**.)
+
 ## Notes and troubleshooting
 
 - **Device busy (`EBUSY`):** espbrew tolerates transient busy conditions — it briefly retries the port open when the boot-log probe is running or the USB device re-enumerates, so a flash succeeds without manual intervention. A *persistent* `Serial port busy` means a real second holder: `podman ps` to confirm no stray espbrew-go or shell container is running, kill it, and retry. Also confirm `ModemManager` on the host is not claiming the serial port. (Details in [flashing-implementation.md](flashing-implementation.md).)

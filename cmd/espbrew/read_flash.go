@@ -51,18 +51,18 @@ Examples:
 
 func runReadFlash(cmd *cobra.Command, args []string) error {
 	if len(args) != 1 {
-		return fmt.Errorf("output file path required")
+		return usageErrf("output file path required")
 	}
 
 	outputFile := args[0]
 
 	if readFlashCmd.size == 0 {
-		return fmt.Errorf("size must be greater than 0")
+		return usageErrf("size must be greater than 0")
 	}
 
 	const maxSize = 16 * 1024 * 1024
 	if readFlashCmd.size > maxSize {
-		return fmt.Errorf("size exceeds maximum of %d bytes", maxSize)
+		return usageErrf("size exceeds maximum of %d bytes", maxSize)
 	}
 
 	log.Info().Str("output", outputFile).Uint32("address", readFlashCmd.address).Uint32("size", readFlashCmd.size).Msg("Read flash parameters")
@@ -145,7 +145,7 @@ func findDevicePort() (string, error) {
 
 func runReadFlashCluster(outputFile string) error {
 	if readFlashCmd.device == "" {
-		return fmt.Errorf("device path required when using cluster mode")
+		return usageErrf("device path required when using cluster mode")
 	}
 
 	client := cluster.NewClient(readFlashCmd.clusterURL)

@@ -54,9 +54,8 @@ func NewTransport(token, url string) *Transport {
 // Connect establishes WebSocket connection and performs handshake
 func (t *Transport) Connect(ctx context.Context) (*HelloMessage, error) {
 	t.mu.Lock()
-	defer t.mu.Unlock()
-
 	if t.conn != nil {
+		t.mu.Unlock()
 		return nil, fmt.Errorf("already connected")
 	}
 
@@ -70,6 +69,7 @@ func (t *Transport) Connect(ctx context.Context) (*HelloMessage, error) {
 
 	conn, _, err := dialer.DialContext(ctx, t.url, headers)
 	if err != nil {
+		t.mu.Unlock()
 		return nil, fmt.Errorf("failed to connect: %w", err)
 	}
 
@@ -83,25 +83,31 @@ func (t *Transport) Connect(ctx context.Context) (*HelloMessage, error) {
 	// Start message reader
 	go t.readLoop()
 
-	// Wait for hello message
-	ctx, cancel := context.WithTimeout(ctx, DefaultTimeout)
-	defer cancel()
-
+	// Wait for hello message. Subscribe first, then RELEASE the lock before the
+	// blocking select: on timeout we call t.Close(), which itself locks t.mu,
+	// so holding it here would deadlock (Go mutexes are not reentrant).
 	helloCh := make(chan EventMessage, 1)
 	t.eventSubs[MsgTypeHello] = append(t.eventSubs[MsgTypeHello], helloCh)
+	t.mu.Unlock()
+
+	ctx, cancel := context.WithTimeout(ctx, DefaultTimeout)
+	defer cancel()
 
 	select {
 	case event := <-helloCh:
 		if event.Type != MsgTypeHello {
+			_ = t.Close()
 			return nil, fmt.Errorf("expected hello, got %s", event.Type)
 		}
 		if protocolVersion, ok := event.Result["protocolVersion"].(float64); !ok || int(protocolVersion) != ProtocolVersion {
+			_ = t.Close()
 			return nil, fmt.Errorf("unsupported protocol version: %v", event.Result["protocolVersion"])
 		}
 		return &HelloMessage{
 			Type:            event.Type,
 			AppVersion:      stringOrEmpty(event.Result["appVersion"]),
 			ProtocolVersion: int(event.Result["protocolVersion"].(float64)),
+			ServerURL:       t.url,
 		}, nil
 	case <-ctx.Done():
 		_ = t.Close()
@@ -204,12 +210,18 @@ func (t *Transport) Request(ctx context.Context, command string, params map[stri
 	}
 }
 
-// Subscribe subscribes to events of a given type
+// Subscribe subscribes to events of a given type. It is safe to call after the
+// transport has been closed: the caller receives a pre-closed channel instead of
+// a panic on the (now nil) subscription map.
 func (t *Transport) Subscribe(eventType string) chan EventMessage {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
 	ch := make(chan EventMessage, 10)
+	if t.eventSubs == nil {
+		close(ch)
+		return ch
+	}
 	t.eventSubs[eventType] = append(t.eventSubs[eventType], ch)
 	return ch
 }
@@ -272,11 +284,10 @@ func (t *Transport) readLoop() {
 			})
 		case MsgTypeEvent:
 			t.dispatchEvent(EventMessage{
-				Type:   msgType,
-				Event:  stringOrEmpty(raw["event"]),
-				Nanos:  int64OrZero(raw["nanos"]),
-				Result: getMap(raw["result"]),
-				Data:   getMap(raw["data"]),
+				Type:    msgType,
+				Event:   stringOrEmpty(raw["event"]),
+				Nanos:   int64OrZero(raw["nanos"]),
+				Payload: getMap(raw["payload"]),
 			})
 		case MsgTypeResponse:
 			t.handleResponse(raw)
@@ -300,9 +311,10 @@ func (t *Transport) handleResponse(raw map[string]interface{}) {
 	}
 
 	resp := ResponseMessage{
-		ID:     id,
-		Type:   stringOrEmpty(raw["type"]),
-		Result: getMap(raw["result"]),
+		ID:      id,
+		Type:    stringOrEmpty(raw["type"]),
+		Command: stringOrEmpty(raw["command"]),
+		Result:  getMap(raw["result"]),
 	}
 
 	if errData, ok := raw["error"].(map[string]interface{}); ok {

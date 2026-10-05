@@ -116,18 +116,18 @@ func runEraseRemote() error {
 	// Parse address and size
 	address, err := parseHex(eraseOpts.address)
 	if err != nil {
-		return fmt.Errorf("invalid address: %w", err)
+		return usageErrf("invalid address: %s", err)
 	}
 
 	size, err := parseHex(eraseOpts.size)
 	if err != nil {
-		return fmt.Errorf("invalid size: %w", err)
+		return usageErrf("invalid size: %s", err)
 	}
 
 	// Determine erase mode
 	eraseAll := eraseOpts.eraseAll
 	if !eraseAll && (address == 0 || size == 0) {
-		return fmt.Errorf("for region erase, both --address and --size must be non-zero, or use --all")
+		return usageErrf("for region erase, both --address and --size must be non-zero, or use --all")
 	}
 
 	log.Info().Str("cluster", eraseOpts.clusterURL).Str("device", devicePath).
@@ -222,18 +222,18 @@ func runEraseLocal() error {
 	// Parse address and size
 	address, err := parseHex(eraseOpts.address)
 	if err != nil {
-		return fmt.Errorf("invalid address: %w", err)
+		return usageErrf("invalid address: %s", err)
 	}
 
 	size, err := parseHex(eraseOpts.size)
 	if err != nil {
-		return fmt.Errorf("invalid size: %w", err)
+		return usageErrf("invalid size: %s", err)
 	}
 
 	// Determine erase mode
 	eraseAll := eraseOpts.eraseAll
 	if !eraseAll && (address == 0 || size == 0) {
-		return fmt.Errorf("for region erase, both --address and --size must be non-zero, or use --all")
+		return usageErrf("for region erase, both --address and --size must be non-zero, or use --all")
 	}
 
 	flasher := flash.NewFlasher(nil)

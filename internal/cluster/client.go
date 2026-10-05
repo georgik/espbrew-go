@@ -81,6 +81,16 @@ func (c *Client) doWithRetry(req *http.Request) (*http.Response, error) {
 
 	for attempt := 0; attempt <= c.maxRetries; attempt++ {
 		if attempt > 0 {
+			// Rewind the request body before resending. net/http only auto-rewinds
+			// for its own internal connection reuse, not for a custom retry loop
+			// like this one, so without this a retried POST would send
+			// "ContentLength=N with Body length 0".
+			if req.GetBody != nil {
+				body, err := req.GetBody()
+				if err == nil {
+					req.Body = body
+				}
+			}
 			log.Debug().Int("attempt", attempt).Int("max_retries", c.maxRetries).
 				Str("url", req.URL.String()).Msg("Retrying request")
 			time.Sleep(c.retryDelay * time.Duration(attempt))
@@ -97,14 +107,16 @@ func (c *Client) doWithRetry(req *http.Request) (*http.Response, error) {
 			return resp, nil
 		}
 
+		// Drain the response body before (potentially) retrying so the
+		// connection can be reused, and keep it so the final error is actionable.
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+
 		if !isRetryable(resp.StatusCode) {
-			body, _ := io.ReadAll(resp.Body)
-			resp.Body.Close()
 			return resp, fmt.Errorf("status %d: %s", resp.StatusCode, string(body))
 		}
 
-		resp.Body.Close()
-		lastErr = fmt.Errorf("status %d", resp.StatusCode)
+		lastErr = fmt.Errorf("status %d: %s", resp.StatusCode, string(body))
 	}
 
 	return nil, fmt.Errorf("max retries exceeded: %w", lastErr)
@@ -347,6 +359,9 @@ type FlashSubmitRequest struct {
 	ClientID    string                 `json:"client_id,omitempty"`
 	Offset      int                    `json:"offset,omitempty"`
 	Erase       bool                   `json:"erase,omitempty"`
+	// Diagram is an optional Wokwi diagram.json (board + peripherals) supplied
+	// by the flashing project. It overrides the device default for Wokwi sims.
+	Diagram string `json:"diagram,omitempty"`
 }
 
 type FlashSubmitResponse struct {
@@ -370,6 +385,20 @@ type EraseSubmitResponse struct {
 	JobID      string `json:"job_id"`
 	Status     string `json:"status"`
 	DevicePath string `json:"device_path"`
+}
+
+// PowerDeviceRequest requests a manual power up/down of a power-managed board.
+type PowerDeviceRequest struct {
+	DeviceAlias string `json:"device_alias,omitempty"`
+	State       string `json:"state"` // "on" or "off"
+}
+
+// PowerDeviceResponse reports the outcome of a manual power request.
+type PowerDeviceResponse struct {
+	Device   string `json:"device"`
+	Path     string `json:"path"`
+	Power    bool   `json:"power"`    // true = powered on, false = powered off
+	Sleeping bool   `json:"sleeping"` // current power state on the leader
 }
 
 // ReadFlashRequest represents a request to read flash memory
@@ -499,6 +528,43 @@ func (c *Client) SubmitErase(req EraseSubmitRequest) (*EraseSubmitResponse, erro
 	}
 
 	return &eraseResp, nil
+}
+
+// PowerDevice requests the leader to switch a power-managed board's hub port on
+// or off. The client sends only the alias; the leader resolves it server-side.
+func (c *Client) PowerDevice(alias string, on bool) (*PowerDeviceResponse, error) {
+	state := "off"
+	if on {
+		state = "on"
+	}
+	body, err := json.Marshal(PowerDeviceRequest{DeviceAlias: alias, State: state})
+	if err != nil {
+		return nil, fmt.Errorf("marshal request: %w", err)
+	}
+
+	httpReq, err := http.NewRequest("POST", c.baseURL+"/api/v1/devices/"+url.PathEscape(alias)+"/power", bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.doWithRetry(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("status %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	var powerResp PowerDeviceResponse
+	if err := json.NewDecoder(resp.Body).Decode(&powerResp); err != nil {
+		return nil, fmt.Errorf("decode response: %w", err)
+	}
+
+	return &powerResp, nil
 }
 
 // ReadFlash submits a flash read job to the cluster

@@ -21,6 +21,10 @@ type JobExecutor struct {
 	ctx        context.Context
 	cancel     context.CancelFunc
 	progressCB func(string, int, string)
+	// wokwiHook, when set, is consulted before a serial flash. If it returns
+	// handled=true the flash is skipped entirely (used to run a Wokwi
+	// simulation instead of flashing over a serial port).
+	wokwiHook func(*Job) (handled bool, err error)
 }
 
 type JobResult struct {
@@ -137,6 +141,16 @@ func (e *JobExecutor) executeJob(workerID int, job *Job) {
 }
 
 func (e *JobExecutor) executeFlash(job *Job) error {
+	// A Wokwi hook may handle the job itself (e.g. start a simulation instead
+	// of flashing over a serial port). When it reports handled=true the serial
+	// flash is skipped entirely.
+	if e.wokwiHook != nil {
+		handled, err := e.wokwiHook(job)
+		if handled {
+			return err
+		}
+	}
+
 	// Load firmware file
 	firmware, err := os.ReadFile(job.Firmware)
 	if err != nil {

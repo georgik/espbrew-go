@@ -2,11 +2,11 @@ package wokwi
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"fmt"
 	"io"
 	"os"
-	"strings"
 	"sync"
 	"time"
 
@@ -26,24 +26,37 @@ const (
 	MonitorModeAPI
 )
 
+// Environment variables that let the leader point its Wokwi API client at a
+// self-hosted wokwi-ci-server instead of the public wss://wokwi.com endpoint.
+//   - WOKWI_CLI_TOKEN : API token (falls back to WokwiConfig.APIToken).
+//   - WOKWI_CLI_SERVER: WS server URL, e.g. ws://wokwi-ci-server:3000/api/ws/beta.
+//     Empty means the public wokwi.com endpoint (default).
+const (
+	envWokwiToken  = "WOKWI_CLI_TOKEN"
+	envWokwiServer = "WOKWI_CLI_SERVER"
+)
+
 // APIMonitor implements protocol.Monitor using Wokwi API
 type APIMonitor struct {
-	config   *protocol.WokwiConfig
-	elfPath  string
-	firmware string
-	logCh    chan protocol.LogEntry
-	ctx      context.Context
-	cancel   context.CancelFunc
-	client   *api.Client
-	mu       sync.Mutex
-	timeout  time.Duration
-	exitOn   string
-	running  bool
-	apiToken string
+	config      *protocol.WokwiConfig
+	elfPath     string // Firmware source path (ELF or assembled image) used for simulation
+	logCh       chan protocol.LogEntry
+	logChClosed bool // true once Stop has closed logCh; Start recreates it
+	ctx         context.Context
+	cancel      context.CancelFunc
+	client      *api.Client
+	mu          sync.Mutex
+	timeout     time.Duration
+	exitOn      string
+	running     bool
+	apiToken    string
+	serverURL   string
 }
 
-// NewAPIMonitor creates a new Wokwi API monitor
-func NewAPIMonitor(device *protocol.DeviceInfo, apiToken string) (protocol.Monitor, error) {
+// NewAPIMonitor creates a new Wokwi API monitor.
+// serverURL points at the Wokwi WebSocket server; empty means the public
+// wss://wokwi.com endpoint.
+func NewAPIMonitor(device *protocol.DeviceInfo, apiToken, serverURL string) (protocol.Monitor, error) {
 	if device.Backend != protocol.BackendWokwi {
 		return nil, fmt.Errorf("device backend is not wokwi: %s", device.Backend)
 	}
@@ -54,21 +67,22 @@ func NewAPIMonitor(device *protocol.DeviceInfo, apiToken string) (protocol.Monit
 	}
 
 	return &APIMonitor{
-		config:   cfg,
-		logCh:    make(chan protocol.LogEntry, 100),
-		timeout:  DefaultWokwiTimeout,
-		exitOn:   DefaultSuccessPattern,
-		apiToken: apiToken,
+		config:    cfg,
+		logCh:     make(chan protocol.LogEntry, 100),
+		timeout:   DefaultWokwiTimeout,
+		exitOn:    DefaultSuccessPattern,
+		apiToken:  apiToken,
+		serverURL: serverURL,
 	}, nil
 }
 
-// SetELFPath sets the path to the ELF file for simulation
+// SetELFPath sets the path to the firmware source (ELF or assembled image) used
+// for simulation. The file is assembled into flash sections and uploaded to the
+// Wokwi server when Start is called.
 func (m *APIMonitor) SetELFPath(path string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.elfPath = path
-	// For Wokwi API, firmware and ELF are the same (we use the ELF path)
-	m.firmware = path
 }
 
 // SetTimeout sets the simulation timeout
@@ -98,6 +112,13 @@ func (m *APIMonitor) Start(ctx context.Context) error {
 		return fmt.Errorf("ELF path not set")
 	}
 
+	// Recreate the output channel if a previous run closed it (e.g. after a
+	// Reset), so streaming can resume on the fresh channel.
+	if m.logChClosed {
+		m.logCh = make(chan protocol.LogEntry, 100)
+		m.logChClosed = false
+	}
+
 	m.ctx, m.cancel = context.WithCancel(ctx)
 
 	log.Debug().
@@ -107,7 +128,9 @@ func (m *APIMonitor) Start(ctx context.Context) error {
 		Msg("Starting Wokwi simulation via API")
 
 	// Create API client
-	m.client = api.NewClient(m.apiToken)
+	// Point at the configured Wokwi server. Empty serverURL falls back to the
+	// public wss://wokwi.com endpoint inside NewClientWithServer.
+	m.client = api.NewClientWithServer(m.apiToken, m.serverURL)
 
 	// Connect to Wokwi API
 	if _, err := m.client.Connect(m.ctx); err != nil {
@@ -123,23 +146,53 @@ func (m *APIMonitor) Start(ctx context.Context) error {
 		return fmt.Errorf("failed to upload diagram: %w", err)
 	}
 
-	// Set and upload firmware
-	m.client.SetFirmware(m.elfPath)
-	if err := m.client.UploadFirmware(m.ctx); err != nil {
+	// Read the received firmware and assemble it into flash sections. An ELF is
+	// turned into a bootable image (bootloader + partition table + app) using
+	// the same mechanism physical/RUST flashing uses (see assembleSections and
+	// flash.ConvertELFToESPImage); an already-assembled image is split directly.
+	// A lone app image cannot boot on its own, so it is placed at the app offset.
+	firmwareData, err := os.ReadFile(m.elfPath)
+	if err != nil {
 		_ = m.client.Close()
-		return fmt.Errorf("failed to upload firmware: %w", err)
+		return fmt.Errorf("read firmware: %w", err)
+	}
+
+	sections, err := assembleSections(m.chipForImage(), firmwareData)
+	if err != nil {
+		_ = m.client.Close()
+		return fmt.Errorf("assemble firmware: %w", err)
+	}
+	log.Debug().Int("sections", len(sections)).Msg("Assembled firmware into flash sections")
+
+	// Upload each section as flash-<offset>.bin so the simulator boots the full
+	// image (bootloader + partition + app), not just a lone app blob.
+	uploaded, err := m.client.UploadFirmwareSections(m.ctx, sections)
+	if err != nil {
+		_ = m.client.Close()
+		return fmt.Errorf("failed to upload firmware sections: %w", err)
 	}
 
 	// Upload ELF (optional, for better debugging)
-	m.client.SetELF(m.elfPath)
-	if err := m.client.UploadELF(m.ctx); err != nil {
+	elfName, err := m.client.UploadELF(m.ctx, m.elfPath)
+	if err != nil {
 		log.Warn().Err(err).Msg("Failed to upload ELF (non-critical)")
+	} else if elfName != "" {
+		log.Debug().Str("elf", elfName).Msg("Uploaded ELF")
 	}
 
-	// Start simulation
-	if err := m.client.StartSimulation(m.ctx); err != nil {
+	// Start simulation with the uploaded sections.
+	if err := m.client.StartSimulation(m.ctx, api.SimStartParams{
+		Firmware:  uploaded,
+		Elf:       elfName,
+		FlashSize: defaultFlashSizeBytes(),
+	}); err != nil {
 		_ = m.client.Close()
 		return fmt.Errorf("failed to start simulation: %w", err)
+	}
+
+	// Begin listening for serial output before the sim runs.
+	if err := m.client.ListenSerial(m.ctx); err != nil {
+		log.Warn().Err(err).Msg("Failed to listen on serial monitor (non-critical)")
 	}
 
 	m.running = true
@@ -165,20 +218,24 @@ func (m *APIMonitor) serialMonitor() {
 			if !ok {
 				return
 			}
-			if data, ok := event.Result["data"].(string); ok {
-				// Split data into lines for log entries
-				scanner := bufio.NewScanner(strings.NewReader(data))
-				for scanner.Scan() {
-					line := scanner.Text()
-					select {
-					case m.logCh <- protocol.LogEntry{
-						Timestamp: time.Now().Unix(),
-						Data:      line + "\n",
-						IsError:   false,
-					}:
-					case <-m.ctx.Done():
-						return
-					}
+			// The Wokwi protocol delivers serial bytes as a numeric array
+			// under payload.bytes (see wiki/wokwi-sim-api-analysis.md §2).
+			data := m.client.ReadSerialBytes(event)
+			if len(data) == 0 {
+				continue
+			}
+			// Split data into lines for log entries
+			scanner := bufio.NewScanner(bytes.NewReader(data))
+			for scanner.Scan() {
+				line := scanner.Text()
+				select {
+				case m.logCh <- protocol.LogEntry{
+					Timestamp: time.Now().Unix(),
+					Data:      line + "\n",
+					IsError:   false,
+				}:
+				case <-m.ctx.Done():
+					return
 				}
 			}
 		}
@@ -217,11 +274,14 @@ func (m *APIMonitor) Stop() error {
 
 	m.running = false
 	close(m.logCh)
+	m.logChClosed = true
 	return nil
 }
 
 // Output returns the log entry channel
 func (m *APIMonitor) Output() <-chan protocol.LogEntry {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	return m.logCh
 }
 
@@ -250,7 +310,7 @@ func (m *APIMonitor) Reset() error {
 		return fmt.Errorf("client not initialized")
 	}
 
-	return m.client.RestartSimulation(m.ctx)
+	return m.client.RestartSimulation(m.ctx, false)
 }
 
 // IsRunning returns whether the monitor is currently running
@@ -290,20 +350,22 @@ func (m *APIMonitor) Validate() error {
 	return nil
 }
 
-// NewAPIMonitorFromConfig creates a Wokwi API monitor with explicit config
-func NewAPIMonitorFromConfig(cfg *protocol.WokwiConfig, elfPath, apiToken string) (*APIMonitor, error) {
+// NewAPIMonitorFromConfig creates a Wokwi API monitor with explicit config.
+// serverURL points at the Wokwi WebSocket server; empty means the public
+// wss://wokwi.com endpoint.
+func NewAPIMonitorFromConfig(cfg *protocol.WokwiConfig, elfPath, apiToken, serverURL string) (*APIMonitor, error) {
 	if err := cfg.Validate(); err != nil {
 		return nil, fmt.Errorf("invalid config: %w", err)
 	}
 
 	return &APIMonitor{
-		config:   cfg,
-		elfPath:  elfPath,
-		firmware: elfPath,
-		logCh:    make(chan protocol.LogEntry, 100),
-		timeout:  DefaultWokwiTimeout,
-		exitOn:   DefaultSuccessPattern,
-		apiToken: apiToken,
+		config:    cfg,
+		elfPath:   elfPath,
+		logCh:     make(chan protocol.LogEntry, 100),
+		timeout:   DefaultWokwiTimeout,
+		exitOn:    DefaultSuccessPattern,
+		apiToken:  apiToken,
+		serverURL: serverURL,
 	}, nil
 }
 

@@ -51,13 +51,14 @@ type JobAssignRequest struct {
 	JobID        string     `json:"job_id"`
 	JobType      string     `json:"job_type"` // "flash" or "erase"
 	DevicePath   string     `json:"device_path"`
-	Firmware     string     `json:"firmware"`       // Firmware path (for flash jobs)
-	Offset       int        `json:"offset"`         // Flash offset (for flash jobs)
-	Erase        bool       `json:"erase"`          // Enable erase before flash
-	EraseAll     bool       `json:"erase_all"`      // For erase jobs
-	EraseAddress uint32     `json:"erase_address"`  // For erase jobs
-	EraseSize    uint32     `json:"erase_size"`     // For erase jobs
-	Chip         chips.Chip `json:"chip,omitempty"` // Target chip (for flash ELF->image conversion)
+	Firmware     string     `json:"firmware"`          // Firmware path (for flash jobs)
+	Offset       int        `json:"offset"`            // Flash offset (for flash jobs)
+	Erase        bool       `json:"erase"`             // Enable erase before flash
+	EraseAll     bool       `json:"erase_all"`         // For erase jobs
+	EraseAddress uint32     `json:"erase_address"`     // For erase jobs
+	EraseSize    uint32     `json:"erase_size"`        // For erase jobs
+	Chip         chips.Chip `json:"chip,omitempty"`    // Target chip (for flash ELF->image conversion)
+	Diagram      string     `json:"diagram,omitempty"` // Wokwi diagram.json (board-specific)
 }
 
 // JobAssignResponse is the peer's response to a job assignment.
@@ -80,6 +81,7 @@ func (c *PeerJobClient) AssignJob(ctx context.Context, job *Job) (*JobAssignResp
 		EraseAddress: job.EraseAddress,
 		EraseSize:    job.EraseSize,
 		Chip:         job.Chip,
+		Diagram:      job.Diagram,
 	}
 
 	if job.Type == JobTypeFlash {

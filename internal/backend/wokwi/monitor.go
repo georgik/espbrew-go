@@ -52,9 +52,18 @@ func NewMonitor(device *protocol.DeviceInfo) (protocol.Monitor, error) {
 		return nil, fmt.Errorf("invalid backend config type for wokwi device")
 	}
 
-	// Use API mode if token is configured
-	if cfg.APIToken != "" {
-		return NewAPIMonitor(device, cfg.APIToken)
+	// Prefer an explicit token from the device config, but fall back to the
+	// WOKWI_CLI_TOKEN environment variable so a cluster-wide secret can drive
+	// every Wokwi device without per-device config.
+	token := cfg.APIToken
+	if token == "" {
+		token = os.Getenv(envWokwiToken)
+	}
+
+	// Use API mode if a token is available (config or env).
+	if token != "" {
+		server := os.Getenv(envWokwiServer)
+		return NewAPIMonitor(device, token, server)
 	}
 
 	// Fall back to CLI mode

@@ -1,6 +1,10 @@
 package config
 
-import "time"
+import (
+	"fmt"
+	"strings"
+	"time"
+)
 
 // DeviceConfig is a single entry from the espbrew.toml [[devices]] section.
 // It is the explicit, user-authored source of truth for which physical port
@@ -18,6 +22,18 @@ type DeviceConfig struct {
 	// recorded and shown in the API as disabled, and flash skips it, but it is
 	// never given a usable flashing identity.
 	Disabled bool `mapstructure:"disabled" toml:"disabled"`
+	// USBLocation is the USB hub location (sysfs "location" string, e.g. "1-2")
+	// that supplies power to this board. It is only meaningful on platforms
+	// with a power-controllable USB hub (Linux, kernel >= 6.0). When set, espbrew
+	// treats the board as power-managed: if the board is not present in the live
+	// USB tree it is marked "sleeping"; an operation wakes it (powers the hub
+	// port on) before starting, and the board is powered back off once it has
+	// been idle for the configured timeout. See USBPort for the port number.
+	USBLocation string `mapstructure:"usb_location" toml:"usb_location"`
+	// USBPort is the 1-based port number on the hub at USBLocation that the board
+	// is plugged into. Together with USBLocation it fully specifies where the
+	// board sits in the USB tree, which is what espbrew needs to switch its power.
+	USBPort int `mapstructure:"usb_port" toml:"usb_port"`
 }
 
 // StringID is a stable key for a device config (path, since ports are the
@@ -53,6 +69,36 @@ func (c *ClusterConfig) DeviceByPath(path string) *DeviceConfig {
 		}
 	}
 	return nil
+}
+
+// PowerManaged reports whether the device is attached to a power-controllable
+// hub (i.e. espbrew can switch its power on/off). A device is power-managed only
+// when it declares a USB hub location.
+func (d DeviceConfig) PowerManaged() bool {
+	return strings.TrimSpace(d.USBLocation) != ""
+}
+
+// ValidatePower returns a non-nil error when a device declares a USB location
+// but omits the port number required to switch its power. A device without a
+// USB location is never power-managed and needs no port.
+func (d DeviceConfig) ValidatePower() error {
+	if !d.PowerManaged() {
+		return nil
+	}
+	if d.USBPort < 1 {
+		return fmt.Errorf("usb_location %q set without usb_port (port must be >= 1)", d.USBLocation)
+	}
+	return nil
+}
+
+// PowerLocation returns the hub location and 1-based port for a power-managed
+// device. The second return value is false when the device is not
+// power-managed.
+func (d DeviceConfig) PowerLocation() (string, int, bool) {
+	if !d.PowerManaged() {
+		return "", 0, false
+	}
+	return d.USBLocation, d.USBPort, true
 }
 
 func Default() *ClusterConfig {

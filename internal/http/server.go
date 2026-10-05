@@ -126,6 +126,17 @@ func (s *Server) setupRoutes(store *persistence.Store) {
 			}
 			return name
 		}
+		// Resolve the addressed board to its device info so the monitor can
+		// detect virtual backends (Wokwi/QEMU) and route to the simulation.
+		s.monitor.getDevice = func(name string) (*protocol.DeviceInfo, bool) {
+			if _, dev, ok := resolveDeviceName(store, leader.State(), name); ok {
+				return dev, true
+			}
+			return nil, false
+		}
+		// Wokwi simulations run on the leader through this shared session
+		// manager so flash and monitor share a single simulation.
+		s.monitor.sessions = leader.WokwiSessions()
 	}
 	s.monitor.RegisterRoutes(s.router)
 
