@@ -5,7 +5,6 @@ package powercontrol
 import (
 	"errors"
 	"fmt"
-	"path/filepath"
 	"time"
 )
 
@@ -66,6 +65,31 @@ func NewController() PowerController {
 	return &controller{}
 }
 
+// NewPreferredController returns the best available power controller for the
+// current platform. It is the cross-platform entry point used by callers that
+// must build on Linux, macOS, and Windows: on Linux it honours the
+// ESPBREW_POWER_UHUBCTL opt-in to use the uhubctl-backed controller, and on all
+// platforms it falls back to the default controller, which is a no-op
+// (ErrNotSupported) where power-controllable hubs are unavailable.
+//
+// It returns the minimal power surface both controllers implement, so the
+// caller can hand it straight to the device-sleep subsystem without branching
+// on platform.
+func NewPreferredController() SleepController {
+	return newPreferredController()
+}
+
+// SleepController is the minimal power surface the device-sleep subsystem
+// requires. Both the sysfs controller (NewController) and the uhubctl controller
+// (NewUhubController) implement it, so NewPreferredController can return either
+// without the caller branching on platform.
+type SleepController interface {
+	// FindHubByLocation returns the hub at the given USB location (e.g. "1-2").
+	FindHubByLocation(loc string) (*Hub, error)
+	// SetPortPowerDual switches power for a port on a dual-interface hub.
+	SetPortPowerDual(hub *Hub, port int, on bool) error
+}
+
 // controller implements PowerController.
 type controller struct{}
 
@@ -92,8 +116,9 @@ func (c *controller) FindHubByLocation(loc string) (*Hub, error) {
 		}
 	}
 	// Fallback: parse the hub straight from sysfs. This covers parent hubs that
-	// listHubs skips. parseHub validates the device class is a USB hub.
-	hub, err := parseHub(loc, filepath.Join(usbDevicesPath, loc))
+	// listHubs skips. parseHub validates the device class is a USB hub. The
+	// sysfs path is platform-specific, so it is delegated to hubParseFallback.
+	hub, err := hubParseFallback(loc)
 	if err != nil {
 		return nil, ErrHubNotFound
 	}

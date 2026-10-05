@@ -19,6 +19,53 @@ Example scenario:
 - After flashing, system extracts individual board screenshots
 - Verification confirms expected display output per device
 
+## Config-driven cropping (`espbrew.toml`)
+
+The most common production setup is a board fixed under a camera. Instead of
+calibrating through the UI, declare the camera and bounding box directly in
+`espbrew.toml`. On startup the leader persists this mapping, and `snap` crops the
+frame to it automatically.
+
+```toml
+[[devices]]
+path  = "/dev/serial/by-id/usb-…-if00"
+id    = "esp-30:30:F9:5A:8F:D4-if00"
+alias = "esp32-s3-box-3"
+chip  = "ESP32-S3"
+
+camera = "cam-usb-046d_Brio_100_2437APG0Y788"   # from `espbrew cameras`
+[devices.camera_box]
+x      = 0.3671875      # normalized 0.0–1.0, resolution-independent
+y      = 0.26634114583333335
+width  = 0.2453125
+height = 0.2375
+```
+
+```bash
+espbrew snap --cluster http://leader:8080 --filter-alias esp32-s3-box-3
+```
+
+**How it works.** The leader reads every `[[devices]]` entry that sets both
+`camera` and `[devices.camera_box]` and persists a `DeviceBoundingBoxMapping`
+keyed on `(device_id, camera_id)`. When `snap` runs, it selects the camera from
+that mapping and crops the captured JPEG to the region — returning the board image
+rather than the full frame. This is the config-driven counterpart of the
+UI-created mapping and is idempotent (re-running updates in place).
+
+**Key requirements:**
+
+- The device `id` here is the key the crop lookup uses. `espbrew.toml` is
+  authoritative for device identity, so the runtime device id equals this
+  configured `id` — and the CLI resolves `--filter-alias` to that same `id`. They
+  must agree.
+- `camera` may be the discovered camera ID or its stable Name. Prefer the name if
+  the ID looks ephemeral (camera IDs can change between restarts).
+- The box is normalized, so it is independent of camera resolution. For a 640×480
+  camera the box above yields a 157×114 JPEG.
+
+See [docs/camera-support.md](camera-support.md) for cluster capture setup and
+finding the camera ID / region.
+
 ## Architecture
 
 ### Data Model

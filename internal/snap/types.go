@@ -9,7 +9,10 @@
 // with configurable timeouts and partial capture support.
 package snap
 
-import "time"
+import (
+	"encoding/base64"
+	"time"
+)
 
 // SnapStatus represents the completion status of a snapshot operation.
 type SnapStatus string
@@ -92,4 +95,16 @@ func (r *SnapResult) ToMap(includeLogs bool) map[string]interface{} {
 	}
 
 	return m
+}
+
+// RecomputeBase64 refreshes the base64 image field from the raw image data. It
+// is used when the raw image is replaced after the initial capture (e.g.
+// cropping to a device bounding box), so the base64 payload sent to the client
+// stays in sync with the bytes.
+func (r *SnapResult) RecomputeBase64() {
+	if len(r.ImageData) > 0 {
+		r.ImageBase64 = base64.StdEncoding.EncodeToString(r.ImageData)
+	} else {
+		r.ImageBase64 = ""
+	}
 }

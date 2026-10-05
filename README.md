@@ -20,7 +20,7 @@ ESPBrew is a cluster flashing tool for ESP32. A leader node runs a web dashboard
 
 **Device management.** Device identity is defined explicitly in an `espbrew.toml` mapping (path to `device_id`, chip, alias, and description) rather than left to automatic probing, so a board is never probed behind a flash job and a busy port never stalls flashing. On-device USB serial is still discovered, but auto-probe stays off; instead an on-demand, non-blocking discovery pass (`device discover`, the `discover` endpoint) identifies unconfigured ports within a fixed timeout, records the ones you choose, and turns itself off again. Records persist across restarts and can be viewed, edited, aliased, tagged, or deleted from the CLI or dashboard. A device can be administratively disabled, or marked read-only (protected) so it can still be monitored.
 
-**Monitoring and cameras.** Live serial monitoring works locally or over the cluster, with exit-on-pattern matching and boot-log capture. Connected cameras are discoverable and capturable, and the `snap` command flashes, monitors serial, and captures a camera frame in a single step. Native USB-hub power control cycles ports for cold-boot resets.
+**Monitoring and cameras.** Live serial monitoring works locally or over the cluster, with exit-on-pattern matching and boot-log capture. Connected cameras are discoverable and capturable, and the `snap` command flashes, monitors serial, and captures a camera frame in a single step. A board fixed under a camera can have its view cropped to just the board via an `espbrew.toml` bounding box, so `snap` returns the board image instead of the full frame. Native USB-hub power control cycles ports for cold-boot resets.
 
 **Web dashboard and simulation.** The WASM dashboard shows real-time device and job status and manages devices, with a browser-only demo mode. Wokwi simulator backends let you flash, monitor, and snap against virtual devices with no hardware attached.
 
@@ -138,6 +138,72 @@ see [container.md](docs/container.md).
 
 See [docs/ci-setup.md](docs/ci-setup.md) for details on how the image is built
 and published (including the manual workflow trigger).
+
+## Camera capture and device cropping
+
+ESPBrew can capture images from a USB camera attached to a cluster node and, for a
+board fixed under that camera, automatically crop the capture to just the board.
+This is the workflow used by a fixed test rig: one overhead camera watches several
+boards, and each board's `espbrew.toml` entry maps it to the sub-image that frames
+it.
+
+### Local capture
+
+```bash
+espbrew cameras                       # list available cameras (id, name, backend)
+espbrew capture                       # capture with defaults (1280x720, JPEG 85%)
+espbrew capture --camera-id <ID>      # specific camera
+espbrew capture out.jpg               # custom output path
+```
+
+- **macOS** uses AVFoundation (built in). **Linux** uses V4L2 for discovery and
+  [`fswebcam`](https://pyv4l.readthedocs.io/) for capture — install it
+  (`sudo apt install fswebcam`). **Windows** DirectShow is planned.
+- Captures are written to `~/.espbrew/captures/YYYY-MM-DD/` with a `metadata.json`.
+
+### Cropping a board via `espbrew.toml`
+
+For a board sitting under a fixed camera, declare the camera and a normalized
+bounding box in `espbrew.toml`. On startup the leader persists this mapping, and
+`snap` crops the frame to it automatically — no UI calibration needed.
+
+```toml
+[[devices]]
+path  = "/dev/serial/by-id/usb-…-if00"
+id    = "esp-30:30:F9:5A:8F:D4-if00"   # identity the crop mapping is keyed on
+alias = "esp32-s3-box-3"
+chip  = "ESP32-S3"
+
+camera = "cam-usb-046d_Brio_100_2437APG0Y788"   # from `espbrew cameras`
+[devices.camera_box]
+x      = 0.3671875      # top-left corner, fraction of image width/height
+y      = 0.26634114583333335
+width  = 0.2453125      # 0.0–1.0, resolution-independent
+height = 0.2375
+```
+
+Then:
+
+```bash
+espbrew snap --cluster http://leader:8080 --filter-alias esp32-s3-box-3
+```
+
+The crop is keyed on the device `id` and the camera, so the `id` here must match
+the identity the leader assigns to the board (the same `id` the CLI resolves from
+`--filter-alias`). For a 640×480 camera, the box above yields a 157×114 JPEG
+cropped to the board instead of the full 640×480 frame.
+
+To find the region, draw a box around the board in the dashboard's bounding-box
+editor (or with `espbrew mapping set`) — it reports the normalized `x, y, width,
+height`. Full details and the REST API are in [docs/camera-support.md](docs/camera-support.md)
+and [docs/image-mapping.md](docs/image-mapping.md).
+
+### Cameras on a k3s node
+
+To capture a camera from a pod, the node must advertise the camera resource and
+the pod must request it — a plain `/dev` mount makes the node visible but does not
+grant `open()`. See [deploy/README.md](deploy/README.md) for the k3s device-plugin
+setup, or [docs/container.md](docs/container.md) for the bare-container case.
 
 ## Documentation
 

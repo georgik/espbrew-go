@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/georgik/espbrew-go/internal/persistence"
 )
 
 // DeviceConfig is a single entry from the espbrew.toml [[devices]] section.
@@ -34,6 +36,38 @@ type DeviceConfig struct {
 	// is plugged into. Together with USBLocation it fully specifies where the
 	// board sits in the USB tree, which is what espbrew needs to switch its power.
 	USBPort int `mapstructure:"usb_port" toml:"usb_port"`
+	// Camera is the stable reference of the camera whose view frames this
+	// device. It may be the discovered camera ID (e.g. "cam-usb-…") or the
+	// camera's stable Name. Set together with CameraBox so that, on startup and
+	// on every device event, the leader persists a device→camera bounding-box
+	// mapping (see internal/persistence). 'snap' then crops to this device
+	// without any UI calibration. When empty, no mapping is written and 'snap'
+	// falls back to the first discovered camera.
+	Camera string `mapstructure:"camera" toml:"camera"`
+	// CameraBox is the normalized bounding box (each value 0.0–1.0) that frames
+	// this device within Camera's view. It is written to the bounding-box store
+	// together with Camera. A fully-zero box is treated as "no box configured".
+	CameraBox CameraBoxConfig `mapstructure:"camera_box" toml:"camera_box"`
+}
+
+// CameraBoxConfig is a normalized bounding box (0.0–1.0) relative to an image.
+// It mirrors persistence.BoundingBox but lives in the config package so the
+// espbrew.toml schema does not depend on the persistence layer.
+type CameraBoxConfig struct {
+	X      float64 `mapstructure:"x" toml:"x"`
+	Y      float64 `mapstructure:"y" toml:"y"`
+	Width  float64 `mapstructure:"width" toml:"width"`
+	Height float64 `mapstructure:"height" toml:"height"`
+}
+
+// Bounded reports whether the box carries a non-trivial region (any side set).
+func (b CameraBoxConfig) Bounded() bool {
+	return b.X != 0 || b.Y != 0 || b.Width != 0 || b.Height != 0
+}
+
+// ToPersistence converts the normalized config box into the persistence model.
+func (b CameraBoxConfig) ToPersistence() persistence.BoundingBox {
+	return persistence.BoundingBox{X: b.X, Y: b.Y, Width: b.Width, Height: b.Height}
 }
 
 // StringID is a stable key for a device config (path, since ports are the

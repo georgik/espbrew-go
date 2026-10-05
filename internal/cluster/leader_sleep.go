@@ -23,11 +23,10 @@ func (l *LeaderNode) sleepController() devicesleep.Controller {
 	}
 	// Opt-in uhubctl controller: drives the hub by its location string, so it
 	// can power boards that sit on a PARENT hub (which the default sysfs
-	// controller's listHubs skips). Enabled with ESPBREW_POWER_UHUBCTL.
-	if powercontrol.Enabled() {
-		return powercontrol.NewUhubController()
-	}
-	return powercontrol.NewController()
+	// controller's listHubs skips). Enabled with ESPBREW_POWER_UHUBCTL. The
+	// platform-specific selection lives in powercontrol.NewPreferredController,
+	// so this file stays cross-platform.
+	return powercontrol.NewPreferredController()
 }
 
 // countPowerManagedDevices returns how many espbrew.toml devices declare a USB

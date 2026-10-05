@@ -1,6 +1,7 @@
 package camera
 
 import (
+	"bytes"
 	"fmt"
 	"image"
 	"image/jpeg"
@@ -172,6 +173,57 @@ func (e *Extractor) ExtractFromCaptureFile(capturePath, cameraID string) ([]Devi
 	}
 
 	return e.ExtractDevices(img, cameraID, capturePath)
+}
+
+// ExtractDeviceBytes returns the cropped JPEG bytes for a single device+camera
+// mapping, decoded from an in-memory full capture supplied as raw JPEG bytes.
+// Unlike ExtractDevices it writes no files: it is the byte-oriented counterpart
+// used by 'snap', which must return the cropped image in-band to the caller. It
+// returns a nil slice (and no error) when no mapping exists for the given
+// device+camera pair, so callers can degrade gracefully to the full frame.
+func ExtractDeviceBytes(mappingStore *persistence.Store, jpegData []byte, deviceID, cameraID string) ([]byte, error) {
+	if mappingStore == nil || len(jpegData) == 0 {
+		return nil, nil
+	}
+
+	img, _, err := image.Decode(bytes.NewReader(jpegData))
+	if err != nil {
+		return nil, fmt.Errorf("decode capture: %w", err)
+	}
+
+	mapping, err := mappingStore.GetBoundingBoxForDeviceAndCamera(deviceID, cameraID)
+	if err != nil {
+		return nil, fmt.Errorf("get mapping: %w", err)
+	}
+	if mapping == nil {
+		// No box for this device+camera: leave the full frame untouched.
+		return nil, nil
+	}
+
+	// Convert normalized bounds to pixel coordinates.
+	bounds := img.Bounds()
+	x, y, width, height := mapping.Bounds.ToPixels(bounds.Dx(), bounds.Dy())
+
+	// Apply per-region adjustment if configured.
+	var adj *AdjustmentParams
+	if !mapping.Adjustment.IsZero() {
+		adj = &AdjustmentParams{
+			Brightness: mapping.Adjustment.Brightness,
+			Contrast:   mapping.Adjustment.Contrast,
+			Saturation: mapping.Adjustment.Saturation,
+		}
+	}
+
+	subimage, err := ExtractAndAdjust(img, x, y, width, height, adj)
+	if err != nil {
+		return nil, fmt.Errorf("extract region: %w", err)
+	}
+
+	var buf bytes.Buffer
+	if err := jpeg.Encode(&buf, subimage, &jpeg.Options{Quality: 90}); err != nil {
+		return nil, fmt.Errorf("encode subimage: %w", err)
+	}
+	return buf.Bytes(), nil
 }
 
 // GetMappingStore returns the mapping store (for testing)

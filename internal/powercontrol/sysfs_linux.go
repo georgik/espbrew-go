@@ -466,6 +466,25 @@ func findHubInterface(path, name string) (string, int, bool, error) {
 	return interfaceDir, portCount, superSpeed, nil
 }
 
+// hubParseFallback resolves and parses a hub straight from sysfs. It backs the
+// FindHubByLocation fallback for parent hubs that listHubs deliberately skips.
+// It is the Linux implementation of the platform-specific helper declared in
+// stub_other.go, so the shared controller code never references sysfs directly.
+func hubParseFallback(loc string) (Hub, error) {
+	return parseHub(loc, filepath.Join(usbDevicesPath, loc))
+}
+
+// newPreferredController honours the ESPBREW_POWER_UHUBCTL opt-in: when set, the
+// uhubctl-backed controller drives the hub by location string (powering boards
+// on parent hubs the sysfs controller skips), otherwise the default sysfs
+// controller is used.
+func newPreferredController() SleepController {
+	if Enabled() {
+		return NewUhubController()
+	}
+	return NewController()
+}
+
 // setPortPowerLinux sets power state for a port.
 func setPortPowerLinux(hub *Hub, port int, on bool) error {
 	disablePath := filepath.Join(

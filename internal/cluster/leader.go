@@ -22,6 +22,7 @@ import (
 	"github.com/georgik/espbrew-go/internal/inventory/rom"
 	"github.com/georgik/espbrew-go/internal/persistence"
 	"github.com/georgik/espbrew-go/pkg/protocol"
+	"github.com/google/uuid"
 	"github.com/rs/zerolog/log"
 )
 
@@ -193,6 +194,12 @@ func (l *LeaderNode) Start(ctx context.Context) error {
 
 	// Discover cameras on startup
 	l.discoverCameras()
+
+	// Persist device→camera bounding-box mappings declared in espbrew.toml so
+	// 'snap' crops to the configured device without UI calibration. Runs after
+	// camera discovery (the mappings key on the discovered camera ID) and is
+	// idempotent, so it can be re-run on later device events too.
+	l.syncConfiguredCameraMappings()
 
 	// Load persisted devices from store. Persistence only augments the
 	// espbrew.toml mapping (soft attributes) - the mapping itself was loaded
@@ -914,6 +921,121 @@ func (l *LeaderNode) applyDeviceConfig(dev *protocol.DeviceInfo) {
 				Msg("Applied configured device alias")
 		}
 	}
+}
+
+// syncConfiguredCameraMappings persists, into the bounding-box store, every
+// device→camera mapping declared in espbrew.toml (a [[devices]] entry that sets
+// both Camera and a non-zero CameraBox). It is the config-driven counterpart of
+// the HTTP "create bounding box" API: it makes 'snap' crop to the configured
+// device without any UI calibration, and it is idempotent (an existing mapping
+// for the same device+camera is updated in place), so it is safe to call on
+// startup and again on later device events.
+//
+// The mapping is keyed on the device id from espbrew.toml (cfg.ID) and the
+// discovered camera id resolved from cfg.Camera, so it does not depend on the
+// board being physically present — the identity comes from the config itself.
+func (l *LeaderNode) syncConfiguredCameraMappings() {
+	if l.store == nil {
+		return
+	}
+
+	for i := range l.config.Devices {
+		cfg := l.config.Devices[i]
+		if cfg.ID == "" || cfg.Camera == "" || !cfg.CameraBox.Bounded() {
+			continue
+		}
+
+		camID, camName, ok := l.resolveCameraRef(cfg.Camera)
+		if !ok {
+			log.Warn().
+				Str("device_id", cfg.ID).
+				Str("camera", cfg.Camera).
+				Msg("Configured camera not found - skipping bounding-box mapping")
+			continue
+		}
+
+		if err := l.persistCameraMapping(cfg.ID, camID, camName, cfg.CameraBox); err != nil {
+			log.Warn().
+				Str("device_id", cfg.ID).
+				Str("camera_id", camID).
+				Err(err).
+				Msg("Failed to persist configured bounding box")
+		}
+	}
+}
+
+// resolveCameraRef matches the configured camera reference against the currently
+// discovered cameras. It tries the discovered camera ID first, then the stable
+// camera Name, both case-insensitively, and returns the camera id the store
+// keys on together with the camera's stable name.
+func (l *LeaderNode) resolveCameraRef(ref string) (id, name string, ok bool) {
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return "", "", false
+	}
+
+	for _, cam := range l.GetCameras() {
+		if cam.ID != "" && strings.EqualFold(cam.ID, ref) {
+			return cam.ID, cam.Name, true
+		}
+	}
+	for _, cam := range l.GetCameras() {
+		if cam.Name != "" && strings.EqualFold(cam.Name, ref) {
+			return cam.ID, cam.Name, true
+		}
+	}
+	return "", "", false
+}
+
+// persistCameraMapping writes (or updates in place) the device→camera bounding
+// box mapping for a single configured device. It mirrors the update-or-create
+// behaviour of the HTTP API so a config-driven mapping and an API-created one
+// never diverge or duplicate.
+func (l *LeaderNode) persistCameraMapping(deviceID, cameraID, cameraName string, box config.CameraBoxConfig) error {
+	now := time.Now()
+
+	// Update-or-create keyed on device+camera, exactly like handleCreateBox, so
+	// re-running sync never leaves duplicate mappings behind.
+	existing, err := l.store.GetBoundingBoxForDeviceAndCamera(deviceID, cameraID)
+	if err != nil {
+		return fmt.Errorf("lookup existing mapping: %w", err)
+	}
+	if existing != nil {
+		existing.Bounds = box.ToPersistence()
+		if cameraName != "" {
+			existing.CameraName = cameraName
+		}
+		existing.UpdatedAt = now
+		log.Info().
+			Str("mapping_id", existing.ID).
+			Str("device_id", deviceID).
+			Str("camera_id", cameraID).
+			Msg("Updating configured bounding box mapping")
+		return l.store.SaveBoundingBox(existing)
+	}
+
+	// No mapping yet: create one, mirroring handleCreateBox (calibration version
+	// falls back to 0 when the camera has no calibration record).
+	calibVersion := 0
+	if calib, err := l.store.GetCalibration(cameraID); err == nil && calib != nil {
+		calibVersion = calib.Version
+	}
+	mapping := &persistence.DeviceBoundingBoxMapping{
+		ID:                 uuid.New().String(),
+		DeviceID:           deviceID,
+		CameraID:           cameraID,
+		CameraName:         cameraName,
+		Bounds:             box.ToPersistence(),
+		CalibrationVersion: calibVersion,
+		CreatedAt:          now,
+		UpdatedAt:          now,
+	}
+	log.Info().
+		Str("mapping_id", mapping.ID).
+		Str("device_id", deviceID).
+		Str("camera_id", cameraID).
+		Msg("Saving configured bounding box mapping")
+	return l.store.SaveBoundingBox(mapping)
 }
 
 // logConfiguredDevices reports, at startup, whether each espbrew.toml device is

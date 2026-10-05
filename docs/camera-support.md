@@ -127,6 +127,76 @@ espbrew captures delete --older-than 7d  # Delete captures older than 7 days
 espbrew captures delete "2026-05-*"      # Delete by pattern
 ```
 
+### Cluster capture (k3s and container)
+
+When espbrew runs as a cluster node in a container or k3s pod, a camera attached
+to that host can be captured remotely with `snap --cluster`. Two things must be in
+place:
+
+1. **The device node must be openable inside the container.** A plain `/dev`
+   mount makes the node *visible*, but the container's cgroup v2 device
+   controller still denies `open()` with `EPERM`.
+   - **Bare container:** make the host node world-accessible (`0666`) with a
+     `udev` rule, e.g. `SUBSYSTEM=="video4linux", MODE="0666"`. See
+     [docs/container.md](container.md).
+   - **k3s pod:** run the espbrew camera Device Plugin, which grants the
+     device-cgroup allow rule when the pod requests the `esp.dev/camera`
+     resource. This is set up by [deploy/README.md](../deploy/README.md).
+2. **`fswebcam` must be installed** — Linux capture goes through it
+   (`internal/camera/capture_legacy.go`). The `Containerfile.k8s` image ships it;
+   for a bare container install it on the host or in your own image.
+
+Once the camera is discoverable on the node, capture it from anywhere:
+
+```bash
+espbrew snap --cluster http://leader:8080 --device esp-aa:bb:cc:dd:ee:ff   # captures the node's camera
+```
+
+### Device cropping via `espbrew.toml`
+
+For a board fixed under a camera, declare the camera and a bounding box in
+`espbrew.toml`. On startup the leader persists this device→camera mapping, and
+`snap` crops the frame to it automatically — no UI calibration required.
+
+```toml
+[[devices]]
+path  = "/dev/serial/by-id/usb-…-if00"
+id    = "esp-30:30:F9:5A:8F:D4-if00"
+alias = "esp32-s3-box-3"
+chip  = "ESP32-S3"
+
+camera = "cam-usb-046d_Brio_100_2437APG0Y788"   # from `espbrew cameras`
+[devices.camera_box]
+x      = 0.3671875      # normalized 0.0–1.0, resolution-independent
+y      = 0.26634114583333335
+width  = 0.2453125
+height = 0.2375
+```
+
+```bash
+espbrew snap --cluster http://leader:8080 --filter-alias esp32-s3-box-3
+```
+
+How the pieces connect:
+
+- The crop is keyed on the device `id` and the camera. The `id` here **must match**
+  the identity the leader assigns to the board — the same `id` the CLI resolves
+  from `--filter-alias`. Because `espbrew.toml` is authoritative for device
+  identity, the runtime device id equals this configured `id`, so the crop lookup
+  always hits the mapping.
+- `camera` may be the discovered camera ID (e.g. `cam-usb-…`) **or** its stable
+  Name. Camera IDs from `pion/mediadevices` can change between restarts; the name
+  is stable, so prefer the name when the ID looks ephemeral. List cameras with
+  `espbrew cameras`.
+- The box is normalized (`0.0–1.0`), so it is independent of camera resolution.
+  For a 640×480 camera, the box above yields a **157×114** JPEG cropped to the
+  board instead of the full 640×480 frame.
+
+Find the region by drawing a box around the board in the dashboard's bounding-box
+editor (or `espbrew mapping set`) — it reports the normalized `x, y, width,
+height`. The full mapping model, REST API, and CLI are in
+[docs/image-mapping.md](image-mapping.md).
+
 ### Web Dashboard
 
 The ESPBrew dashboard includes camera controls and capture gallery:
@@ -146,7 +216,7 @@ Access at `http://localhost:8080` when cluster is running.
 
 ### Image Mapping and Device Screenshots
 
-ESPBrew can map physical device locations within camera captures using bounding boxes, enabling automated device-specific screenshot extraction. See [Image Mapping Documentation](docs/image-mapping.md) for details.
+ESPBrew can map physical device locations within camera captures using bounding boxes, enabling automated device-specific screenshot extraction. See [Image Mapping Documentation](image-mapping.md) for details.
 
 **Features:**
 - **Bounding Box Editor**: Web UI for drawing device regions on camera captures

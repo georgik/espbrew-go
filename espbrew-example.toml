@@ -2,19 +2,86 @@
 # To activate it rename the file to espbrew.toml.
 # mv espbrew-example.toml espbrew.toml
 
+# ---------------------------------------------------------------------------
+# Devices
+#
+# Device identity is defined explicitly here rather than left to automatic
+# probing. Each [[devices]] entry maps a serial port to a stable device id,
+# chip, alias, and description. The `id` is authoritative: it is the value the
+# cluster API, the CLI, and the camera bounding-box store all key on.
+#
+# Optional: power-managed device. When `usb_location` is set, espbrew treats the
+# board as power-managed (Linux power-controllable hub only). The board is
+# marked "sleeping" when it is not present in the live USB tree, woken (hub port
+# powered on) before an operation, and powered back off after it has been idle
+# for a while. `usb_location` is the sysfs hub location (e.g. "1-2"); `usb_port`
+# is the 1-based port on that hub the board is plugged into. Comment these two
+# lines out to disable auto sleep/wake for this board.
 [[devices]]
 path = "/dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_98:88:E0:D4:D2:58-if00"
-id   = "esp-98:88:E0:D4:D2:58-if00"
-alias = "esp32-c3-lcdkit"
-chip  = "ESP32-C3"
-description = "ESP32-C3 LcdKit"
+id         = "esp-98:88:E0:D4:D2:58-if00"
+alias      = "esp32-c3-lcdkit"
+chip       = "ESP32-C3"
+usb_location = "3-10"
+usb_port   = 1
+description = "ESP32-C3 LcdKit (power-managed)"
 
+# ---------------------------------------------------------------------------
+# Camera + bounding box (device cropping)
+#
+# When a device has both a `camera` and a `[devices.camera_box]`, the leader
+# persists this device->camera mapping into the bounding-box store on startup,
+# and `snap` automatically crops the captured frame to this region — no UI
+# calibration required. This is how a fixed test rig maps a board sitting under
+# a camera to the sub-image that frames it.
+#
+# How the pieces connect:
+#   * `alias`        — how you select the device from the CLI, e.g.
+#                      `espbrew snap --cluster http://leader:8080 --filter-alias esp32-s3-box-3`
+#   * `id`           — the device identity the crop mapping is keyed on. It MUST
+#                      match the `id` the leader assigns to this board (see the
+#                      note below on how to find it).
+#   * `camera`       — the discovered camera whose view frames this device. It
+#                      may be the discovered camera ID (e.g.
+#                      "cam-usb-046d_Brio_…") or its stable Name. Run
+#                      `espbrew cameras` to list available cameras and their
+#                      IDs/names.
+#   * `[devices.camera_box]` — the normalized (0.0–1.0) region of that camera's
+#                      view that frames the device. Values are fractions of the
+#                      image width/height, so the box is resolution-independent.
+#
+# Finding the camera ID:
+#   espbrew cameras
+#   # Camera discovered  camera_id=cam-usb-046d_Brio_100_2437APG0Y788  path=/dev/video0
+#
+# Finding the region:
+#   1. Set the camera to the board's view and note the full image size
+#      (e.g. 640x480).
+#   2. In the dashboard, open the device's bounding-box editor (or use
+#      `espbrew mapping set`) to draw a box around the board. The editor reports
+#      normalized x, y, width, height.
+#   3. Paste those values into `[devices.camera_box]`.
+#
+# Verified result: for a 640x480 camera and the box below, `snap` returns a
+# 157x114 JPEG cropped to the board instead of the full 640x480 frame.
 [[devices]]
 path = "/dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_30:30:F9:5A:8F:D4-if00"
-id   = "esp-30:30:F9:5A:8F:D4-if00"
-alias = "esp32-s3-box-3"
-chip  = "ESP32-S3"
-description = "ESP32-S3-Box-3"
+id         = "esp-30:30:F9:5A:8F:D4-if00"
+alias      = "esp32-s3-box-3"
+chip       = "ESP32-S3"
+description = "ESP32-S3-Box-3 (camera-cropped)"
+
+# The camera whose view frames this board. Use the camera ID from `espbrew cameras`
+# (or its stable Name). This is the same camera the dashboard would capture from.
+camera = "cam-usb-046d_Brio_100_2437APG0Y788"
+
+# Normalized bounding box (0.0–1.0) into that camera's view that frames the board.
+# x,y is the top-left corner; width,height are fractions of the image.
+[devices.camera_box]
+x         = 0.3671875
+y         = 0.26634114583333335
+width     = 0.2453125
+height    = 0.2375
 
 # Companion USB-UART console on the ESP32-S3-BOX-3. It is a Silicon Labs CP2102N
 # bridge, not an ESP32, so it can never be flashed. Mark it disabled so it is
@@ -24,4 +91,3 @@ description = "ESP32-S3-Box-3"
 path = "/dev/serial/by-id/usb-Silicon_Labs_CP2102N_USB_to_UART_Bridge_Controller_8af3c1772ebef011a552c67948e9de0f-if00-port0"
 disabled = true
 description = "ESP32-S3-Box-3 USB-UART console (not flashable)"
-

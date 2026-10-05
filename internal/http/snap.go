@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/georgik/espbrew-go/internal/camera"
 	"github.com/georgik/espbrew-go/internal/chips"
 	"github.com/georgik/espbrew-go/internal/cluster"
 	flashlib "github.com/georgik/espbrew-go/internal/flash"
@@ -523,6 +524,22 @@ func (h *SnapAPI) computeVirtualApplicationHash(ctx context.Context, devicePath 
 	return hashStr, nil
 }
 
+// deviceIDForPath returns the cluster device ID for a local device path, or ""
+// if the path is not present in the cluster state. It is the single source of
+// truth for the device identity used by both camera resolution and cropping.
+func (h *SnapAPI) deviceIDForPath(devicePath string) string {
+	if h.leader == nil {
+		return ""
+	}
+	state := h.leader.State()
+	for path, dev := range state.Devices {
+		if path == devicePath {
+			return dev.DeviceID
+		}
+	}
+	return ""
+}
+
 // executeSnap performs the actual snapshot operation on the local node.
 func (h *SnapAPI) executeSnap(ctx context.Context, devicePath string, req *SnapRequest) (*snap.SnapResult, error) {
 	firmwarePath := req.Firmware
@@ -539,40 +556,29 @@ func (h *SnapAPI) executeSnap(ctx context.Context, devicePath string, req *SnapR
 	duration := time.Duration(req.Duration) * time.Second
 	executor := snap.NewExecutor(devicePath, duration)
 
-	// Determine camera ID from device-to-camera mapping if not specified
+	// Resolve the device and, if the caller did not pin a camera, pick the
+	// camera whose view frames this device (via the device->camera mapping).
+	// deviceID is kept for the crop step below; cameraMappingID is the camera
+	// UUID the mapping keys on (as opposed to cameraID, the device path the
+	// executor actually captures from).
+	deviceID := h.deviceIDForPath(devicePath)
 	cameraID := req.CameraID
+	cameraMappingID := ""
 	if cameraID == "" {
-		// Try to get device_id from cluster state
-		var deviceID string
-		if h.leader != nil {
-			state := h.leader.State()
-			for path, dev := range state.Devices {
-				if path == devicePath {
-					deviceID = dev.DeviceID
+		if mappings, err := h.store.ListBoundingBoxesForDevice(deviceID); err == nil && len(mappings) > 0 {
+			// Get the camera UUID from mapping
+			cameraMappingID = mappings[0].CameraID
+
+			// Resolve camera UUID to camera path from cluster state
+			for _, cam := range h.leader.State().Cameras {
+				if cam.ID == cameraMappingID {
+					cameraID = cam.Path // Use actual device path (e.g., /dev/video0)
+					log.Info().
+						Str("device_id", deviceID).
+						Str("camera_uuid", cameraMappingID).
+						Str("camera_path", cameraID).
+						Msg("Using camera from device mapping")
 					break
-				}
-			}
-		}
-
-		// Look up camera mapping for this device
-		if deviceID != "" && h.leader != nil {
-			mappings, err := h.store.ListBoundingBoxesForDevice(deviceID)
-			if err == nil && len(mappings) > 0 {
-				// Get the camera UUID from mapping
-				cameraUUID := mappings[0].CameraID
-
-				// Resolve camera UUID to camera path from cluster state
-				state := h.leader.State()
-				for _, cam := range state.Cameras {
-					if cam.ID == cameraUUID {
-						cameraID = cam.Path // Use actual device path (e.g., /dev/video0)
-						log.Info().
-							Str("device_id", deviceID).
-							Str("camera_uuid", cameraUUID).
-							Str("camera_path", cameraID).
-							Msg("Using camera from device mapping")
-						break
-					}
 				}
 			}
 		}
@@ -593,6 +599,26 @@ func (h *SnapAPI) executeSnap(ctx context.Context, devicePath string, req *SnapR
 	result, err := executor.Run(ctx)
 	if err != nil {
 		return nil, err
+	}
+
+	// Crop to the device's configured bounding box, if any. The device->camera
+	// mapping above selected the camera; this applies the region that frames
+	// the device within that camera's view, so 'snap' returns the cropped board
+	// image rather than the full frame. It is a no-op when no mapping exists.
+	if deviceID != "" && cameraMappingID != "" && len(result.ImageData) > 0 {
+		cropped, err := camera.ExtractDeviceBytes(h.store, result.ImageData, deviceID, cameraMappingID)
+		if err != nil {
+			log.Warn().Err(err).Str("device_id", deviceID).Msg("Failed to crop snap to device bounding box")
+		} else if len(cropped) > 0 {
+			result.ImageData = cropped
+			result.RecomputeBase64()
+			result.Metadata.ImageSize = len(cropped)
+			log.Info().
+				Str("device_id", deviceID).
+				Str("camera_id", cameraMappingID).
+				Int("size", len(cropped)).
+				Msg("Cropped snap to device bounding box")
+		}
 	}
 
 	return result, nil

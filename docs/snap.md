@@ -55,6 +55,26 @@ The `--device` flag accepts multiple identifier formats:
 - **Alias**: Any custom alias assigned in the inventory
 - **Path**: `/dev/ttyUSB0` (direct port, use `--port` instead)
 
+## Device cropping (bounding box)
+
+When the selected device has a camera + bounding box declared in `espbrew.toml`
+(see [image-mapping.md](image-mapping.md) #config-driven-cropping-espbrew-toml),
+`snap` automatically crops the captured frame to that region. The returned image
+is the board itself, not the full camera view.
+
+```bash
+# Full frame would be 640x480; with the box below it returns 157x114.
+espbrew snap --cluster http://leader:8080 \
+             --filter-alias esp32-s3-box-3 \
+             --skip-flash
+```
+
+- The crop is keyed on the device `id` and camera, so `--filter-alias` must
+  resolve to the same `id` configured in `espbrew.toml`.
+- The returned `image_size` and dimensions in the metadata reflect the cropped
+  image (e.g. 3.3 KB / 157×114 instead of 20 KB / 640×480).
+- If no mapping exists for the device, `snap` returns the full frame unchanged.
+
 ## Usage Examples
 
 ### Local Mode

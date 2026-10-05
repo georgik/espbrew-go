@@ -1,8 +1,10 @@
 package camera
 
 import (
+	"bytes"
 	"image"
 	"image/color"
+	"image/jpeg"
 	"os"
 	"path/filepath"
 	"testing"
@@ -178,4 +180,87 @@ func TestExtractor_InvalidBounds(t *testing.T) {
 	results, err := extractor.ExtractDevices(img, "cam-001", capturePath)
 	require.NoError(t, err)
 	assert.Len(t, results, 1)
+}
+
+// encodeJPEG encodes an image to JPEG bytes so tests can exercise the
+// byte-oriented ExtractDeviceBytes entry point without touching the disk.
+func encodeJPEG(t *testing.T, img image.Image) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	require.NoError(t, jpeg.Encode(&buf, img, &jpeg.Options{Quality: 90}))
+	return buf.Bytes()
+}
+
+func TestExtractDeviceBytes(t *testing.T) {
+	dbPath := t.TempDir() + "/test.db"
+	store, err := persistence.Open(&persistence.Config{Path: dbPath})
+	require.NoError(t, err)
+	defer store.Close()
+
+	// 100x100 gradient image.
+	img := image.NewRGBA(image.Rect(0, 0, 100, 100))
+	for y := 0; y < 100; y++ {
+		for x := 0; x < 100; x++ {
+			img.Set(x, y, color.RGBA{uint8(x * 2), uint8(y * 2), 128, 255})
+		}
+	}
+
+	mapping := &persistence.DeviceBoundingBoxMapping{
+		ID:       "bbox-1",
+		DeviceID: "device-1",
+		CameraID: "cam-001",
+		// Top-left quarter: 0..0.5 on both axes -> 50x50 px subimage.
+		Bounds: persistence.BoundingBox{X: 0, Y: 0, Width: 0.5, Height: 0.5},
+	}
+	require.NoError(t, store.SaveBoundingBox(mapping))
+
+	cropped, err := ExtractDeviceBytes(store, encodeJPEG(t, img), "device-1", "cam-001")
+	require.NoError(t, err)
+	assert.NotEmpty(t, cropped)
+
+	// The crop should be exactly the top-left 50x50 region.
+	got, _, err := image.Decode(bytes.NewReader(cropped))
+	require.NoError(t, err)
+	b := got.Bounds()
+	assert.Equal(t, 50, b.Dx(), "cropped width should be half the source")
+	assert.Equal(t, 50, b.Dy(), "cropped height should be half the source")
+	assert.Less(t, b.Dx()*b.Dy(), 100*100, "crop should be smaller than the full frame")
+}
+
+func TestExtractDeviceBytes_NoMapping(t *testing.T) {
+	dbPath := t.TempDir() + "/test.db"
+	store, err := persistence.Open(&persistence.Config{Path: dbPath})
+	require.NoError(t, err)
+	defer store.Close()
+
+	img := image.NewRGBA(image.Rect(0, 0, 20, 20))
+	for y := 0; y < 20; y++ {
+		for x := 0; x < 20; x++ {
+			img.Set(x, y, color.RGBA{10, 20, 30, 255})
+		}
+	}
+
+	// No mapping saved for this device+camera: should degrade to the full frame
+	// (nil bytes, no error) so the caller keeps the uncropped capture.
+	cropped, err := ExtractDeviceBytes(store, encodeJPEG(t, img), "device-unknown", "cam-001")
+	require.NoError(t, err)
+	assert.Empty(t, cropped, "no mapping should yield no crop")
+}
+
+func TestExtractDeviceBytes_NilStore(t *testing.T) {
+	img := image.NewRGBA(image.Rect(0, 0, 10, 10))
+	cropped, err := ExtractDeviceBytes(nil, encodeJPEG(t, img), "device-1", "cam-001")
+	require.NoError(t, err)
+	assert.Empty(t, cropped)
+}
+
+func TestExtractDeviceBytes_EmptyInput(t *testing.T) {
+	dbPath := t.TempDir() + "/test.db"
+	store, err := persistence.Open(&persistence.Config{Path: dbPath})
+	require.NoError(t, err)
+	defer store.Close()
+
+	cropped, err := ExtractDeviceBytes(store, nil, "device-1", "cam-001")
+	require.NoError(t, err)
+	assert.Empty(t, cropped)
 }
