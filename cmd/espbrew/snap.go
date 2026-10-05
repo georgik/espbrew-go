@@ -633,7 +633,13 @@ func isFormatOnly(output string) bool {
 // Otherwise, creates timestamped directory under ./snap/.
 func getSnapDir() (string, error) {
 	if snapOpts.saveDir != "" {
-		// User specified directory, use as-is
+		// User specified directory. Create it so the WriteFile/os.Create calls
+		// below (image, logs, metadata) do not fail with "no such file or
+		// directory" when the caller passes a fresh --save-dir that does not
+		// exist yet.
+		if err := os.MkdirAll(snapOpts.saveDir, 0755); err != nil {
+			return "", fmt.Errorf("create save directory: %w", err)
+		}
 		return snapOpts.saveDir, nil
 	}
 

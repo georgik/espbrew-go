@@ -333,6 +333,32 @@ func TestParseSnapOutputFormat(t *testing.T) {
 }
 
 // TestIsFormatOnly tests the format-only detection logic
+// TestGetSnapDir_CreatesSpecifiedSaveDir guards the case where the caller
+// passes a fresh --save-dir that does not exist yet (e.g. CI's "snap-out"):
+// getSnapDir must create it so the subsequent WriteFile/os.Create calls for
+// image, logs, and metadata do not fail with "no such file or directory".
+func TestGetSnapDir_CreatesSpecifiedSaveDir(t *testing.T) {
+	// saveDir must point at a path that does NOT exist yet.
+	saveDir := filepath.Join(t.TempDir(), "does-not-exist-yet")
+
+	old := snapOpts.saveDir
+	snapOpts.saveDir = saveDir
+	defer func() { snapOpts.saveDir = old }()
+
+	got, err := getSnapDir()
+	if err != nil {
+		t.Fatalf("getSnapDir() error = %v", err)
+	}
+	if got != saveDir {
+		t.Fatalf("getSnapDir() = %q, want %q", got, saveDir)
+	}
+	if fi, err := os.Stat(saveDir); err != nil {
+		t.Fatalf("save directory not created: %v", err)
+	} else if !fi.IsDir() {
+		t.Fatalf("save directory %q is not a directory", saveDir)
+	}
+}
+
 func TestIsFormatOnly(t *testing.T) {
 	tests := []struct {
 		name     string
