@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/georgik/espbrew-go/internal/cluster"
 	"github.com/rs/zerolog/log"
@@ -91,4 +92,65 @@ func deviceMatchesFilters(d cluster.DeviceInfo, boardModel, chipType, alias stri
 	}
 
 	return true
+}
+
+// selectClusterDevice resolves a single device from a cluster device list using
+// the shared filters plus an optional explicit --device selector. It is the
+// cluster-side counterpart of resolveSnapDevice: instead of reading the board
+// from the client's local inventory it asks the cluster (the single source of
+// truth), so `snap --cluster --device/--filter-alias <alias>` works for a board
+// that lives on a remote node. It returns the first `available` match, falling
+// back to the first match when none is available.
+func selectClusterDevice(devices []cluster.DeviceInfo, boardModel, chipType, alias string, tags []string, deviceID string) (cluster.DeviceInfo, error) {
+	filtered, err := filterDevices(devices, boardModel, chipType, alias, tags)
+	if err != nil {
+		return cluster.DeviceInfo{}, err
+	}
+
+	// Apply an explicit --device selector (matched by device ID, alias, or
+	// path suffix) on top of the shared filters.
+	if deviceID != "" {
+		var byID []cluster.DeviceInfo
+		for _, d := range filtered {
+			if deviceMatchesSelector(d, deviceID) {
+				byID = append(byID, d)
+			}
+		}
+		if len(byID) == 0 {
+			return cluster.DeviceInfo{}, fmt.Errorf("no device matches %s", deviceID)
+		}
+		filtered = byID
+	}
+
+	// Prefer an available device; fall back to the first match.
+	for _, d := range filtered {
+		if d.State == "available" {
+			return d, nil
+		}
+	}
+	if len(filtered) > 0 {
+		return filtered[0], nil
+	}
+	return cluster.DeviceInfo{}, fmt.Errorf("no devices available on cluster")
+}
+
+// deviceMatchesSelector reports whether a cluster device matches an explicit
+// --device selector: by device ID, by alias membership, or by path (full path,
+// /dev/<base>, or bare base name).
+func deviceMatchesSelector(d cluster.DeviceInfo, selector string) bool {
+	if selector == "" {
+		return false
+	}
+	if d.DeviceID == selector {
+		return true
+	}
+	for _, a := range d.Aliases {
+		if a == selector {
+			return true
+		}
+	}
+	if d.Path == selector || d.Path == "/dev/"+selector || strings.HasSuffix(d.Path, "/"+selector) {
+		return true
+	}
+	return false
 }

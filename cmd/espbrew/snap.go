@@ -42,6 +42,12 @@ var snapOpts struct {
 	leader        string
 	jobID         string
 	displayPreset bool
+	// Device filtering (shared with flash/monitor via device_filter.go so all
+	// device-facing commands select identically by alias/chip/board/tags).
+	filterBoardModel string   // Filter by board model (e.g. "ESP32-S3-BOX")
+	filterTags       []string // Filter by tags (all must match)
+	filterChip       string   // Filter by chip type (e.g. "ESP32-S3")
+	filterAlias      string   // Filter by alias (e.g. production-esp1)
 }
 
 func init() {
@@ -61,6 +67,12 @@ func init() {
 	snapCmd.Flags().StringVar(&snapOpts.leader, "leader", os.Getenv("ESPBREW_LEADER"), "Leader address for cluster mode")
 	snapCmd.Flags().StringVar(&snapOpts.jobID, "job-id", "", "Job ID for resuming operations")
 	snapCmd.Flags().BoolVar(&snapOpts.displayPreset, "display-preset", false, "Apply display photography preset (Linux only)")
+	// Device filtering (select the board by alias/chip/board/tags when
+	// auto-detecting; shared with flash/monitor).
+	snapCmd.Flags().StringVar(&snapOpts.filterBoardModel, "filter-board", "", "Filter devices by board model (e.g. ESP32-S3-BOX)")
+	snapCmd.Flags().StringSliceVar(&snapOpts.filterTags, "filter-tag", []string{}, "Filter devices by tags (can be specified multiple times, all must match)")
+	snapCmd.Flags().StringVar(&snapOpts.filterChip, "filter-chip", "", "Filter devices by chip type (e.g. ESP32-S3)")
+	snapCmd.Flags().StringVar(&snapOpts.filterAlias, "filter-alias", "", "Filter devices by alias (e.g. production-esp1)")
 
 	rootCmd.AddCommand(snapCmd)
 }
@@ -202,38 +214,39 @@ func runClusterSnap() error {
 	snapTimeout := time.Duration(snapOpts.duration)*time.Second + 30*time.Second
 	client.SetTimeout(snapTimeout)
 
-	// Resolve device from inventory if --device specified
-	var devicePath string
-	if snapOpts.deviceID != "" {
-		port, err := resolveSnapDevice()
-		if err != nil {
-			return err
-		}
-		devicePath = port
-	}
-
-	// Get available devices if device not specified
-	if devicePath == "" && snapOpts.port == "" {
+	// Resolve the target device against the CLUSTER, not the client's local
+	// inventory: the server is the single source of truth. Selection mirrors
+	// monitor — --filter-alias/--chip/--board/--tag are the shared filters and
+	// --port/--device are explicit selectors. Resolving on the cluster is what
+	// makes `snap --cluster --device/--filter-alias <alias>` work for a board
+	// that lives on a remote node.
+	var (
+		devicePath       string
+		resolvedDeviceID string
+	)
+	if snapOpts.port != "" {
+		// Explicit path: use it directly (the server resolves it by path).
+		devicePath = snapOpts.port
+		resolvedDeviceID = snapOpts.port
+	} else {
 		devices, err := client.ListDevices()
 		if err != nil {
 			return fmt.Errorf("list devices: %w", err)
 		}
 
-		// Find first available device
-		for _, d := range devices {
-			if d.State == "available" {
-				devicePath = d.Path
-				break
-			}
+		d, err := selectClusterDevice(devices, snapOpts.filterBoardModel, snapOpts.filterChip, snapOpts.filterAlias, snapOpts.filterTags, snapOpts.deviceID)
+		if err != nil {
+			return err
 		}
-
-		if devicePath == "" {
-			return fmt.Errorf("no available devices on cluster")
+		devicePath = d.Path
+		resolvedDeviceID = d.DeviceID
+		if resolvedDeviceID == "" {
+			resolvedDeviceID = devicePath
 		}
-
-		log.Info().Str("device", devicePath).Msg("Auto-selected available device")
-	} else if devicePath == "" {
-		devicePath = snapOpts.port
+		log.Info().
+			Str("device", devicePath).
+			Str("device_id", resolvedDeviceID).
+			Msg("Selected device from cluster")
 	}
 
 	// Detect build artifacts if not specified
@@ -252,23 +265,6 @@ func runClusterSnap() error {
 			Str("partitions", artifacts.Partitions).
 			Str("app", artifacts.App).
 			Msg("Auto-detected build artifacts")
-	}
-
-	// Resolve device ID once for hash check and snap request
-	var resolvedDeviceID string
-	if snapOpts.deviceID != "" {
-		inv, err := inventory.NewInventory()
-		if err != nil {
-			return fmt.Errorf("load inventory: %w", err)
-		}
-		dev, err := findDevice(inv, snapOpts.deviceID)
-		if err != nil {
-			return fmt.Errorf("resolve device ID: %w", err)
-		}
-		resolvedDeviceID = dev.DeviceID
-	} else {
-		// Use device path as ID if no inventory device specified
-		resolvedDeviceID = devicePath
 	}
 
 	// Step 1: Check flash hash if firmware is specified and not skipping flash

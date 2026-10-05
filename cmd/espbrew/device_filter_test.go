@@ -127,3 +127,147 @@ func TestFilterDevices_CombinedCriteria(t *testing.T) {
 		t.Fatalf("expected 2 devices, got %d: %+v", len(got), got)
 	}
 }
+
+// --- selectClusterDevice / deviceMatchesSelector ---
+
+func TestSelectClusterDevice_NoFilterFirstAvailable(t *testing.T) {
+	devices := filterTestDevices()
+	got, err := selectClusterDevice(devices, "", "", "", nil, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// First available device in the list is the box-3.
+	if got.Path != "/dev/serial/by-id/box3" {
+		t.Fatalf("expected first available box-3, got %q", got.Path)
+	}
+}
+
+func TestSelectClusterDevice_ByAlias(t *testing.T) {
+	devices := filterTestDevices()
+	got, err := selectClusterDevice(devices, "", "", "esp32-c3-lcdkit", nil, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.Path != "/dev/serial/by-id/c3" {
+		t.Fatalf("expected c3-lcdkit, got %q", got.Path)
+	}
+}
+
+func TestSelectClusterDevice_ByChip(t *testing.T) {
+	devices := filterTestDevices()
+	// ESP32-S3 matches box-3 (available) + reserved-s3 -> prefer available.
+	got, err := selectClusterDevice(devices, "", "ESP32-S3", "", nil, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.Path != "/dev/serial/by-id/box3" {
+		t.Fatalf("expected available box-3, got %q", got.Path)
+	}
+}
+
+func TestSelectClusterDevice_ByBoardModel(t *testing.T) {
+	devices := filterTestDevices()
+	got, err := selectClusterDevice(devices, "ESP32-C3-LCDKIT", "", "", nil, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.Path != "/dev/serial/by-id/c3" {
+		t.Fatalf("expected c3-lcdkit, got %q", got.Path)
+	}
+}
+
+func TestSelectClusterDevice_ByTag(t *testing.T) {
+	devices := filterTestDevices()
+	// "bench" tag -> box-3 (available) + reserved-s3 -> prefer available.
+	got, err := selectClusterDevice(devices, "", "", "", []string{"bench"}, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.Path != "/dev/serial/by-id/box3" {
+		t.Fatalf("expected available box-3, got %q", got.Path)
+	}
+}
+
+func TestSelectClusterDevice_NoMatchErrors(t *testing.T) {
+	devices := filterTestDevices()
+	if _, err := selectClusterDevice(devices, "", "", "does-not-exist", nil, ""); err == nil {
+		t.Fatal("expected error for non-matching alias, got nil")
+	}
+}
+
+func TestSelectClusterDevice_DeviceIDByDeviceID(t *testing.T) {
+	devices := filterTestDevices()
+	got, err := selectClusterDevice(devices, "", "", "", nil, "esp-98:88:E0:D4:D2:58-if00")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.Path != "/dev/serial/by-id/c3" {
+		t.Fatalf("expected c3-lcdkit by device id, got %q", got.Path)
+	}
+}
+
+func TestSelectClusterDevice_DeviceIDByAlias(t *testing.T) {
+	devices := filterTestDevices()
+	got, err := selectClusterDevice(devices, "", "", "", nil, "esp32-s3-box-3")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.Path != "/dev/serial/by-id/box3" {
+		t.Fatalf("expected box-3 by alias selector, got %q", got.Path)
+	}
+}
+
+func TestSelectClusterDevice_DeviceIDByPath(t *testing.T) {
+	devices := filterTestDevices()
+	got, err := selectClusterDevice(devices, "", "", "", nil, "/dev/serial/by-id/s3-other")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.Path != "/dev/serial/by-id/s3-other" {
+		t.Fatalf("expected s3-other by path, got %q", got.Path)
+	}
+}
+
+func TestSelectClusterDevice_DeviceIDNoMatch(t *testing.T) {
+	devices := filterTestDevices()
+	if _, err := selectClusterDevice(devices, "", "", "", nil, "bogus-id"); err == nil {
+		t.Fatal("expected error for non-matching device id, got nil")
+	}
+}
+
+func TestSelectClusterDevice_PrefersAvailableOverReserved(t *testing.T) {
+	devices := filterTestDevices()
+	// Both box-3 (available) and reserved-s3 are ESP32-S3; must prefer available.
+	got, err := selectClusterDevice(devices, "", "ESP32-S3", "", []string{"bench"}, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.State != cluster.DeviceAvailable {
+		t.Fatalf("expected an available device, got state %q", got.State)
+	}
+}
+
+func TestDeviceMatchesSelector(t *testing.T) {
+	devices := filterTestDevices()
+	box3 := devices[0]
+
+	cases := []struct {
+		name     string
+		selector string
+		want     bool
+	}{
+		{"by device id", "esp-30:30:F9:5A:8F:D4-if00", true},
+		{"by alias", "esp32-s3-box-3", true},
+		{"by full path", "/dev/serial/by-id/box3", true},
+		{"by bare base name", "box3", true},
+		{"non-match", "nope", false},
+		{"empty selector", "", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := deviceMatchesSelector(box3, tc.selector); got != tc.want {
+				t.Errorf("deviceMatchesSelector(%q) = %v, want %v", tc.selector, got, tc.want)
+			}
+		})
+	}
+}
