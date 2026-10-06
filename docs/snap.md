@@ -43,6 +43,7 @@ espbrew snap [flags]
 | `--no-capture` | bool | false | Skip image capture (flash + monitor only) |
 | `--no-monitor` | bool | false | Skip serial monitor after flash |
 | `--save-dir` | string | (empty) | Directory to save snap results (default: ./snap/TIMESTAMP/) |
+| `--zip` | string | (empty) | Create a zip archive of the snap output directory at the given path (portable alternative to shell `zip`) |
 | `--leader` | string | (empty) | Leader address for cluster mode (deprecated: use --cluster) |
 | `--job-id` | string | (empty) | Job ID for resuming operations |
 
@@ -278,6 +279,39 @@ Use `--save-dir` to specify a custom location:
 ```bash
 espbrew snap --save-dir ./snapshots
 ```
+
+### Archiving snap output to a zip (`--zip`)
+
+`--zip <path>` packages the snap output directory into a zip archive using espbrew's **built-in**
+archiver (Go's `archive/zip`) — there is **no dependency on an external `zip` binary**. This is
+handy whenever you want to ship the captured image, metadata, and logs as a single artifact, most
+commonly in CI/CD:
+
+```bash
+espbrew snap --save-dir ./snap-out --zip ./snapshot.zip
+```
+
+- The archive contains the **flat** contents of the output directory — `snap-*.jpg`,
+  `snap-*.json`, `snap-*.log` — mirroring the layout `--save-dir` produced.
+- espbrew prints `Saved archive: ./snapshot.zip (N files)` so you can confirm the count.
+- Because the archiver is compiled into espbrew, it behaves identically on minimal CI images that
+  have no `zip` command installed.
+
+**CI example.** In a GitHub Actions workflow the `snap` step runs inside the project directory (so
+espbrew's autodetect finds the firmware). Passing `--zip ../snapshot.zip` writes the archive one
+level up, at the repo root, where the upload step can pick it up:
+
+```bash
+# inside the snap step, which already `cd`'d into the pack dir:
+espbrew snap --filter-alias "${BOARD}" \
+             --save-dir snap-out \
+             --zip ../snapshot.zip \
+             --duration "${SNAP_DURATION}"
+```
+
+This is exactly the approach used by the
+[esp32-conways-game-of-life-rs flash workflow](../wiki/espbrew-flash-pages-workflow-report.md),
+which dropped its external `zip` step entirely once espbrew could produce the archive itself.
 
 ## Integration with FlashHash
 

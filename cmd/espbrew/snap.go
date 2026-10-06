@@ -39,6 +39,7 @@ var snapOpts struct {
 	noCapture     bool
 	noMonitor     bool
 	saveDir       string
+	zip           string
 	leader        string
 	jobID         string
 	displayPreset bool
@@ -64,6 +65,7 @@ func init() {
 	snapCmd.Flags().BoolVar(&snapOpts.noCapture, "no-capture", false, "Skip image capture (flash only)")
 	snapCmd.Flags().BoolVar(&snapOpts.noMonitor, "no-monitor", false, "Skip serial monitor after flash")
 	snapCmd.Flags().StringVar(&snapOpts.saveDir, "save-dir", "", "Directory to save snap results (default: ./snap/TIMESTAMP)")
+	snapCmd.Flags().StringVar(&snapOpts.zip, "zip", "", "Create a zip archive of the snap output directory at the given path (portable alternative to shell 'zip')")
 	snapCmd.Flags().StringVar(&snapOpts.leader, "leader", os.Getenv("ESPBREW_LEADER"), "Leader address for cluster mode")
 	snapCmd.Flags().StringVar(&snapOpts.jobID, "job-id", "", "Job ID for resuming operations")
 	snapCmd.Flags().BoolVar(&snapOpts.displayPreset, "display-preset", false, "Apply display photography preset (Linux only)")
@@ -181,6 +183,21 @@ func runLocalSnap() error {
 		// Write result using handler
 		if writeErr := handler.Write(result); writeErr != nil {
 			log.Warn().Err(writeErr).Msg("Failed to write output")
+		}
+	}
+
+	// Create a zip archive of the snap output directory if requested. This gives
+	// callers a portable, dependency-free way to package artifacts without
+	// relying on an external `zip` binary that may be absent from a minimal CI
+	// image.
+	if snapOpts.zip != "" {
+		if snapDir == "" {
+			log.Warn().Msg("--zip requested but no snap output directory was produced; skipping archive")
+		} else if n, zipErr := snap.ZipDirectory(snapOpts.zip, snapDir); zipErr != nil {
+			log.Warn().Err(zipErr).Msg("Failed to create snap archive")
+		} else {
+			log.Info().Str("archive", snapOpts.zip).Int("files", n).Msg("Snap archive created")
+			fmt.Printf("Saved archive:  %s (%d files)\n", snapOpts.zip, n)
 		}
 	}
 
@@ -474,6 +491,20 @@ func runClusterSnap() error {
 		fmt.Printf("Snap directory: %s\n", snapDir)
 	} else if snapResp.Metadata != nil && snapResp.Metadata.LogEntryCount > 0 {
 		fmt.Printf("Log entries: %d\n", snapResp.Metadata.LogEntryCount)
+	}
+
+	// Create a zip archive of the snap output directory if requested. See
+	// runLocalSnap for the rationale (portable, dependency-free artifact
+	// packaging without an external `zip`).
+	if snapOpts.zip != "" {
+		if snapDir == "" {
+			log.Warn().Msg("--zip requested but no snap output directory was produced; skipping archive")
+		} else if n, zipErr := snap.ZipDirectory(snapOpts.zip, snapDir); zipErr != nil {
+			log.Warn().Err(zipErr).Msg("Failed to create snap archive")
+		} else {
+			log.Info().Str("archive", snapOpts.zip).Int("files", n).Msg("Snap archive created")
+			fmt.Printf("Saved archive:  %s (%d files)\n", snapOpts.zip, n)
+		}
 	}
 
 	log.Info().
