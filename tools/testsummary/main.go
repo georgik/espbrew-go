@@ -1,6 +1,8 @@
 // Command testsummary consumes the structured output of
 //
-//	go test -json ./... | testsummary
+//	go test -json ./... | testsummary          // read from stdin
+//	go test -json ./... > out.json             // or, pipe-free (portable
+//	testsummary out.json                       //            to Windows/PowerShell)
 //
 // and prints a concise, PROMINENT report of every failed test/package at the
 // END of the run.
@@ -54,7 +56,26 @@ type group struct {
 }
 
 func main() {
-	dec := json.NewDecoder(os.Stdin)
+	// Input source: an optional file-path argument, or stdin when omitted.
+	// Accepting a file lets CI avoid a shell pipe (|), which is not portable
+	// across the bash runners (Linux/macOS) and the PowerShell runner
+	// (Windows) — PowerShell cannot run an executable in the middle of a
+	// pipeline. `go test -json` output is written to a file first, then its
+	// path is passed here.
+	var in io.Reader
+	if len(os.Args) > 1 {
+		f, err := os.Open(os.Args[1])
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "testsummary: opening", os.Args[1]+":", err)
+			os.Exit(2)
+		}
+		defer f.Close()
+		in = f
+	} else {
+		in = os.Stdin
+	}
+
+	dec := json.NewDecoder(in)
 
 	groups := map[string]*group{}
 	var order []string // first-seen order, kept only for stable iteration

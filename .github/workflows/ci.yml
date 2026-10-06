@@ -48,12 +48,17 @@ jobs:
         run: go build -o bin/testsummary ./tools/testsummary
 
       - name: Test
-        # `go test -json` is the NATIVE structured form of the same run. Piping
-        # it through the summarizer aggregates every failure, so a failing
-        # package's "FAIL" is no longer buried by the passing packages that run
-        # afterward. Exit code stays non-zero on any failure, so CI still fails
-        # exactly as before — only the report is now readable at the end.
-        run: go test -json -race -count=1 ./... | ./bin/testsummary
+        # Write `go test -json` output to a file first, then feed it to the
+        # summarizer. A shell pipe (`|`) is NOT portable across the runners:
+        # bash (Linux/macOS) supports it, but PowerShell (Windows) refuses to
+        # run an executable in the middle of a pipeline ("Cannot run a
+        # document in the middle of a pipeline"). The redirect `>` works in
+        # bash, PowerShell, and cmd.exe, and the summarizer now accepts the
+        # file path as an argument. Exit code stays non-zero on failure, so
+        # CI still fails exactly as before.
+        run: |
+          go test -json -race -count=1 ./... > "$GITHUB_TEMP/test-results.json"
+          ./bin/testsummary "$GITHUB_TEMP/test-results.json"
 
   wasm:
     name: Build WASM
