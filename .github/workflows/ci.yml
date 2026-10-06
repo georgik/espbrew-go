@@ -42,8 +42,18 @@ jobs:
       - name: Vet
         run: go vet ./...
 
+      - name: Build test-result summarizer
+        # Native stdlib tool (tools/testsummary): consumes `go test -json` and
+        # prints a prominent failure report at the END of the run.
+        run: go build -o bin/testsummary ./tools/testsummary
+
       - name: Test
-        run: go test -v -race -count=1 ./...
+        # `go test -json` is the NATIVE structured form of the same run. Piping
+        # it through the summarizer aggregates every failure, so a failing
+        # package's "FAIL" is no longer buried by the passing packages that run
+        # afterward. Exit code stays non-zero on any failure, so CI still fails
+        # exactly as before — only the report is now readable at the end.
+        run: go test -json -race -count=1 ./... | ./bin/testsummary
 
   wasm:
     name: Build WASM
