@@ -54,11 +54,13 @@ jobs:
         # run an executable in the middle of a pipeline ("Cannot run a
         # document in the middle of a pipeline"). The redirect `>` works in
         # bash, PowerShell, and cmd.exe, and the summarizer now accepts the
-        # file path as an argument. Exit code stays non-zero on failure, so
-        # CI still fails exactly as before.
+        # file path as an argument. A relative path is used (not $GITHUB_TEMP,
+        # which is not set on every runner) so the file is always writable.
+        # Exit code stays non-zero on failure, so CI still fails exactly as
+        # before — only the report is now readable at the end.
         run: |
-          go test -json -race -count=1 ./... > "$GITHUB_TEMP/test-results.json"
-          ./bin/testsummary "$GITHUB_TEMP/test-results.json"
+          go test -json -race -count=1 ./... > test-results.json
+          ./bin/testsummary test-results.json
 
   wasm:
     name: Build WASM
