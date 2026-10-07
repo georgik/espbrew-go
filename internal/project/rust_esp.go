@@ -120,43 +120,16 @@ func (d *RustESPDetector) FindBuildDir(dir string) (string, error) {
 	return d.findTargetDir(dir)
 }
 
-// extractTargetTriple reads the target triple from .cargo/config
+// extractTargetTriple reads the target triple from .cargo/config and defers the
+// parsing to the shared ExtractTargetTriple helper so the detector and the
+// artifact packer stay in lockstep.
 func (d *RustESPDetector) extractTargetTriple(configPath string) (string, error) {
-	f, err := os.Open(configPath)
+	content, err := os.ReadFile(configPath)
 	if err != nil {
 		return "", err
 	}
-	defer f.Close()
-
-	scanner := bufio.NewScanner(f)
-
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-
-		// Check for target section
-		if strings.HasPrefix(line, "[target.") {
-			// Extract target triple
-			start := strings.Index(line, "[target.") + 8
-			end := strings.Index(line[start:], "]")
-			if end > 0 {
-				return line[start : start+end], nil
-			}
-		}
-
-		// Check for build.target
-		if strings.HasPrefix(line, "target") && strings.Contains(line, "=") {
-			parts := strings.SplitN(line, "=", 2)
-			if len(parts) == 2 {
-				target := strings.Trim(strings.TrimSpace(parts[1]), `"`)
-				if target != "" && !strings.HasPrefix(target, "$") {
-					return target, nil
-				}
-			}
-		}
-	}
-
-	if err := scanner.Err(); err != nil {
-		return "", err
+	if triple := ExtractTargetTriple(string(content)); triple != "" {
+		return triple, nil
 	}
 	return "", os.ErrNotExist
 }
@@ -184,36 +157,15 @@ func (d *RustESPDetector) findTargetDir(dir string) (string, error) {
 	return "", os.ErrNotExist
 }
 
-// GetArtifacts returns paths to Rust ESP build outputs
+// GetArtifacts returns paths to Rust ESP build outputs. The ELF is selected by
+// the shared FindELF helper so the detector and the artifact packer agree on
+// exactly which binary is flashed.
 func (d *RustESPDetector) GetArtifacts(buildDir string) (*BuildArtifacts, error) {
 	artifacts := &BuildArtifacts{
 		BuildDir: buildDir,
 	}
-
-	entries, err := os.ReadDir(buildDir)
-	if err != nil {
-		return artifacts, err
+	if elf, err := FindELF(buildDir); err == nil {
+		artifacts.App = elf
 	}
-
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
-		}
-		// Look for executable files (ELF binaries)
-		// Skip .d, .o files and other build artifacts
-		if !strings.HasSuffix(entry.Name(), ".d") &&
-			!strings.HasSuffix(entry.Name(), ".o") &&
-			!strings.HasSuffix(entry.Name(), ".a") &&
-			!strings.HasSuffix(entry.Name(), ".rmeta") {
-
-			info, _ := entry.Info()
-			// Check if it's executable (Unix) or large enough to be a binary
-			if info.Mode().Perm()&0111 != 0 || info.Size() > 10000 {
-				artifacts.App = filepath.Join(buildDir, entry.Name())
-				break
-			}
-		}
-	}
-
 	return artifacts, nil
 }
