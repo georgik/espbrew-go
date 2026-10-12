@@ -274,6 +274,7 @@ The `snap` command combines flashing, serial monitoring, and camera capture into
 - Hash-based flash optimization skips unchanged regions
 - Monitors serial output for boot verification
 - Captures camera image for visual confirmation
+- Extracts an `esp_lcd_screenshot` framebuffer dump from the serial log into a PNG (`framebuffer-<snap_id>.png`); the dump lines never reach the log and monitoring stops once the frame is complete (disable with `--no-framebuffer`)
 - Works in local and cluster modes
 - Automatic client timeout calculation based on duration
 

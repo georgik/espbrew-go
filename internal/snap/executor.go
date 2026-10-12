@@ -36,15 +36,17 @@ type Executor struct {
 	baudRate int // Baud rate for serial communication
 
 	// Control flags
-	skipFlash bool // Always true - flashing is not supported
-	noCapture bool // Disable camera capture
-	noMonitor bool // Disable serial monitoring
+	skipFlash   bool // Always true - flashing is not supported
+	noCapture   bool // Disable camera capture
+	noMonitor   bool // Disable serial monitoring
+	framebuffer bool // Watch the serial log for the esp_lcd_screenshot framebuffer dump
 
 	// Internal state
-	mu      sync.Mutex
-	result  *SnapResult
-	logChan chan SerialLogEntry
-	imageCh chan []byte
+	mu          sync.Mutex
+	result      *SnapResult
+	logChan     chan SerialLogEntry
+	imageCh     chan []byte
+	fbCollector *FramebufferCollector
 }
 
 // NewExecutor creates a new snapshot executor with the given configuration.
@@ -100,6 +102,14 @@ func (e *Executor) SetBackendMonitor(monitor protocol.Monitor) {
 // GetDevice returns the device identifier
 func (e *Executor) GetDevice() string {
 	return e.device
+}
+
+// SetFramebuffer enables watching the serial log for the esp_lcd_screenshot
+// framebuffer protocol. When the complete FRAMEBUFFER_BEGIN ... FRAMEBUFFER_END
+// block has been received the payload is extracted into a PNG (the protocol
+// lines themselves are never stored in the log) and monitoring stops early.
+func (e *Executor) SetFramebuffer(enabled bool) {
+	e.framebuffer = enabled
 }
 
 // GetDeviceInfo returns the device info (may be nil for physical devices)
@@ -178,6 +188,19 @@ func (e *Executor) Run(ctx context.Context) (*SnapResult, error) {
 	e.result.Metadata.Duration = time.Since(startTime).Milliseconds()
 	e.result.Metadata.LogEntryCount = len(e.result.Logs)
 
+	// Attach the framebuffer extracted from the serial log, if any.
+	if e.fbCollector != nil {
+		if fb := e.fbCollector.Image(); fb != nil {
+			e.result.Framebuffer = fb
+			e.result.Metadata.FramebufferWidth = fb.Width
+			e.result.Metadata.FramebufferHeight = fb.Height
+			e.result.Metadata.FramebufferFourcc = fb.Fourcc
+			e.result.Metadata.FramebufferPNG = fb.PNGSize
+		} else if err := e.fbCollector.Err(); err != nil {
+			log.Warn().Err(err).Str("snap_id", snapID).Msg("Framebuffer extraction failed")
+		}
+	}
+
 	if status == "" {
 		status = SnapStatusSuccess
 	}
@@ -238,6 +261,13 @@ func (e *Executor) monitorWithBackend(ctx context.Context) error {
 	monitorCtx, cancel := context.WithTimeout(ctx, e.duration)
 	defer cancel()
 
+	// Set up the framebuffer watcher before any data can arrive.
+	if e.framebuffer {
+		e.mu.Lock()
+		e.fbCollector = NewFramebufferCollector()
+		e.mu.Unlock()
+	}
+
 	entryCount := 0
 
 	// Read log entries from backend
@@ -252,8 +282,14 @@ func (e *Executor) monitorWithBackend(ctx context.Context) error {
 				// Channel closed
 				return nil
 			}
-			e.addLogEntry(entry.Data)
-			entryCount++
+			if !e.ingestFramebufferLine(entry.Data) {
+				e.addLogEntry(entry.Data)
+				entryCount++
+			}
+			if e.framebufferComplete() {
+				log.Debug().Int("entries", entryCount).Msg("Framebuffer captured, stopping serial monitoring early")
+				cancel()
+			}
 
 		case <-time.After(100 * time.Millisecond):
 			// Keep select alive
@@ -294,6 +330,13 @@ func (e *Executor) monitorPhysical(ctx context.Context) error {
 	monitorCtx, cancel := context.WithTimeout(ctx, e.duration)
 	defer cancel()
 
+	// Set up the framebuffer watcher before any data can arrive.
+	if e.framebuffer {
+		e.mu.Lock()
+		e.fbCollector = NewFramebufferCollector()
+		e.mu.Unlock()
+	}
+
 	// Create monitor session
 	sessionID := uuid.New().String()
 	session := monitor.NewStreamSession(sessionID, monitor.StreamConfig{
@@ -329,9 +372,19 @@ func (e *Executor) monitorPhysical(ctx context.Context) error {
 			for _, b := range data {
 				if b == '\n' || b == '\r' {
 					if len(lineBuffer) > 0 {
-						e.addLogEntry(string(lineBuffer))
-						entryCount++
+						line := string(lineBuffer)
 						lineBuffer = nil
+						if !e.ingestFramebufferLine(line) {
+							e.addLogEntry(line)
+							entryCount++
+						}
+						// The framebuffer dump is a known end-of-output
+						// signature: stop listening instead of waiting out
+						// the full duration.
+						if e.framebufferComplete() {
+							log.Debug().Int("entries", entryCount).Msg("Framebuffer captured, stopping serial monitoring early")
+							cancel()
+						}
 					}
 				} else if b >= 32 && b <= 126 { // Printable ASCII
 					lineBuffer = append(lineBuffer, b)
@@ -345,6 +398,30 @@ func (e *Executor) monitorPhysical(ctx context.Context) error {
 			}
 		}
 	}
+}
+
+// ingestFramebufferLine feeds a completed line to the framebuffer watcher and
+// reports whether the line was consumed by it. Consumed lines are part of the
+// esp_lcd_screenshot dump and are never stored in the log — the bulky base64
+// payload is reassembled into a PNG instead.
+func (e *Executor) ingestFramebufferLine(line string) bool {
+	e.mu.Lock()
+	collector := e.fbCollector
+	e.mu.Unlock()
+	if collector == nil {
+		return false
+	}
+
+	consumed, _ := collector.Feed(line)
+	return consumed
+}
+
+// framebufferComplete reports whether the framebuffer watcher finished a
+// capture (or gave up with an error) and there is nothing more to wait for.
+func (e *Executor) framebufferComplete() bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.fbCollector != nil && (e.fbCollector.Complete() || e.fbCollector.Err() != nil)
 }
 
 // addLogEntry adds a log entry with level detection

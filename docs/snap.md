@@ -44,6 +44,7 @@ espbrew snap [flags]
 | `--no-monitor` | bool | false | Skip serial monitor after flash |
 | `--save-dir` | string | (empty) | Directory to save snap results (default: ./snap/TIMESTAMP/) |
 | `--zip` | string | (empty) | Create a zip archive of the snap output directory at the given path (portable alternative to shell `zip`) |
+| `--no-framebuffer` | bool | false | Disable framebuffer extraction from the serial log (enabled by default, see [Framebuffer extraction](#framebuffer-extraction)) |
 | `--leader` | string | (empty) | Leader address for cluster mode (deprecated: use --cluster) |
 | `--job-id` | string | (empty) | Job ID for resuming operations |
 
@@ -75,6 +76,74 @@ espbrew snap --cluster http://leader:8080 \
 - The returned `image_size` and dimensions in the metadata reflect the cropped
   image (e.g. 3.3 KB / 157×114 instead of 20 KB / 640×480).
 - If no mapping exists for the device, `snap` returns the full frame unchanged.
+
+## Framebuffer extraction
+
+Besides the camera, `snap` watches the serial log for a framebuffer dump in the
+[`esp_lcd_screenshot`](https://components.espressif.com/components/espressif/esp_lcd_screenshot)
+text protocol:
+
+```text
+FRAMEBUFFER_BEGIN <width> <height> <fourcc>
+FB_BASE64 <base64 payload chunk>
+...
+FRAMEBUFFER_END
+```
+
+Firmware emits this block with the Rust
+[embedded-screenshot](https://crates.io/crates/embedded-screenshot) crate (or
+the Espressif component). When the block is detected:
+
+- The base64 payload is reassembled into a **PNG** (`RGBL` — RGB565
+  little-endian — is converted to RGB888; 2 bytes per pixel) and saved as
+  `framebuffer-{snap_id}.png` in the snap output directory.
+- The protocol lines are **never stored in the log** — the bulky base64
+  payload does not pollute `snap-{snap_id}.log`.
+- Serial monitoring **stops early** once `FRAMEBUFFER_END` arrives, instead of
+  waiting out the full `--duration`. A complete frame over USB serial JTAG
+  takes a few seconds; over a 115200 baud UART budget ~20s for a 320×240
+  RGB565 frame (`--duration 30` is a safe choice there).
+- If the payload is interrupted or its size does not match the declared
+  dimensions, the extraction is skipped with a warning and the remaining log
+  is captured normally.
+
+Extraction is **enabled by default** and costs nothing when the firmware never
+emits the block. Disable it with `--no-framebuffer`.
+
+```bash
+# Flash a firmware with embedded-screenshot support and pull the framebuffer
+espbrew snap --cluster http://leader:8080 \
+             --filter-alias esp32-s3-box-3 \
+             --duration 30
+
+# Saved framebuffer: snap/.../framebuffer-<snap_id>.png (320x240 RGBL)
+```
+
+The framebuffer is independent of the camera capture: a snap can return a
+camera JPEG, a framebuffer PNG, both, or neither. `status: partial` with a
+saved framebuffer typically means only the camera failed (e.g. none attached).
+
+### Emitting the dump from firmware (Rust)
+
+The [embedded-screenshot](https://crates.io/crates/embedded-screenshot) crate
+dumps an embedded-graphics framebuffer over any `embedded_io::Write` sink —
+with the `esp-println` feature it writes straight to the console:
+
+```rust
+// Cargo.toml:
+// embedded-screenshot = { version = "0.1.0", features = ["embedded-graphics", "esp-println"] }
+let pixel_bytes: alloc::vec::Vec<u8> =
+    embedded_screenshot::rgb565_le_bytes(frame_buf.data.as_ref()).collect();
+embedded_screenshot::write_framebuffer(
+    &mut embedded_screenshot::ConsolePrinter,
+    320, 240,
+    embedded_screenshot::RGBL,
+    &pixel_bytes,
+).ok();
+```
+
+See the [esp32-conways-game-of-life-rs](https://github.com/georgik/esp32-conways-game-of-life-rs)
+ESP32-S3-BOX-3 example for a complete integration.
 
 ## Usage Examples
 
@@ -237,8 +306,19 @@ JSON structure:
   "image_captured": true,
   "image_format": "jpeg",
   "image_size": 45678,
+  "framebuffer_width": 320,
+  "framebuffer_height": 240,
+  "framebuffer_fourcc": "RGBL",
+  "framebuffer_png_size": 4073,
   "logs": "Boot complete. Ready.",
-  "image": "base64_encoded_jpeg_data..."
+  "image": "base64_encoded_jpeg_data...",
+  "framebuffer": {
+    "width": 320,
+    "height": 240,
+    "fourcc": "RGBL",
+    "png_size": 4073,
+    "framebuffer_base64": "base64_encoded_png_data..."
+  }
 }
 ```
 
@@ -260,9 +340,10 @@ espbrew snap
 ```
 
 Creates `./snap/YYYY-MM-DD_HH-MM-SS/` with:
-- `snap-{id}.jpg` - Captured image
+- `snap-{id}.jpg` - Captured camera image (when a camera is available)
+- `framebuffer-{id}.png` - Framebuffer extracted from the serial log (when the firmware emits an `esp_lcd_screenshot` dump)
 - `snap-{id}.json` - Result metadata
-- `snap-{id}.log` - Serial monitor logs
+- `snap-{id}.log` - Serial monitor logs (framebuffer protocol lines excluded)
 
 Example output:
 ```
@@ -560,7 +641,8 @@ When using cluster mode, the snap command communicates with the cluster leader v
   "camera_id": "",
   "skip_flash": true,
   "skip_capture": false,
-  "skip_monitor": false
+  "skip_monitor": false,
+  "framebuffer": true
 }
 ```
 
@@ -578,10 +660,21 @@ When using cluster mode, the snap command communicates with the cluster leader v
     "flashed": true,
     "log_entry_count": 42,
     "image_captured": true,
-    "image_size": 45678
+    "image_size": 45678,
+    "framebuffer_width": 320,
+    "framebuffer_height": 240,
+    "framebuffer_fourcc": "RGBL",
+    "framebuffer_png_size": 4073
   },
   "logs": "Boot complete. Ready.",
-  "image": "base64_encoded_jpeg_data..."
+  "image": "base64_encoded_jpeg_data...",
+  "framebuffer": {
+    "width": 320,
+    "height": 240,
+    "fourcc": "RGBL",
+    "png_size": 4073,
+    "framebuffer_base64": "base64_encoded_png_data..."
+  }
 }
 ```
 
@@ -658,3 +751,4 @@ When using cluster mode, the snap command communicates with the cluster leader v
 - [Cluster Usage](cluster.md) - Multi-node setup
 - [HTTP API Reference](api.md) - REST and WebSocket endpoints
 - [Image Mapping](image-mapping.md) - Device mapping and screenshot extraction
+- [embedded-screenshot](https://crates.io/crates/embedded-screenshot) - Rust crate that emits the framebuffer protocol

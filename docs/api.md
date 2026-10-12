@@ -1556,7 +1556,8 @@ Request body:
   "camera_id": "",
   "skip_flash": true,
   "skip_capture": false,
-  "skip_monitor": false
+  "skip_monitor": false,
+  "framebuffer": true
 }
 ```
 
@@ -1566,6 +1567,7 @@ Parameters:
 - `skip_flash` (boolean, optional): Skip flashing (should be true for snap-only). Default: true
 - `skip_capture` (boolean, optional): Skip camera capture. Default: false
 - `skip_monitor` (boolean, optional): Skip serial monitoring. Default: false
+- `framebuffer` (boolean, optional): Watch the serial log for an `esp_lcd_screenshot` framebuffer dump and extract it as a PNG. The dump lines are excluded from the logs and monitoring stops once the dump completes. Default: false (the CLI enables it by default)
 
 Note: The snap endpoint only performs monitor+capture operations. Use the flash hash check endpoint before snap to determine if flashing is needed.
 
@@ -1595,12 +1597,25 @@ Response:
     "camera_id": "esp32-cam",
     "image_captured": true,
     "image_format": "jpeg",
-    "image_size": 45678
+    "image_size": 45678,
+    "framebuffer_width": 320,
+    "framebuffer_height": 240,
+    "framebuffer_fourcc": "RGBL",
+    "framebuffer_png_size": 4073
   },
   "logs": "Boot complete. Ready.",
-  "image": "base64_encoded_jpeg_data..."
+  "image": "base64_encoded_jpeg_data...",
+  "framebuffer": {
+    "width": 320,
+    "height": 240,
+    "fourcc": "RGBL",
+    "png_size": 4073,
+    "framebuffer_base64": "base64_encoded_png_data..."
+  }
 }
 ```
+
+The `framebuffer` object is present only when the firmware emitted an `esp_lcd_screenshot` dump and `framebuffer` was enabled in the request. `framebuffer_base64` carries a PNG-encoded image (RGBL/RGB565 payloads are converted to RGB888).
 
 Status values:
 - `success`: All operations completed successfully

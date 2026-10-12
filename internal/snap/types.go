@@ -58,6 +58,12 @@ type SnapMetadata struct {
 	ImageFormat    string `json:"image_format,omitempty"` // Format of captured image (e.g., "png", "jpeg")
 	ImageSize      int    `json:"image_size"`             // Size of captured image in bytes
 
+	// Framebuffer Information (extracted from the serial log, esp_lcd_screenshot protocol)
+	FramebufferWidth  int    `json:"framebuffer_width,omitempty"`  // Framebuffer width in pixels (0 if none captured)
+	FramebufferHeight int    `json:"framebuffer_height,omitempty"` // Framebuffer height in pixels
+	FramebufferFourcc string `json:"framebuffer_fourcc,omitempty"` // Pixel format (e.g. RGBL)
+	FramebufferPNG    int    `json:"framebuffer_png_size"`         // Size of the encoded PNG in bytes
+
 	// Status Information
 	Status SnapStatus `json:"status"`          // Overall snapshot status
 	Error  string     `json:"error,omitempty"` // Error message if failed
@@ -73,10 +79,11 @@ type SerialLogEntry struct {
 
 // SnapResult contains the complete snapshot data.
 type SnapResult struct {
-	Metadata    SnapMetadata     `json:"metadata"`               // Snapshot metadata
-	Logs        []SerialLogEntry `json:"logs"`                   // Captured serial log entries
-	ImageData   []byte           `json:"-"`                      // Raw image data (not JSON serialized)
-	ImageBase64 string           `json:"image_base64,omitempty"` // Base64-encoded image data
+	Metadata    SnapMetadata      `json:"metadata"`               // Snapshot metadata
+	Logs        []SerialLogEntry  `json:"logs"`                   // Captured serial log entries
+	ImageData   []byte            `json:"-"`                      // Raw image data (not JSON serialized)
+	ImageBase64 string            `json:"image_base64,omitempty"` // Base64-encoded image data
+	Framebuffer *FramebufferImage `json:"framebuffer,omitempty"`  // Framebuffer extracted from the serial log
 }
 
 // ToMap converts SnapResult to a map for JSON serialization.
@@ -92,6 +99,11 @@ func (r *SnapResult) ToMap(includeLogs bool) map[string]interface{} {
 
 	if r.ImageBase64 != "" {
 		m["image_base64"] = r.ImageBase64
+	}
+
+	if r.Framebuffer != nil {
+		r.Framebuffer.RecomputeBase64()
+		m["framebuffer"] = r.Framebuffer.ToMap()
 	}
 
 	return m

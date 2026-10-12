@@ -43,6 +43,7 @@ var snapOpts struct {
 	leader        string
 	jobID         string
 	displayPreset bool
+	noFramebuffer bool
 	// Device filtering (shared with flash/monitor via device_filter.go so all
 	// device-facing commands select identically by alias/chip/board/tags).
 	filterBoardModel string   // Filter by board model (e.g. "ESP32-S3-BOX")
@@ -69,6 +70,7 @@ func init() {
 	snapCmd.Flags().StringVar(&snapOpts.leader, "leader", os.Getenv("ESPBREW_LEADER"), "Leader address for cluster mode")
 	snapCmd.Flags().StringVar(&snapOpts.jobID, "job-id", "", "Job ID for resuming operations")
 	snapCmd.Flags().BoolVar(&snapOpts.displayPreset, "display-preset", false, "Apply display photography preset (Linux only)")
+	snapCmd.Flags().BoolVar(&snapOpts.noFramebuffer, "no-framebuffer", false, "Disable watching the serial log for an esp_lcd_screenshot framebuffer dump (enabled by default: the dump is extracted into a PNG and monitoring stops once it completes)")
 	// Device filtering (select the board by alias/chip/board/tags when
 	// auto-detecting; shared with flash/monitor).
 	snapCmd.Flags().StringVar(&snapOpts.filterBoardModel, "filter-board", "", "Filter devices by board model (e.g. ESP32-S3-BOX)")
@@ -127,6 +129,7 @@ func runLocalSnap() error {
 	executor.SetNoCapture(snapOpts.noCapture)
 	executor.SetNoMonitor(snapOpts.noMonitor)
 	executor.SetDisplayPreset(snapOpts.displayPreset)
+	executor.SetFramebuffer(!snapOpts.noFramebuffer)
 
 	// Run the snapshot workflow
 	result, err := executor.Run(context.Background())
@@ -150,6 +153,16 @@ func runLocalSnap() error {
 	if snapDir != "" && len(result.Logs) > 0 {
 		if err := saveSnapLogs(result.Metadata.SnapID, result.Logs, snapDir); err != nil {
 			log.Warn().Err(err).Msg("Failed to save logs")
+		}
+	}
+
+	// Save the framebuffer extracted from the serial log, if any.
+	if snapDir != "" && result.Framebuffer != nil && len(result.Framebuffer.PNGData) > 0 {
+		fbPath := filepath.Join(snapDir, fmt.Sprintf("framebuffer-%s.png", result.Metadata.SnapID))
+		if err := os.WriteFile(fbPath, result.Framebuffer.PNGData, 0644); err != nil {
+			log.Warn().Err(err).Msg("Failed to save framebuffer")
+		} else {
+			fmt.Printf("Saved framebuffer: %s (%dx%d %s)\n", fbPath, result.Framebuffer.Width, result.Framebuffer.Height, result.Framebuffer.Fourcc)
 		}
 	}
 
@@ -419,10 +432,11 @@ func runClusterSnap() error {
 
 	// Step 3: Snap (monitor+capture only) - uses resolvedDeviceID from earlier
 	snapReq := cluster.SnapRequest{
-		DeviceID:  resolvedDeviceID,
-		Duration:  snapOpts.duration,
-		CameraID:  snapOpts.camera,
-		SkipFlash: true, // Snap only does monitor+capture, flash is done separately
+		DeviceID:    resolvedDeviceID,
+		Duration:    snapOpts.duration,
+		CameraID:    snapOpts.camera,
+		SkipFlash:   true, // Snap only does monitor+capture, flash is done separately
+		Framebuffer: !snapOpts.noFramebuffer,
 	}
 
 	log.Info().
@@ -459,6 +473,21 @@ func runClusterSnap() error {
 			log.Warn().Err(err).Msg("Failed to save image")
 		} else {
 			fmt.Printf("Saved image:    %s\n", imagePath)
+		}
+	}
+
+	// Save the framebuffer extracted from the serial log, if any.
+	if snapDir != "" && len(snapResp.FramebufferData) > 0 {
+		fbPath := filepath.Join(snapDir, fmt.Sprintf("framebuffer-%s.png", snapResp.SnapID))
+		if err := os.WriteFile(fbPath, snapResp.FramebufferData, 0644); err != nil {
+			log.Warn().Err(err).Msg("Failed to save framebuffer")
+		} else {
+			meta := snapResp.Metadata
+			if meta != nil && meta.FramebufferWidth > 0 {
+				fmt.Printf("Saved framebuffer: %s (%dx%d %s)\n", fbPath, meta.FramebufferWidth, meta.FramebufferHeight, meta.FramebufferFourcc)
+			} else {
+				fmt.Printf("Saved framebuffer: %s\n", fbPath)
+			}
 		}
 	}
 

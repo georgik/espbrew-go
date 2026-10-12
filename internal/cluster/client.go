@@ -810,22 +810,24 @@ func (p *ProgressClient) Close() error {
 
 // SnapRequest represents a request to execute a device snapshot via cluster API.
 type SnapRequest struct {
-	DeviceID   string `json:"device_id"`   // Device identifier (device_id, MAC, or path)
-	Duration   int    `json:"duration"`    // Monitor duration in seconds
-	CameraID   string `json:"camera_id"`   // Camera device identifier (optional)
-	Firmware   string `json:"firmware"`    // Firmware path on server (or file_id reference)
-	ForceFlash bool   `json:"force_flash"` // Force flash even if hash matches
-	SkipFlash  bool   `json:"skip_flash"`  // Skip flashing entirely
+	DeviceID    string `json:"device_id"`   // Device identifier (device_id, MAC, or path)
+	Duration    int    `json:"duration"`    // Monitor duration in seconds
+	CameraID    string `json:"camera_id"`   // Camera device identifier (optional)
+	Firmware    string `json:"firmware"`    // Firmware path on server (or file_id reference)
+	ForceFlash  bool   `json:"force_flash"` // Force flash even if hash matches
+	SkipFlash   bool   `json:"skip_flash"`  // Skip flashing entirely
+	Framebuffer bool   `json:"framebuffer"` // Watch the log for the esp_lcd_screenshot dump
 }
 
 // SnapResponse represents the response from a cluster snap operation.
 type SnapResponse struct {
-	SnapID    string           `json:"snap_id"`  // Unique snapshot identifier
-	Status    string           `json:"status"`   // Operation status (success, partial, failed)
-	Error     string           `json:"error"`    // Error message if failed
-	ImageData []byte           `json:"-"`        // Raw image data (not in JSON)
-	Metadata  *SnapMetadata    `json:"metadata"` // Snapshot metadata
-	Logs      []SerialLogEntry `json:"-"`        // Serial log entries (not in JSON)
+	SnapID          string           `json:"snap_id"`  // Unique snapshot identifier
+	Status          string           `json:"status"`   // Operation status (success, partial, failed)
+	Error           string           `json:"error"`    // Error message if failed
+	ImageData       []byte           `json:"-"`        // Raw image data (not in JSON)
+	FramebufferData []byte           `json:"-"`        // Extracted framebuffer PNG (not in JSON)
+	Metadata        *SnapMetadata    `json:"metadata"` // Snapshot metadata
+	Logs            []SerialLogEntry `json:"-"`        // Serial log entries (not in JSON)
 }
 
 // SerialLogEntry represents a single line from the serial monitor.
@@ -847,6 +849,11 @@ type SnapMetadata struct {
 	CaptureEnabled bool      `json:"capture_enabled"` // Whether camera capture was enabled
 	LogEntryCount  int       `json:"log_entry_count"` // Number of log lines captured
 	ImageSize      int       `json:"image_size"`      // Size of captured image in bytes
+
+	FramebufferWidth  int    `json:"framebuffer_width,omitempty"`  // Framebuffer width in pixels (0 if none captured)
+	FramebufferHeight int    `json:"framebuffer_height,omitempty"` // Framebuffer height in pixels
+	FramebufferFourcc string `json:"framebuffer_fourcc,omitempty"` // Pixel format (e.g. RGBL)
+	FramebufferPNG    int    `json:"framebuffer_png_size"`         // Size of the encoded PNG in bytes
 }
 
 // ExecuteSnap submits a snap request to the cluster and returns the response.
@@ -921,6 +928,7 @@ func (c *Client) ExecuteSnap(req SnapRequest) (*SnapResponse, error) {
 			if snapResp.Result != nil {
 				response.Metadata = extractSnapMetadata(snapResp.Result)
 				response.ImageData = extractSnapImageData(snapResp.Result)
+				response.FramebufferData = extractSnapFramebufferData(snapResp.Result)
 				response.Logs = extractSnapLogs(snapResp.Result)
 			}
 
@@ -989,6 +997,20 @@ func extractSnapMetadata(result map[string]interface{}) *SnapMetadata {
 		if is, ok := m["image_size"].(float64); ok {
 			metadata.ImageSize = int(is)
 		}
+
+		// Extract framebuffer info
+		if fw, ok := m["framebuffer_width"].(float64); ok {
+			metadata.FramebufferWidth = int(fw)
+		}
+		if fh, ok := m["framebuffer_height"].(float64); ok {
+			metadata.FramebufferHeight = int(fh)
+		}
+		if ff, ok := m["framebuffer_fourcc"].(string); ok {
+			metadata.FramebufferFourcc = ff
+		}
+		if fs, ok := m["framebuffer_png_size"].(float64); ok {
+			metadata.FramebufferPNG = int(fs)
+		}
 	}
 
 	return metadata
@@ -1006,6 +1028,25 @@ func extractSnapImageData(result map[string]interface{}) []byte {
 		return data
 	}
 	return nil
+}
+
+// extractSnapFramebufferData extracts and decodes the framebuffer PNG from the
+// result map (produced from the esp_lcd_screenshot serial dump).
+func extractSnapFramebufferData(result map[string]interface{}) []byte {
+	fb, ok := result["framebuffer"].(map[string]interface{})
+	if !ok {
+		return nil
+	}
+	fbB64, ok := fb["framebuffer_base64"].(string)
+	if !ok || fbB64 == "" {
+		return nil
+	}
+	data, err := base64.StdEncoding.DecodeString(fbB64)
+	if err != nil {
+		log.Debug().Err(err).Msg("Failed to decode base64 framebuffer data")
+		return nil
+	}
+	return data
 }
 
 // extractSnapLogs extracts serial log entries from result map.

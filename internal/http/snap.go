@@ -68,6 +68,7 @@ type SnapRequest struct {
 	SkipFlash   bool   `json:"skip_flash"`   // Skip flashing entirely
 	SkipCapture bool   `json:"skip_capture"` // Skip camera capture
 	SkipMonitor bool   `json:"skip_monitor"` // Skip serial monitoring
+	Framebuffer bool   `json:"framebuffer"`  // Watch the log for the esp_lcd_screenshot dump
 }
 
 // SnapResponse represents the response from a snap operation.
@@ -593,6 +594,9 @@ func (h *SnapAPI) executeSnap(ctx context.Context, devicePath string, req *SnapR
 	}
 	if req.SkipMonitor {
 		executor.SetNoMonitor(true)
+	}
+	if req.Framebuffer {
+		executor.SetFramebuffer(true)
 	}
 
 	// Execute snap
