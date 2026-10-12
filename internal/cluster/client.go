@@ -810,13 +810,15 @@ func (p *ProgressClient) Close() error {
 
 // SnapRequest represents a request to execute a device snapshot via cluster API.
 type SnapRequest struct {
-	DeviceID    string `json:"device_id"`   // Device identifier (device_id, MAC, or path)
-	Duration    int    `json:"duration"`    // Monitor duration in seconds
-	CameraID    string `json:"camera_id"`   // Camera device identifier (optional)
-	Firmware    string `json:"firmware"`    // Firmware path on server (or file_id reference)
-	ForceFlash  bool   `json:"force_flash"` // Force flash even if hash matches
-	SkipFlash   bool   `json:"skip_flash"`  // Skip flashing entirely
-	Framebuffer bool   `json:"framebuffer"` // Watch the log for the esp_lcd_screenshot dump
+	DeviceID    string `json:"device_id"`    // Device identifier (device_id, MAC, or path)
+	Duration    int    `json:"duration"`     // Monitor duration in seconds
+	CameraID    string `json:"camera_id"`    // Camera device identifier (optional)
+	Firmware    string `json:"firmware"`     // Firmware path on server (or file_id reference)
+	ForceFlash  bool   `json:"force_flash"`  // Force flash even if hash matches
+	SkipFlash   bool   `json:"skip_flash"`   // Skip flashing entirely
+	Framebuffer bool   `json:"framebuffer"`  // Watch the log for the esp_lcd_screenshot dump
+	SkipCapture bool   `json:"skip_capture"` // Skip camera capture (framebuffer/log only)
+	SkipMonitor bool   `json:"skip_monitor"` // Skip serial monitoring
 }
 
 // SnapResponse represents the response from a cluster snap operation.

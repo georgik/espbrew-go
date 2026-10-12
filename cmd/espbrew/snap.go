@@ -63,7 +63,7 @@ func init() {
 	snapCmd.Flags().StringVarP(&snapOpts.output, "output", "o", "", "Output file path for captured image")
 	snapCmd.Flags().BoolVar(&snapOpts.forceFlash, "force-flash", false, "Force flash even if firmware hash matches")
 	snapCmd.Flags().BoolVar(&snapOpts.skipFlash, "skip-flash", false, "Skip flashing step")
-	snapCmd.Flags().BoolVar(&snapOpts.noCapture, "no-capture", false, "Skip image capture (flash only)")
+	snapCmd.Flags().BoolVar(&snapOpts.noCapture, "no-capture", false, "Skip the camera capture; serial monitoring and framebuffer extraction still run")
 	snapCmd.Flags().BoolVar(&snapOpts.noMonitor, "no-monitor", false, "Skip serial monitor after flash")
 	snapCmd.Flags().StringVar(&snapOpts.saveDir, "save-dir", "", "Directory to save snap results (default: ./snap/TIMESTAMP)")
 	snapCmd.Flags().StringVar(&snapOpts.zip, "zip", "", "Create a zip archive of the snap output directory at the given path (portable alternative to shell 'zip')")
@@ -226,12 +226,6 @@ func runLocalSnap() error {
 	// Return appropriate exit code based on result status
 	if result.Metadata.Status == snap.SnapStatusFailed {
 		return fmt.Errorf("snapshot failed: %s", result.Metadata.Error)
-	}
-
-	// Return early if no-capture flag is set (after executor runs)
-	if snapOpts.noCapture {
-		log.Info().Msg("Skipping capture (--no-capture)")
-		return nil
 	}
 
 	return nil
@@ -424,19 +418,18 @@ func runClusterSnap() error {
 		log.Info().Msg("All images flashed successfully")
 	}
 
-	// Skip capture if requested
-	if snapOpts.noCapture {
-		log.Info().Msg("Skipping capture (--no-capture)")
-		return nil
-	}
-
-	// Step 3: Snap (monitor+capture only) - uses resolvedDeviceID from earlier
+	// Step 3: Snap (monitor+capture only) - uses resolvedDeviceID from earlier.
+	// --no-capture tells the SERVER to skip the camera while serial monitoring
+	// (and framebuffer extraction) still runs — mirroring local-mode semantics
+	// where --no-capture only disables the camera.
 	snapReq := cluster.SnapRequest{
 		DeviceID:    resolvedDeviceID,
 		Duration:    snapOpts.duration,
 		CameraID:    snapOpts.camera,
 		SkipFlash:   true, // Snap only does monitor+capture, flash is done separately
 		Framebuffer: !snapOpts.noFramebuffer,
+		SkipCapture: snapOpts.noCapture,
+		SkipMonitor: snapOpts.noMonitor,
 	}
 
 	log.Info().

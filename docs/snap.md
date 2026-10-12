@@ -40,7 +40,7 @@ espbrew snap [flags]
 | `-o, --output` | string | (empty) | Output file path for captured image |
 | `--force-flash` | bool | false | Force flash even if firmware hash matches |
 | `--skip-flash` | bool | false | Skip flashing step entirely |
-| `--no-capture` | bool | false | Skip image capture (flash + monitor only) |
+| `--no-capture` | bool | false | Skip the camera capture; serial monitoring and framebuffer extraction still run |
 | `--no-monitor` | bool | false | Skip serial monitor after flash |
 | `--save-dir` | string | (empty) | Directory to save snap results (default: ./snap/TIMESTAMP/) |
 | `--zip` | string | (empty) | Create a zip archive of the snap output directory at the given path (portable alternative to shell `zip`) |
