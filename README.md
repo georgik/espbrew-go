@@ -198,6 +198,13 @@ editor (or with `espbrew mapping set`) — it reports the normalized `x, y, widt
 height`. Full details and the REST API are in [docs/camera-support.md](docs/camera-support.md)
 and [docs/image-mapping.md](docs/image-mapping.md).
 
+It's possible to specify leader by environment variable:
+
+```bash
+export ESPBREW_CLUSTER="http://leader:8080"
+espbrew snap --filter-alias esp32-s3-box-3
+```
+
 ### Cameras on a k3s node
 
 To capture a camera from a pod, the node must advertise the camera resource and

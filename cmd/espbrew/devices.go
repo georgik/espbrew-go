@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/georgik/espbrew-go/internal/cluster"
 	"github.com/georgik/espbrew-go/internal/device"
@@ -131,6 +132,11 @@ func runDevicesRemote() error {
 	for i, d := range devices {
 		fmt.Printf("[%d] %s\n", i, d.Path)
 		fmt.Printf("    Device ID: %s\n", d.DeviceID)
+		alias := strings.Join(d.Aliases, ", ")
+		if alias == "" {
+			alias = d.DeviceID
+		}
+		fmt.Printf("    Alias: %s\n", alias)
 		if d.VID != "" {
 			fmt.Printf("    VID: %s, PID: %s\n", d.VID, d.PID)
 		}
