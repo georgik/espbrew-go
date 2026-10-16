@@ -438,16 +438,22 @@ func (f *Flasher) connect() error {
 				}
 			}
 		case ResetUSBJTAG:
+			// A native USB-JTAG/Serial board enters bootloader mode via the
+			// USB-JTAG/Serial peripheral. When that path succeeds we're done
+			// connecting; otherwise fall through to the standard reset + sync
+			// sequence on the next attempt.
 			if f.connectViaUSBJTAG() {
-				goto synced
+				return f.finishConnect()
 			}
 			continue
 		case ResetAuto:
 			// For USB CDC ports (ESP32-S3/C3/C5/C6/H2 USB-JTAG/Serial),
 			// use USB-JTAG reset immediately. Classic DTR/RTS reset doesn't work.
 			if isUSBPort(f.portStr) {
+				// Native USB-JTAG/Serial board: take the USB-JTAG path.
+				// When it succeeds we're done connecting.
 				if f.connectViaUSBJTAG() {
-					goto synced
+					return f.finishConnect()
 				}
 				continue
 			}
@@ -456,8 +462,11 @@ func (f *Flasher) connect() error {
 			case 0:
 				classicReset(f.port, defaultResetDelay)
 			case 1:
+				// Second attempt: try the USB-JTAG/Serial reset path. When it
+				// succeeds we're done connecting; otherwise fall through to the
+				// standard sync on the next attempt.
 				if f.connectViaUSBJTAG() {
-					goto synced
+					return f.finishConnect()
 				}
 				continue
 			case 2:
@@ -466,78 +475,22 @@ func (f *Flasher) connect() error {
 		}
 		// ResetNoReset: skip reset entirely
 
-		// Try to sync with the bootloader
-		syncDelay := 100 * time.Millisecond
-		if f.opts.FastMode {
-			syncDelay = 50 * time.Millisecond // Faster: bootloader ready sooner
+		// Try to sync with the bootloader. syncToBootloader runs the
+		// sync loop and, on failure, reopens the port before returning
+		// so the caller can try another reset attempt.
+		connected, err := f.syncToBootloader()
+		if err != nil {
+			return err
 		}
-		// Check context before sleeping
-		if f.ctx != nil {
-			select {
-			case <-f.ctx.Done():
-				return fmt.Errorf("connection cancelled: %w", f.ctx.Err())
-			default:
-			}
+		if connected {
+			return f.finishConnect()
 		}
-		time.Sleep(syncDelay) // Give bootloader time to start
-		f.conn.flushInput()
-
-		f.logf("Syncing with bootloader...")
-		syncAttempts := 5
-		if f.opts.FastMode {
-			syncAttempts = 3 // Fast mode: fewer sync attempts
-		}
-
-		for range syncAttempts {
-			// Check for context cancellation
-			select {
-			case <-f.ctx.Done():
-				return fmt.Errorf("connection cancelled: %w", f.ctx.Err())
-			default:
-			}
-
-			_, syncErr := f.conn.sync()
-			if syncErr == nil {
-				goto synced
-			}
-			f.logf("Sync attempt failed: %v", syncErr)
-			// Check context before sleep between sync attempts
-			if f.ctx != nil {
-				select {
-				case <-f.ctx.Done():
-					return fmt.Errorf("connection cancelled: %w", f.ctx.Err())
-				default:
-				}
-			}
-			time.Sleep(50 * time.Millisecond)
-		}
-
-		// Sync failed — try reopening port (USB CDC may have re-enumerated
-		// after reset, causing the old port handle to be stale).
-		// In fast mode, skip reopen to save time - just try next attempt
-		if f.opts.FastMode {
-			f.logf("Fast mode: skipping port reopen, trying next reset attempt")
-			continue
-		}
-
-		if err := f.reopenPort(); err != nil {
-			f.logf("Port reopen failed: %v", err)
-			continue // port reopen failed, try next attempt
-		}
-
-		f.logf("Port reopened, trying next reset attempt")
-
-		// Port reopened successfully — the device likely just finished
-		// USB re-enumeration after the reset above and the bootloader
-		// is already waiting for commands. Try to sync now before
-		// looping back and issuing another reset (which would disconnect
-		// USB all over again).
-		// Continue to next iteration which will reset device into bootloader
 	}
 
 	return &SyncError{Attempts: attempts}
+}
 
-synced:
+func (f *Flasher) finishConnect() error {
 	f.logf("Connected.")
 
 	// Detect chip type
@@ -584,6 +537,80 @@ synced:
 	}
 
 	return nil
+}
+
+// syncToBootloader attempts to establish a SLIP connection with the
+// chip's ROM bootloader after the reset sequence in connect(). It
+// returns true when the bootloader responds to the sync command. On
+// failure it reopens the serial port (the device may have
+// re-enumerated after the reset) and returns false so the caller can
+// try another reset attempt. A non-nil error is returned only when
+// the caller's context is cancelled.
+func (f *Flasher) syncToBootloader() (bool, error) {
+	// Give the bootloader time to start after the reset.
+	syncDelay := 100 * time.Millisecond
+	if f.opts.FastMode {
+		syncDelay = 50 * time.Millisecond // Faster: bootloader ready sooner
+	}
+	if f.ctx != nil {
+		select {
+		case <-f.ctx.Done():
+			return false, fmt.Errorf("connection cancelled: %w", f.ctx.Err())
+		default:
+		}
+	}
+	time.Sleep(syncDelay) // Give bootloader time to start
+	f.conn.flushInput()
+
+	f.logf("Syncing with bootloader...")
+	syncAttempts := 5
+	if f.opts.FastMode {
+		syncAttempts = 3 // Fast mode: fewer sync attempts
+	}
+
+	for range syncAttempts {
+		// Check for context cancellation
+		select {
+		case <-f.ctx.Done():
+			return false, fmt.Errorf("connection cancelled: %w", f.ctx.Err())
+		default:
+		}
+
+		_, syncErr := f.conn.sync()
+		if syncErr == nil {
+			return true, nil
+		}
+		f.logf("Sync attempt failed: %v", syncErr)
+		// Check context before sleep between sync attempts
+		if f.ctx != nil {
+			select {
+			case <-f.ctx.Done():
+				return false, fmt.Errorf("connection cancelled: %w", f.ctx.Err())
+			default:
+			}
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	// Sync failed — try reopening port (USB CDC may have re-enumerated
+	// after reset, causing the old port handle to be stale).
+	// In fast mode, skip reopen to save time - just try next attempt
+	if f.opts.FastMode {
+		f.logf("Fast mode: skipping port reopen, trying next reset attempt")
+		return false, nil
+	}
+
+	if err := f.reopenPort(); err != nil {
+		f.logf("Port reopen failed: %v", err)
+		return false, nil // port reopen failed, try next attempt
+	}
+
+	f.logf("Port reopened, trying next reset attempt")
+
+	// Port reopened successfully — the device likely just finished
+	// USB re-enumeration after the reset above. Return false so the
+	// caller loops back and issues another reset attempt.
+	return false, nil
 }
 
 // detectChip identifies the connected ESP chip.

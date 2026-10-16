@@ -51,6 +51,14 @@ var defESP32S3 = &chipDef{
 	ROMHasCompressedFlash:  true,
 	ROMHasChangeBaud:       true,
 
+	// UART-bridge S3 boards (CH340/CH9102/CP210x) have a small RX FIFO that
+	// overflows at high flash bauds, causing the ROM to stop answering SLIP
+	// and the flash download to time out. Native USB-JTAG/Serial and USB-OTG
+	// have flow control and are unaffected (the cap only applies when
+	// !usesUSB). 115200 is the highest reliably supported baud for these
+	// bridges on this board.
+	MaxUARTFlashBaud: 115200,
+
 	FlashFrequency: map[string]byte{
 		"80m": 0xF,
 		"40m": 0x0,
