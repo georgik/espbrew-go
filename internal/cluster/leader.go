@@ -86,6 +86,20 @@ func (c *LeaderConfig) DeviceByPath(path string) *config.DeviceConfig {
 	return nil
 }
 
+// DeviceConfigsByPath returns every device config registered for a given port,
+// in file order. A single physical port can be exposed under several aliases
+// (see config.ClusterConfig.DeviceConfigsByPath); each entry's alias is stamped
+// onto the device record so the board is addressable by any of them.
+func (c *LeaderConfig) DeviceConfigsByPath(path string) []config.DeviceConfig {
+	var out []config.DeviceConfig
+	for i := range c.Devices {
+		if c.Devices[i].Path == path {
+			out = append(out, c.Devices[i])
+		}
+	}
+	return out
+}
+
 func NewLeaderNode(id string, cfg *LeaderConfig, store *persistence.Store) *LeaderNode {
 	initialMode := protocol.ModeDiscovery
 	if cfg.InitialMode == "operational" {
@@ -741,10 +755,18 @@ func (l *LeaderNode) handleDeviceEvent(event device.DeviceEvent) {
 				dev.ChipType = cfg.ChipType
 				record.ChipType = cfg.ChipType
 			}
-			if cfg.Alias != "" {
-				// The API reads aliases from persistence, so stamp them onto the
-				// record. protocol.DeviceInfo carries no Aliases field.
-				record.Aliases = prependAlias(cfg.Alias, record.Aliases)
+			// A single physical port can be registered under several aliases in
+			// espbrew.toml (e.g. "waveshare-...-1.28" and its "_" form). Stamp
+			// every configured alias onto the record so the board is
+			// addressable by any of them. The API reads aliases from
+			// persistence, so they must be stamped here. protocol.DeviceInfo
+			// carries no Aliases field. Iterate the matches in reverse so the
+			// first config entry stays authoritative (first) in the alias list.
+			cfgs := l.config.DeviceConfigsByPath(event.Path)
+			for i := len(cfgs) - 1; i >= 0; i-- {
+				if cfgs[i].Alias != "" {
+					record.Aliases = prependAlias(cfgs[i].Alias, record.Aliases)
+				}
 			}
 			if cfg.Description != "" {
 				record.Description = cfg.Description

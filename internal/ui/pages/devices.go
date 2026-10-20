@@ -219,12 +219,13 @@ func createDeviceRow(dev api.Device) *dom.Element {
 	}
 	row.Append(statusDiv)
 
-	// Aliases
+	// Aliases — shown in full (non-ellipsed) so the list can be copied verbatim.
 	aliasesDiv := doc.CreateElement("div")
 	aliasesDiv.SetStyle("font-size", "12px")
-	aliasesDiv.SetStyle("overflow", "hidden")
-	aliasesDiv.SetStyle("text-overflow", "ellipsis")
-	aliasesDiv.SetStyle("white-space", "nowrap")
+	aliasesDiv.SetStyle("min-width", "180px")
+	aliasesDiv.SetStyle("white-space", "normal")
+	aliasesDiv.SetStyle("overflow-wrap", "break-word")
+	aliasesDiv.SetStyle("word-break", "break-all")
 	if len(dev.Aliases) > 0 {
 		aliasesDiv.SetTextContent(joinStrings(dev.Aliases, ", "))
 	} else {
