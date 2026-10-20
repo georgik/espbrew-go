@@ -447,17 +447,11 @@ func (f *Flasher) connect() error {
 			}
 			continue
 		case ResetAuto:
-			// For USB CDC ports (ESP32-S3/C3/C5/C6/H2 USB-JTAG/Serial),
-			// use USB-JTAG reset immediately. Classic DTR/RTS reset doesn't work.
-			if isUSBPort(f.portStr) {
-				// Native USB-JTAG/Serial board: take the USB-JTAG path.
-				// When it succeeds we're done connecting.
-				if f.connectViaUSBJTAG() {
-					return f.finishConnect()
-				}
-				continue
-			}
-			// For non-USB CDC ports, try multiple strategies
+			// Uniform reset cycle for every port. A UART-bridge board
+			// (CH340, CH9102, CP210x) also enumerates as /dev/ttyACM* but has
+			// no USB-JTAG peripheral, so the first attempt must be the classic
+			// DTR/RTS reset. Native-USB boards (ESP32-S3/C3/C5/C6/H2 USB-JTAG)
+			// fall through to attempt 1, which tries the USB-JTAG reset.
 			switch attempt % 3 {
 			case 0:
 				classicReset(f.port, defaultResetDelay)
@@ -708,11 +702,20 @@ func (f *Flasher) FlashImage(data []byte, offset uint32, progress ProgressFunc) 
 		return fmt.Errorf("attach flash: %w", err)
 	}
 
-	// Optionally switch to higher baud rate (not supported by ESP8266 ROM)
+	// Optionally switch to higher baud rate (not supported by ESP8266 ROM).
+	// Cap the flash baud for UART-bridge boards (CH340/CH9102/CP210x), whose
+	// small RX FIFO overflows at high bauds and makes the ROM stop answering
+	// SLIP during flash page writes. Native-USB boards have flow control and
+	// are unaffected (usesUSB == true).
+	flashBaud := f.opts.FlashBaudRate
+	if f.chip != nil && f.chip.MaxUARTFlashBaud > 0 && !f.usesUSB && flashBaud > f.chip.MaxUARTFlashBaud {
+		flashBaud = f.chip.MaxUARTFlashBaud
+		f.logf("Capping flash baud to %d for UART-bridge board", flashBaud)
+	}
 	canChangeBaud := f.chip == nil || f.chip.ROMHasChangeBaud || f.conn.isStub()
-	if canChangeBaud && f.opts.FlashBaudRate > 0 && f.opts.FlashBaudRate != f.opts.BaudRate {
-		if err := f.changeBaud(f.opts.FlashBaudRate); err != nil {
-			f.logf("Warning: could not change baud rate to %d: %v", f.opts.FlashBaudRate, err)
+	if canChangeBaud && flashBaud > 0 && flashBaud != f.opts.BaudRate {
+		if err := f.changeBaud(flashBaud); err != nil {
+			f.logf("Warning: could not change baud rate to %d: %v", flashBaud, err)
 			// Continue at original baud rate
 		}
 	}
@@ -763,11 +766,20 @@ func (f *Flasher) FlashImages(images []ImagePart, progress ProgressFunc) error {
 		f.opts.FlashMode = "dout"
 	}
 
-	// Optionally switch to higher baud rate (not supported by ESP8266 ROM)
+	// Optionally switch to higher baud rate (not supported by ESP8266 ROM).
+	// Cap the flash baud for UART-bridge boards (CH340/CH9102/CP210x), whose
+	// small RX FIFO overflows at high bauds and makes the ROM stop answering
+	// SLIP during flash page writes. Native-USB boards have flow control and
+	// are unaffected (usesUSB == true).
+	flashBaud := f.opts.FlashBaudRate
+	if f.chip != nil && f.chip.MaxUARTFlashBaud > 0 && !f.usesUSB && flashBaud > f.chip.MaxUARTFlashBaud {
+		flashBaud = f.chip.MaxUARTFlashBaud
+		f.logf("Capping flash baud to %d for UART-bridge board", flashBaud)
+	}
 	canChangeBaud := f.chip == nil || f.chip.ROMHasChangeBaud || f.conn.isStub()
-	if canChangeBaud && f.opts.FlashBaudRate > 0 && f.opts.FlashBaudRate != f.opts.BaudRate {
-		if err := f.changeBaud(f.opts.FlashBaudRate); err != nil {
-			f.logf("Warning: could not change baud rate to %d: %v", f.opts.FlashBaudRate, err)
+	if canChangeBaud && flashBaud > 0 && flashBaud != f.opts.BaudRate {
+		if err := f.changeBaud(flashBaud); err != nil {
+			f.logf("Warning: could not change baud rate to %d: %v", flashBaud, err)
 		}
 	}
 
