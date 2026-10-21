@@ -549,10 +549,10 @@ func (l *LeaderNode) EnqueueJob(firmwarePath, devicePath string) (*Job, error) {
 }
 
 func (l *LeaderNode) EnqueueJobWithOffset(firmwarePath, devicePath string, offset int) (*Job, error) {
-	return l.EnqueueJobWithOffsetAndErase(firmwarePath, devicePath, offset, false, "")
+	return l.EnqueueJobWithOffsetAndErase(firmwarePath, devicePath, offset, false, "", 0)
 }
 
-func (l *LeaderNode) EnqueueJobWithOffsetAndErase(firmwarePath, devicePath string, offset int, erase bool, diagram string) (*Job, error) {
+func (l *LeaderNode) EnqueueJobWithOffsetAndErase(firmwarePath, devicePath string, offset int, erase bool, diagram string, flashBaud int) (*Job, error) {
 	// Check operational mode - flashing not allowed in discovery mode
 	if l.GetMode() == protocol.ModeDiscovery {
 		return nil, fmt.Errorf("flashing not allowed in discovery mode - switch to operational mode first")
@@ -575,6 +575,13 @@ func (l *LeaderNode) EnqueueJobWithOffsetAndErase(firmwarePath, devicePath strin
 	l.wakeDevice(devicePath)
 
 	job := l.queue.EnqueueFlash(firmwarePath, devicePath, offset, erase, diagram)
+
+	// Apply the client/device-supplied flash baud override up front, before the
+	// job is handed to the executor, so there is no window in which the executor
+	// could read a stale/zero value. Zero keeps the flasher default (460800).
+	if flashBaud > 0 {
+		job.FlashBaud = flashBaud
+	}
 
 	// Derive the target chip from the device registry so the ELF->image
 	// conversion uses the correct chip id and address map. Without this the

@@ -161,6 +161,12 @@ func (e *JobExecutor) executeFlash(job *Job) error {
 	// Update flasher options with erase setting from job
 	e.flasher.SetErase(job.Erase)
 
+	// Honor a client/device-supplied flash baud override. Zero keeps the
+	// flasher default (460800), which the chip cap then clamps if needed.
+	if job.FlashBaud > 0 {
+		e.flasher.SetFlashBaud(job.FlashBaud)
+	}
+
 	// Execute flash with timeout
 	ctx, cancel := context.WithTimeout(e.ctx, DefaultJobTimeout)
 	defer cancel()

@@ -25,7 +25,12 @@ jobs:
         # Re-add `windows-latest` once a C toolchain is provisioned for Windows
         # (or drop `-race`) — the test step is already pipe-free, so it is
         # cross-platform-ready apart from that one dependency.
-        os: [ubuntu-24.04, ubuntu-24.04-arm, macos-latest]
+        # ubuntu-26.04-arm (was ubuntu-24.04-arm): the 24.04 arm runner ships a
+        # base Go older than go.mod's `go 1.26.4` directive, and setup-go@v7 falls
+        # back to the preinstalled toolchain with GOTOOLCHAIN=local, so `go test
+        # -race` aborts on a toolchain-mismatch error before building. Ubuntu 26.04
+        # ships Go >= 1.26.4, satisfying go.mod even in local-toolchain mode.
+        os: [ubuntu-24.04, ubuntu-26.04-arm, macos-latest]
         go-version: ['1.26']
       fail-fast: false
 

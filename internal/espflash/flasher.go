@@ -19,6 +19,35 @@ import (
 	"go.bug.st/serial"
 )
 
+// maxFlashBlockAttempts is the number of resend attempts for a single flash
+// block when the chip does not ACK (timeout or a ROM error such as 0xC0).
+// esptool uses 3; we use 5 because a UART-bridge board (CH340/CP210x) with a
+// small RX FIFO can lose a block to overflow, and a few extra attempts let the
+// FIFO drain and the resend succeed without failing the whole download.
+const maxFlashBlockAttempts = 5
+
+// flashBlockRetryDelay is the pause between resend attempts. It gives the UART
+// bridge's RX FIFO time to drain after an overflow before we resend the block.
+const flashBlockRetryDelay = 100 * time.Millisecond
+
+// maxFlashPartAttempts is the number of times to re-flash a whole part (e.g. the
+// app) if it fails. Each attempt re-issues FLASH_DEFL_BEGIN and starts the
+// download fresh, which recovers from the cascading RX-FIFO overflow that can
+// strand a single block on a UART-bridge board at high flash bauds.
+const maxFlashPartAttempts = 3
+
+// maxReconnectAttempts is the number of reset+reconnect cycles reconnect()
+// runs before giving up. It is intentionally 1: a UART-bridge board that has
+// cascaded into a stuck-SPI state cannot be recovered by a DTR/RTS reset
+// alone (only a fresh client-side connect clears it), so trying more cycles
+// only burns seconds before the flash fails and the client retries the whole
+// command. See reconnect().
+const maxReconnectAttempts = 1
+
+// reconnectSettleDelay gives the chip time out of its overflow lockup (and lets
+// the USB/UART link settle) before we retry the reset+sync+attach.
+const reconnectSettleDelay = 200 * time.Millisecond
+
 // FlasherOptions configures the Flasher behavior.
 type FlasherOptions struct {
 	// BaudRate is the initial baud rate for serial communication.
@@ -155,10 +184,19 @@ type Flasher struct {
 	opts    *FlasherOptions
 	portStr string
 	usesUSB bool
-	secInfo []byte // cached security info from ROM (GET_SECURITY_INFO opcode 0x14)
-	ctx     context.Context
-	cancel  context.CancelFunc
-	closed  bool
+	// currentBaud is the UART baud rate the chip is ACTUALLY running at. It
+	// starts at the connect baud and is updated on every successful changeBaud.
+	// changeBaud passes this as the old-baud argument to the protocol so the
+	// stub loader can compute the new UART divisor correctly. It must reflect
+	// the live baud, not just the initial connect baud: after the first
+	// changeBaud(921600) the chip is at 921600, and passing a stale 115200 as
+	// the old baud makes the stub reject the command, which then makes the
+	// next FLASH_DEFL_BEGIN time out.
+	currentBaud int
+	secInfo     []byte // cached security info from ROM (GET_SECURITY_INFO opcode 0x14)
+	ctx         context.Context
+	cancel      context.CancelFunc
+	closed      bool
 }
 
 // openPortWithRetries opens a serial port, retrying while the port reports a
@@ -259,13 +297,14 @@ func New(ctx context.Context, portName string, opts *FlasherOptions) (*Flasher, 
 	}
 
 	f := &Flasher{
-		port:    port,
-		conn:    newConn(port, childCtx),
-		opts:    opts,
-		portStr: portName,
-		ctx:     childCtx,
-		cancel:  cancel,
-		closed:  false,
+		port:        port,
+		conn:        newConn(port, childCtx),
+		opts:        opts,
+		portStr:     portName,
+		currentBaud: opts.BaudRate,
+		ctx:         childCtx,
+		cancel:      cancel,
+		closed:      false,
 	}
 
 	// Connect to the bootloader
@@ -806,21 +845,45 @@ func (f *Flasher) FlashImages(images []ImagePart, progress ProgressFunc) error {
 
 		f.logf("Writing %d bytes at 0x%08X...", len(data), img.Offset)
 
-		var partProgress ProgressFunc
-		if progress != nil {
-			base := written
-			partProgress = func(cur, total int) {
-				progress(base+cur, totalSize)
+		// Flash the part, retrying the whole part if it fails. A single block
+		// is already retried inside flashCompressed/flashUncompressed, but a
+		// UART-bridge board (CH340/CP210x) can lose a block to RX-FIFO overflow
+		// during the sustained app transfer, after which the chip stops
+		// responding for the rest of that attempt window. Re-flashing the part
+		// re-issues FLASH_DEFL_BEGIN and starts the download fresh, which is
+		// what recovers from that cascade. This mirrors esptool's habit of
+		// retrying a failed write rather than aborting on the first error.
+		//
+		// If the overflow has stranded the bootloader (even FLASH_DEFL_BEGIN
+		// times out), a plain re-send cannot recover, so we reset and reconnect
+		// before the next attempt.
+		var partErr error
+		for attempt := 0; attempt < maxFlashPartAttempts; attempt++ {
+			var partProgress ProgressFunc
+			if progress != nil {
+				base := written
+				partProgress = func(cur, total int) {
+					progress(base+cur, totalSize)
+				}
+			}
+
+			if f.opts.Compress && f.conn.isStub() {
+				partErr = f.flashCompressed(data, img.Offset, partProgress)
+			} else {
+				partErr = f.flashUncompressed(data, img.Offset, partProgress)
+			}
+			if partErr == nil {
+				break
+			}
+			if attempt < maxFlashPartAttempts-1 {
+				f.logf("Warning: flash at 0x%08X failed: %v, retrying (%d/%d)", img.Offset, partErr, attempt+1, maxFlashPartAttempts)
+				if rerr := f.reconnect(); rerr != nil {
+					f.logf("Warning: reconnect failed: %v", rerr)
+				}
 			}
 		}
-
-		if f.opts.Compress && f.conn.isStub() {
-			err = f.flashCompressed(data, img.Offset, partProgress)
-		} else {
-			err = f.flashUncompressed(data, img.Offset, partProgress)
-		}
-		if err != nil {
-			return fmt.Errorf("flash at 0x%08X: %w", img.Offset, err)
+		if partErr != nil {
+			return fmt.Errorf("flash at 0x%08X: %w", img.Offset, partErr)
 		}
 
 		written += len(img.Data)
@@ -836,6 +899,72 @@ type ImagePart struct {
 
 	// Offset is the flash address to write to (e.g. 0x0, 0x1000, 0x10000).
 	Offset uint32
+}
+
+// reconnect recovers from a bootloader lockup. When a UART-bridge board
+// (CH340/CP210x) loses a flash block to RX-FIFO overflow at high flash bauds,
+// the overflow can cascade: the chip stops answering not just the next block
+// but also FLASH_DEFL_BEGIN, and its SPI flash controller can stay stuck so
+// even SPI_FLASH_ATTACH times out. A plain re-send can never recover from this.
+// This resets the board, re-syncs with the ROM bootloader, re-uploads the stub,
+// and restores the SPI attach + flash baud, giving the failed part a clean
+// session to retry in. It is only invoked as a last-resort recovery inside
+// FlashImages, never during the normal single-session flow.
+func (f *Flasher) reconnect() error {
+	for attempt := 0; attempt < maxReconnectAttempts; attempt++ {
+		f.logf("Reconnecting to recover from flash failure...")
+
+		// A UART-bridge board (CH340/CH9102/CP210x) that cascades into a
+		// stuck-SPI state leaves stale bytes in the RX FIFO and the SLIP
+		// reader mid-frame. Before re-syncing we must drain both, otherwise
+		// the next SLIP frame is misframed and the sync/stub/attach all time
+		// out again. flushInput resets the reader and clears the buffer.
+		f.conn.flushInput()
+		time.Sleep(reconnectSettleDelay)
+
+		// Reconnect must fail fast: a single fast sync+attach is enough to
+		// decide whether the chip recovered. A deep cascade will not come back
+		// on a quick sync, so keep the attempt count low and let the client
+		// retry clear it.
+		prevAttempts := f.opts.ConnectAttempts
+		if prevAttempts > 2 {
+			f.opts.ConnectAttempts = 2
+		}
+		if err := f.connect(); err != nil {
+			f.opts.ConnectAttempts = prevAttempts
+			f.logf("Warning: reconnect sync failed: %v", err)
+			time.Sleep(reconnectSettleDelay)
+			continue
+		}
+		f.opts.ConnectAttempts = prevAttempts
+		// Re-attach the SPI flash and restore the high-speed flash baud so the
+		// retried part runs in the same session configuration as the first
+		// attempt. After a cascade the SPI controller can be transiently
+		// stuck, so retry the attach with a settle delay.
+		attachErr := f.attachFlash()
+		for r := 0; attachErr != nil && r < maxReconnectAttempts; r++ {
+			f.logf("Warning: re-attach flash failed: %v, retrying (%d/%d)", attachErr, r+1, maxReconnectAttempts)
+			time.Sleep(reconnectSettleDelay)
+			attachErr = f.attachFlash()
+		}
+		if attachErr != nil {
+			f.logf("Warning: re-attach flash still failed: %v", attachErr)
+			continue
+		}
+		flashBaud := f.opts.FlashBaudRate
+		if f.chip != nil && f.chip.MaxUARTFlashBaud > 0 && !f.usesUSB && flashBaud > f.chip.MaxUARTFlashBaud {
+			flashBaud = f.chip.MaxUARTFlashBaud
+		}
+		canChangeBaud := f.chip == nil || f.chip.ROMHasChangeBaud || f.conn.isStub()
+		if canChangeBaud && flashBaud > 0 && flashBaud != f.opts.BaudRate {
+			if err := f.changeBaud(flashBaud); err != nil {
+				f.logf("Warning: could not change baud rate to %d after reconnect: %v", flashBaud, err)
+			}
+		}
+		f.logf("Reconnected.")
+		return nil
+	}
+	return fmt.Errorf("could not reconnect after flash failure")
 }
 
 // flashCompressed writes data to flash using zlib compression.
@@ -893,8 +1022,29 @@ func (f *Flasher) flashCompressed(data []byte, offset uint32, progress ProgressF
 		blockLen := min(compSize-sent, writeSize)
 
 		block := compressed[sent : sent+blockLen]
-		if err := f.conn.flashDeflData(block, seq); err != nil {
-			return fmt.Errorf("flash block %d of %d: %w", seq, numBlocks, err)
+		// Resend the block if the chip does not ACK, mirroring esptool's
+		// WRITE_BLOCK_ATTEMPTS retry. A lost ACK (e.g. from a transient
+		// CH340 RX-FIFO overflow during sustained app flash) can only be
+		// recovered by resending the block, not by merely re-reading.
+		//
+		// On failure we also flush the input buffer before retrying: a timeout
+		// or a ROM 0xC0 error means the chip's response (or the SLIP frame we
+		// sent) was lost/garbled in the UART bridge's RX FIFO, leaving the SLIP
+		// reader mid-frame. Resending without clearing that stale state just
+		// corrupts the next attempt too, so we reset the input buffer + SLIP
+		// reader first.
+		var blockErr error
+		for attempt := 0; attempt < maxFlashBlockAttempts; attempt++ {
+			blockErr = f.conn.flashDeflData(block, seq)
+			if blockErr == nil {
+				break
+			}
+			f.logf("Warning: compressed flash block %d failed: %v, retrying (%d/%d)", seq, blockErr, attempt+1, maxFlashBlockAttempts)
+			f.conn.flushInput()
+			time.Sleep(flashBlockRetryDelay)
+		}
+		if blockErr != nil {
+			return fmt.Errorf("flash block %d of %d: %w", seq, numBlocks, blockErr)
 		}
 
 		sent += blockLen
@@ -987,8 +1137,29 @@ func (f *Flasher) flashUncompressed(data []byte, offset uint32, progress Progres
 			block = padded
 		}
 
-		if err := f.conn.flashData(block, seq); err != nil {
-			return fmt.Errorf("flash block %d of %d: %w", seq, numBlocks, err)
+		// Resend the block if the chip does not ACK, mirroring esptool's
+		// WRITE_BLOCK_ATTEMPTS retry. A lost ACK (e.g. from a transient
+		// CH340 RX-FIFO overflow during sustained app flash) can only be
+		// recovered by resending the block, not by merely re-reading.
+		//
+		// On failure we also flush the input buffer before retrying: a timeout
+		// or a ROM error means the chip's response (or the SLIP frame we sent)
+		// was lost/garbled in the UART bridge's RX FIFO, leaving the SLIP
+		// reader mid-frame. Resending without clearing that stale state just
+		// corrupts the next attempt too, so we reset the input buffer + SLIP
+		// reader first.
+		var blockErr error
+		for attempt := 0; attempt < maxFlashBlockAttempts; attempt++ {
+			blockErr = f.conn.flashData(block, seq)
+			if blockErr == nil {
+				break
+			}
+			f.logf("Warning: flash block %d failed: %v, retrying (%d/%d)", seq, blockErr, attempt+1, maxFlashBlockAttempts)
+			f.conn.flushInput()
+			time.Sleep(flashBlockRetryDelay)
+		}
+		if blockErr != nil {
+			return fmt.Errorf("flash block %d of %d: %w", seq, numBlocks, blockErr)
 		}
 
 		sent += blockLen
@@ -1180,7 +1351,13 @@ func (f *Flasher) attachFlash() error {
 func (f *Flasher) changeBaud(newBaud int) error {
 	f.logf("Switching to %d baud...", newBaud)
 
-	oldBaud := uint32(f.opts.BaudRate)
+	// oldBaud must reflect the baud the chip is ACTUALLY running at, not just
+	// the initial connect baud. The stub uses it to compute the new UART
+	// divisor; a stale value (e.g. the initial 115200 when the chip is already
+	// at 921600) makes the stub reject the command, which then makes the next
+	// FLASH_DEFL_BEGIN time out. Track the live baud so repeated changeBaud
+	// calls (e.g. when flashing the app after other parts) stay correct.
+	oldBaud := uint32(f.currentBaud)
 	if err := f.conn.changeBaud(uint32(newBaud), oldBaud); err != nil {
 		return err
 	}
@@ -1195,6 +1372,10 @@ func (f *Flasher) changeBaud(newBaud int) error {
 	}); err != nil {
 		return fmt.Errorf("set local baud rate: %w", err)
 	}
+
+	// The port is now at newBaud; record it so subsequent changeBaud calls
+	// pass the correct old-baud argument.
+	f.currentBaud = newBaud
 
 	time.Sleep(50 * time.Millisecond)
 	f.conn.flushInput()

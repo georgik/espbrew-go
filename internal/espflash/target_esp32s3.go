@@ -55,9 +55,24 @@ var defESP32S3 = &chipDef{
 	// overflows at high flash bauds, causing the ROM to stop answering SLIP
 	// and the flash download to time out. Native USB-JTAG/Serial and USB-OTG
 	// have flow control and are unaffected (the cap only applies when
-	// !usesUSB). 115200 is the highest reliably supported baud for these
-	// bridges on this board.
-	MaxUARTFlashBaud: 115200,
+	// !usesUSB).
+	//
+	// This is a timing race (the failing block varies run-to-run), not
+	// deterministic corruption, so it is mitigated by two complementary
+	// fixes: (1) compression, which shrinks the wire data and shortens the
+	// overflow window, and (2) per-block resend retry, which recovers
+	// transient ACK losses.
+	//
+	// The cap was raised from 115200 to 921600 after benchmarking the
+	// waveshare-esp32-s3-touch-lcd-1_28 (CH340 bridge): the board flashes the
+	// full app reliably at 921600 (10/10 runs, ~3.3x faster than 115200), and
+	// esptool reaches the same board at 921600 with --verify. 115200 stays the
+	// client-side default (see cmd/espbrew/flash.go) for maximum robustness on
+	// marginal USB cabling/hubs; users can opt into 460800/921600 via
+	// `espbrew flash --baud <n>` (or a device param) now that the
+	// compression+retry path is in place. 46080 was REJECTED: it breaks the
+	// initial bootloader handshake (`begin compressed flash download: timeout`).
+	MaxUARTFlashBaud: 921600,
 
 	FlashFrequency: map[string]byte{
 		"80m": 0xF,

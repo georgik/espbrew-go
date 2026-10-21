@@ -53,6 +53,16 @@ func (f *Flasher) SetErase(erase bool) {
 	f.opts.Erase = erase
 }
 
+// SetFlashBaud overrides the flash transfer baud rate at runtime. A value <= 0
+// is ignored (the option's default is kept). This lets the cluster executor
+// honor a client-supplied `--baud` (or a device param) without rebuilding the
+// flasher. The chip's MaxUARTFlashBaud cap still applies inside flashBegin.
+func (f *Flasher) SetFlashBaud(baud int) {
+	if baud > 0 {
+		f.opts.FlashBaudRate = baud
+	}
+}
+
 type FlashRequest struct {
 	Port     string
 	Firmware []byte
@@ -108,7 +118,7 @@ func (f *Flasher) Flash(ctx context.Context, req *FlashRequest) *FlashResult {
 		espOpts := espflash.DefaultOptions()
 		espOpts.BaudRate = f.opts.BaudRate
 		espOpts.FlashBaudRate = f.opts.FlashBaudRate
-		espOpts.Compress = false // Disable compression to isolate issue
+		espOpts.Compress = f.opts.Compress // use compression like esptool (reduces wire data, avoids RX-FIFO overflow)
 		espOpts.Erase = f.opts.Erase
 		espOpts.Logger = logger
 		// Disable FastMode for USB CDC ports - they re-enumerate after reset
@@ -128,10 +138,29 @@ func (f *Flasher) Flash(ctx context.Context, req *FlashRequest) *FlashResult {
 		chipName := flasher.ChipName()
 		log.Info().Str("chip", chipName).Msg("Detected chip")
 
-		// Flash each part
-		// Bootloader and partition table are raw binaries
-		// App is ESP image format with embedded segments
+		// Flash ALL parts (bootloader + partition table + app) in a SINGLE
+		// compressed-flash session, matching esptool's write_flash flow:
+		//
+		//   one attach_flash, one change_baud, then per-part
+		//   FLASH_DEFL_BEGIN / FLASH_DEFL_DATA / MD5, then FLASH_DEFL_END once.
+		//
+		// The previous code flashed the app via a separate FlashImage call,
+		// which re-ran SPI_ATTACH (attachFlash) and CHANGE_BAUDRATE
+		// (changeBaud) after the bootloader + partition table had already been
+		// written. Per the ESP32-S3 serial protocol these are one-time
+		// link/session-setup commands: re-issuing SPI_ATTACH while the flash
+		// controller is mid-transaction can stall it, and a second
+		// CHANGE_BAUDRATE with a stale old-baud argument makes the stub compute
+		// the wrong UART divisor / reject the command, so the next
+		// FLASH_DEFL_BEGIN is silently discarded and we get
+		// "begin compressed flash download: timeout" at 0x10000. Flashing every
+		// part in one call (as esptool does) avoids both.
+		//
+		// patchImageHeader is a no-op for the raw bootloader/partition parts
+		// (magic != 0xE9) and correctly patches the app's ESP image header, so
+		// a single FlashImages call handles every part.
 		totalBytes := 0
+		allParts := make([]espflash.ImagePart, 0, len(parts))
 		for i, part := range parts {
 			// Count non-zero bytes for logging
 			nonZero := 0
@@ -149,24 +178,14 @@ func (f *Flasher) Flash(ctx context.Context, req *FlashRequest) *FlashResult {
 			log.Info().Int("part", i+1).Int("part_size", len(part.Data)).Int("non_zero", nonZero).
 				Uint32("offset", part.Offset).Bytes("preview", preview).Msg("Flashing part")
 
-			// Use FlashImage for app part (ESP image format), FlashImages for raw parts
-			if part.Offset == 0x10000 && len(part.Data) > 100 && part.Data[0] == 0xE9 {
-				// App part - ESP image format with segments
-				if err := flasher.FlashImage(part.Data, part.Offset, nil); err != nil {
-					log.Error().Err(err).Msg("Flash app failed")
-					return &FlashResult{Success: false, Error: err}
-				}
-			} else {
-				// Raw binary part (bootloader, partition table)
-				imageParts := []espflash.ImagePart{
-					{Data: part.Data, Offset: part.Offset},
-				}
-				if err := flasher.FlashImages(imageParts, nil); err != nil {
-					log.Error().Err(err).Msg("Flash part failed")
-					return &FlashResult{Success: false, Error: err}
-				}
-			}
+			allParts = append(allParts, espflash.ImagePart{Offset: part.Offset, Data: part.Data})
 			totalBytes += len(part.Data)
+		}
+
+		// Flash the whole image in one session.
+		if err := flasher.FlashImages(allParts, nil); err != nil {
+			log.Error().Err(err).Msg("Flash parts failed")
+			return &FlashResult{Success: false, Error: err}
 		}
 
 		flasher.Reset()

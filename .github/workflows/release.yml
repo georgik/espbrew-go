@@ -21,8 +21,12 @@ jobs:
           # Native ARM64 runner (free for public repos). Required because the
           # Linux build pulls in go4vl, which uses CGO with linux/videodev2.h —
           # plain cross-compilation from amd64 fails without an aarch64 toolchain.
+          # ubuntu-26.04-arm (was ubuntu-24.04-arm): 24.04 ships a base Go older
+          # than go.mod's `go 1.26.4`, so setup-go@v7 falls back to GOTOOLCHAIN=
+          # local and `go build` aborts on a toolchain-mismatch error. Ubuntu 26.04
+          # ships Go >= 1.26.4, satisfying go.mod even in local-toolchain mode.
           - platform: linux-arm64
-            runner: ubuntu-24.04-arm
+            runner: ubuntu-26.04-arm
             output: espbrew-linux-arm64
           - platform: darwin-arm64
             runner: macos-latest

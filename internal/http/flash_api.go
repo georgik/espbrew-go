@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"time"
 
 	"github.com/georgik/espbrew-go/internal/chips"
@@ -17,6 +18,34 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/rs/zerolog/log"
 )
+
+// parseFlashBaud extracts an optional flash baud override from a flash request's
+// Options map. It accepts either a JSON number or a numeric string, e.g.
+//
+//	{"baud": 921600}   or   {"baud": "460800"}
+//
+// A missing/empty/invalid value returns 0, which means "use the flasher
+// default". This is the transport for `espbrew flash --baud <n>` (and, in the
+// future, a device param) to reach the executor without a rebuild.
+func parseFlashBaud(opts map[string]interface{}) int {
+	if opts == nil {
+		return 0
+	}
+	v, ok := opts["baud"]
+	if !ok || v == nil {
+		return 0
+	}
+	switch t := v.(type) {
+	case float64:
+		return int(t)
+	case string:
+		n, err := strconv.Atoi(t)
+		if err == nil && n > 0 {
+			return n
+		}
+	}
+	return 0
+}
 
 type FlashHandler struct {
 	leader    *cluster.LeaderNode
@@ -169,11 +198,18 @@ func (h *FlashHandler) handleFlashSubmit(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Enqueue job with offset, erase option, and optional Wokwi diagram
-	job, err := h.leader.EnqueueJobWithOffsetAndErase(firmwarePath, devicePath, req.Offset, req.Erase, req.Diagram)
+	// Enqueue job with offset, erase option, and optional Wokwi diagram. The
+	// client-supplied flash baud (from `espbrew flash --baud` or a device param)
+	// is threaded through here so the executor honors it without a rebuild.
+	baud := parseFlashBaud(req.Options)
+	job, err := h.leader.EnqueueJobWithOffsetAndErase(firmwarePath, devicePath, req.Offset, req.Erase, req.Diagram, baud)
 	if err != nil {
 		respondError(w, http.StatusConflict, err.Error())
 		return
+	}
+
+	if baud > 0 {
+		log.Debug().Str("job_id", job.ID).Int("baud", baud).Msg("Flash job baud override applied")
 	}
 
 	// Start progress streaming in background

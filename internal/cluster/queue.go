@@ -46,6 +46,10 @@ type Job struct {
 	EraseAddress uint32
 	EraseSize    uint32
 	Chip         chips.Chip // Target chip, for ELF->image conversion (0 = auto/unknown)
+	// FlashBaud overrides the flash transfer baud rate for this job. Zero means
+	// "use the flasher default" (460800), which the client sets via
+	// `espbrew flash --baud` and the server reads from the device param.
+	FlashBaud int
 	// Diagram is an optional Wokwi diagram.json (board + peripherals) supplied
 	// by the flashing project. When set it overrides the device default so a
 	// board-specific diagram is used even for the generic wokwi:<chip> devices.

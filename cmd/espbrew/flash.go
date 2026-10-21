@@ -60,6 +60,10 @@ var flashOpts struct {
 	filterTags       []string // Filter by tags (all must match)
 	filterChip       string   // Filter by chip type (e.g., "ESP32-S3")
 	filterAlias      string   // Filter by alias (e.g., "production-esp1")
+	// Auto-retry: number of flash attempts on failure. A UART-bridge board
+	// (CH340/CH9102/CP210x) can cascade into a stuck-SPI state at high baud;
+	// each new attempt runs its own reset cycle, which clears the hang.
+	flashRetries int
 }
 
 func init() {
@@ -67,6 +71,7 @@ func init() {
 	flashCmd.Flags().StringVar(&flashOpts.deviceID, "device", "", "Device selection by ID, alias, or MAC (from inventory)")
 	flashCmd.Flags().StringVarP(&flashOpts.port, "port", "p", "", "Serial port (auto-detect if empty)")
 	flashCmd.Flags().IntVar(&flashOpts.baud, "baud", 460800, "Flash baud rate")
+	flashCmd.Flags().IntVar(&flashOpts.flashRetries, "flash-retries", 3, "Number of flash attempts on failure (a reset cycle clears the UART-bridge cascade)")
 	flashCmd.Flags().IntVar(&flashOpts.offset, "offset", 0, "Flash offset (default 0x0, ignored with --preset)")
 	flashCmd.Flags().StringVar(&flashOpts.preset, "preset", "app", "Offset preset: bootloader, partitions, app")
 	flashCmd.Flags().StringVar(&flashOpts.chip, "chip", "auto", "Chip type (auto, esp8266, esp32, esp32s2, esp32s3, esp32c3, esp32c6, esp32h2)")
@@ -368,73 +373,115 @@ func runFlashRemote(args []string) error {
 		}
 	}
 
-	// Upload firmware
-	uploadResp, err := client.UploadFirmware(firmwarePath)
-	if err != nil {
-		return fmt.Errorf("upload firmware: %w", err)
+	// Upload firmware, submit the flash job, and stream progress inside a
+	// retry loop. A UART-bridge board (CH340/CH9102/CP210x) can cascade into a
+	// stuck-SPI state at high baud: one block times out, the chip stops
+	// answering, and the in-session reconnect() cannot clear it. Each new
+	// attempt runs its own reset cycle (via the server), which clears the hang,
+	// so retrying the whole command is what makes flashing reliable.
+	maxAttempts := flashOpts.flashRetries
+	if maxAttempts < 1 {
+		maxAttempts = 1
 	}
 
-	log.Info().Str("file_id", uploadResp.FileID).Int64("size", uploadResp.Size).Msg("Firmware uploaded")
+	var lastErr error
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		if attempt > 1 {
+			log.Info().Int("attempt", attempt).Int("max", maxAttempts).Msg("Retrying flash after previous failure")
+			time.Sleep(2 * time.Second) // let the chip settle after the cascade
+		}
 
-	// Submit flash job. Address the board by alias when one is available so the
-	// server remains the single source of truth for the real /dev path;
-	// otherwise fall back to the explicit path/port.
-	submitReq := cluster.FlashSubmitRequest{
-		FileID:   uploadResp.FileID,
-		ClientID: "espbrew-cli",
-		Erase:    flashOpts.erase,
-		Diagram:  detectedDiagram,
-	}
-	if flashOpts.filterAlias != "" {
-		submitReq.DeviceAlias = flashOpts.filterAlias
-	} else {
-		submitReq.DevicePath = selector
-	}
+		uploadResp, err := client.UploadFirmware(firmwarePath)
+		if err != nil {
+			return fmt.Errorf("upload firmware: %w", err)
+		}
 
-	flashResp, err := client.SubmitFlash(submitReq)
-	if err != nil {
-		return fmt.Errorf("submit flash: %w", err)
-	}
+		log.Info().Str("file_id", uploadResp.FileID).Int64("size", uploadResp.Size).Msg("Firmware uploaded")
 
-	log.Info().Str("job_id", flashResp.JobID).Msg("Flash job submitted, streaming progress...")
+		// Submit flash job. Address the board by alias when one is available so the
+		// server remains the single source of truth for the real /dev path;
+		// otherwise fall back to the explicit path/port.
+		submitReq := cluster.FlashSubmitRequest{
+			FileID:   uploadResp.FileID,
+			ClientID: "espbrew-cli",
+			Erase:    flashOpts.erase,
+			Diagram:  detectedDiagram,
+			// Forward the flash baud so the executor can honor it (see
+			// parseFlashBaud). 460800 is a reliable, fast default for CH-bridge
+			// boards; the client cap allows up to 921600 via --baud.
+			Options: map[string]interface{}{"baud": flashOpts.baud},
+		}
+		if flashOpts.filterAlias != "" {
+			submitReq.DeviceAlias = flashOpts.filterAlias
+		} else {
+			submitReq.DevicePath = selector
+		}
 
-	// Connect to progress WebSocket
-	progressClient, err := client.ConnectProgress(flashResp.JobID)
-	if err != nil {
-		log.Warn().Err(err).Msg("Could not connect to progress WebSocket")
-		fmt.Printf("Job ID: %s\n", flashResp.JobID)
-		fmt.Printf("Status: %s\n", flashResp.Status)
-		fmt.Printf("Device: %s\n", flashResp.DevicePath)
+		flashResp, err := client.SubmitFlash(submitReq)
+		if err != nil {
+			return fmt.Errorf("submit flash: %w", err)
+		}
+
+		log.Info().Str("job_id", flashResp.JobID).Msg("Flash job submitted, streaming progress...")
+
+		// Connect to progress WebSocket
+		progressClient, err := client.ConnectProgress(flashResp.JobID)
+		if err != nil {
+			log.Warn().Err(err).Msg("Could not connect to progress WebSocket")
+			fmt.Printf("Job ID: %s\n", flashResp.JobID)
+			fmt.Printf("Status: %s\n", flashResp.Status)
+			fmt.Printf("Device: %s\n", flashResp.DevicePath)
+			continue
+		}
+
+		// Track whether the stream reported completion so a clean websocket
+		// close (no explicit complete message) is not mistaken for success.
+		var streamErr error
+		completed := false
+
+		// Stream progress
+		lastProgress := -1
+		streamErr = progressClient.Stream(func(msg cluster.ProgressMessage) {
+			switch msg.Type {
+			case "init":
+				fmt.Printf("\nJob ID: %s\n", msg.JobID)
+				fmt.Printf("Device: %s\n\n", devicePath)
+			case "progress":
+				if msg.Progress > lastProgress {
+					displayProgressBar(msg.Progress, msg.Status)
+					lastProgress = msg.Progress
+				}
+			case "complete":
+				completed = true
+				if msg.Status == "completed" {
+					fmt.Printf("\n✓ Flash completed successfully!\n")
+				} else {
+					fmt.Printf("\n✗ Flash failed: %s\n", msg.Error)
+				}
+			}
+		})
+		progressClient.Close()
+
+		if !completed {
+			// No completion event was received; treat as a failure and retry
+			// so a fresh reset cycle has a chance to clear the hang.
+			if streamErr == nil {
+				streamErr = fmt.Errorf("flash did not report completion")
+			}
+			lastErr = streamErr
+			continue
+		}
+
+		if streamErr != nil {
+			lastErr = streamErr
+			continue
+		}
+
+		// Success.
 		return nil
 	}
-	defer progressClient.Close()
 
-	// Stream progress
-	lastProgress := -1
-	err = progressClient.Stream(func(msg cluster.ProgressMessage) {
-		switch msg.Type {
-		case "init":
-			fmt.Printf("\nJob ID: %s\n", msg.JobID)
-			fmt.Printf("Device: %s\n\n", devicePath)
-		case "progress":
-			if msg.Progress > lastProgress {
-				displayProgressBar(msg.Progress, msg.Status)
-				lastProgress = msg.Progress
-			}
-		case "complete":
-			if msg.Status == "completed" {
-				fmt.Printf("\n✓ Flash completed successfully!\n")
-			} else {
-				fmt.Printf("\n✗ Flash failed: %s\n", msg.Error)
-			}
-		}
-	})
-
-	if err != nil {
-		return fmt.Errorf("progress stream error: %w", err)
-	}
-
-	return nil
+	return fmt.Errorf("flash failed after %d attempt(s): %w", maxAttempts, lastErr)
 }
 
 func displayProgressBar(progress int, status string) {
@@ -940,98 +987,128 @@ func runFlashRemoteMultiImage() error {
 
 	log.Info().Int("images", len(images)).Str("device", devicePath).Msg("Multi-image flash via cluster")
 
-	// Flash each image sequentially
-	for i, img := range images {
-		log.Info().Str("image", img.name).Str("path", img.path).Int("offset", img.offset).
-			Int("index", i+1).Int("total", len(images)).Msg("Uploading to cluster")
+	// flashAllImages flashes every image in order and returns on the first
+	// failure. It is retried as a whole below so a fresh reset cycle (run by
+	// the server) clears a UART-bridge cascade: one image times out, the chip
+	// stops answering, and the in-session reconnect() cannot clear it, but a
+	// new attempt's reset cycle does.
+	flashAllImages := func() error {
+		// Flash each image sequentially
+		for i, img := range images {
+			log.Info().Str("image", img.name).Str("path", img.path).Int("offset", img.offset).
+				Int("index", i+1).Int("total", len(images)).Msg("Uploading to cluster")
 
-		ciFlashLine(flashAlias, img.name, "flashing…")
-		imageStart := time.Now()
+			ciFlashLine(flashAlias, img.name, "flashing…")
+			imageStart := time.Now()
 
-		uploadResp, err := client.UploadFirmware(img.path)
-		if err != nil {
-			ciFlashFail(flashAlias, img.name, err)
-			return fmt.Errorf("upload %s: %w", img.name, err)
-		}
-
-		// Address the board by selector. Send the alias only when --filter-alias
-		// is explicitly set (the server resolves it); otherwise send the
-		// resolved path, which covers --device, --port, and auto-detect
-		// (no selector): the client picked a board and must address it by path.
-		submitReq := cluster.FlashSubmitRequest{
-			FileID:   uploadResp.FileID,
-			ClientID: "espbrew-cli",
-			Offset:   img.offset,
-			Erase:    flashOpts.erase,
-			Diagram:  detectedDiagram,
-		}
-		if flashOpts.filterAlias != "" {
-			submitReq.DeviceAlias = flashOpts.filterAlias
-		} else {
-			submitReq.DevicePath = devicePath
-		}
-
-		flashResp, err := client.SubmitFlash(submitReq)
-		if err != nil {
-			ciFlashFail(flashAlias, img.name, err)
-			return fmt.Errorf("submit flash %s: %w", img.name, err)
-		}
-
-		log.Info().Str("image", img.name).Str("job_id", flashResp.JobID).Msg("Flash job submitted")
-
-		// Wait for completion
-		progressClient, err := client.ConnectProgress(flashResp.JobID)
-		if err != nil {
-			log.Warn().Err(err).Msg("Could not connect to progress WebSocket")
-			ciFlashFail(flashAlias, img.name, err)
-			return fmt.Errorf("monitoring %s: %w", img.name, err)
-		}
-
-		completed := false
-		showedWaiting := false
-		err = progressClient.Stream(func(msg cluster.ProgressMessage) {
-			switch msg.Type {
-			case "init":
-				// The animated bar is only useful for a human at a console;
-				// in CI mode we print one concise line instead (see ci.go).
-				if !ciModeEnabled() && !showedWaiting {
-					displayProgressBar(0, fmt.Sprintf("%s: pending", img.name))
-					showedWaiting = true
-				}
-			case "progress":
-				showedWaiting = true
-				if ciModeEnabled() {
-					return
-				}
-				if msg.Progress == 0 && msg.Status == "running" {
-					displayProgressBar(0, fmt.Sprintf("%s: preparing...", img.name))
-				} else {
-					displayProgressBar(msg.Progress, fmt.Sprintf("%s: running", img.name))
-				}
-			case "complete":
-				completed = true
-				if msg.Status == "completed" {
-					ciFlashOK(flashAlias, img.name, time.Since(imageStart))
-					if !ciModeEnabled() {
-						fmt.Printf("\n✓ %s flashed successfully\n", img.name)
-					}
-				} else {
-					ciFlashFail(flashAlias, img.name, fmt.Errorf("%s", msg.Error))
-					if !ciModeEnabled() {
-						fmt.Printf("\n✗ %s flash failed: %s\n", img.name, msg.Error)
-					}
-				}
+			uploadResp, err := client.UploadFirmware(img.path)
+			if err != nil {
+				ciFlashFail(flashAlias, img.name, err)
+				return fmt.Errorf("upload %s: %w", img.name, err)
 			}
-		})
-		progressClient.Close()
 
-		if err != nil {
-			return fmt.Errorf("flash %s: %w", img.name, err)
+			// Address the board by selector. Send the alias only when --filter-alias
+			// is explicitly set (the server resolves it); otherwise send the
+			// resolved path, which covers --device, --port, and auto-detect
+			// (no selector): the client picked a board and must address it by path.
+			submitReq := cluster.FlashSubmitRequest{
+				FileID:   uploadResp.FileID,
+				ClientID: "espbrew-cli",
+				Offset:   img.offset,
+				Erase:    flashOpts.erase,
+				Diagram:  detectedDiagram,
+			}
+			if flashOpts.filterAlias != "" {
+				submitReq.DeviceAlias = flashOpts.filterAlias
+			} else {
+				submitReq.DevicePath = devicePath
+			}
+
+			flashResp, err := client.SubmitFlash(submitReq)
+			if err != nil {
+				ciFlashFail(flashAlias, img.name, err)
+				return fmt.Errorf("submit flash %s: %w", img.name, err)
+			}
+
+			log.Info().Str("image", img.name).Str("job_id", flashResp.JobID).Msg("Flash job submitted")
+
+			// Wait for completion
+			progressClient, err := client.ConnectProgress(flashResp.JobID)
+			if err != nil {
+				log.Warn().Err(err).Msg("Could not connect to progress WebSocket")
+				ciFlashFail(flashAlias, img.name, err)
+				return fmt.Errorf("monitoring %s: %w", img.name, err)
+			}
+
+			completed := false
+			showedWaiting := false
+			err = progressClient.Stream(func(msg cluster.ProgressMessage) {
+				switch msg.Type {
+				case "init":
+					// The animated bar is only useful for a human at a console;
+					// in CI mode we print one concise line instead (see ci.go).
+					if !ciModeEnabled() && !showedWaiting {
+						displayProgressBar(0, fmt.Sprintf("%s: pending", img.name))
+						showedWaiting = true
+					}
+				case "progress":
+					showedWaiting = true
+					if ciModeEnabled() {
+						return
+					}
+					if msg.Progress == 0 && msg.Status == "running" {
+						displayProgressBar(0, fmt.Sprintf("%s: preparing...", img.name))
+					} else {
+						displayProgressBar(msg.Progress, fmt.Sprintf("%s: running", img.name))
+					}
+				case "complete":
+					completed = true
+					if msg.Status == "completed" {
+						ciFlashOK(flashAlias, img.name, time.Since(imageStart))
+						if !ciModeEnabled() {
+							fmt.Printf("\n✓ %s flashed successfully\n", img.name)
+						}
+					} else {
+						ciFlashFail(flashAlias, img.name, fmt.Errorf("%s", msg.Error))
+						if !ciModeEnabled() {
+							fmt.Printf("\n✗ %s flash failed: %s\n", img.name, msg.Error)
+						}
+					}
+				}
+			})
+			progressClient.Close()
+
+			if err != nil {
+				return fmt.Errorf("flash %s: %w", img.name, err)
+			}
+
+			if !completed {
+				return fmt.Errorf("%s flash did not complete", img.name)
+			}
 		}
 
-		if !completed {
-			return fmt.Errorf("%s flash did not complete", img.name)
+		return nil
+	}
+
+	// Retry the whole multi-image flash on failure.
+	maxAttempts := flashOpts.flashRetries
+	if maxAttempts < 1 {
+		maxAttempts = 1
+	}
+
+	var flashErr error
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		if attempt > 1 {
+			log.Info().Int("attempt", attempt).Int("max", maxAttempts).Msg("Retrying multi-image flash after previous failure")
+			time.Sleep(2 * time.Second) // let the chip settle after the cascade
 		}
+
+		if flashErr = flashAllImages(); flashErr == nil {
+			break
+		}
+	}
+	if flashErr != nil {
+		return flashErr
 	}
 
 	log.Info().Msg("All images flashed successfully")
