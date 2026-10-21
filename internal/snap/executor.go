@@ -26,7 +26,8 @@ type Executor struct {
 	backend    protocol.Monitor     // Backend monitor instance
 
 	// Snapshot options
-	duration time.Duration // How long to monitor serial output
+	duration      time.Duration // How long to monitor serial output
+	graceDuration time.Duration // Extra time past `duration` to drain an in-flight framebuffer dump
 
 	// Camera configuration
 	cameraID      string // Camera device identifier
@@ -58,13 +59,14 @@ type Executor struct {
 // Returns a configured Executor ready to run.
 func NewExecutor(device string, duration time.Duration) *Executor {
 	return &Executor{
-		device:    device,
-		duration:  duration,
-		baudRate:  115200, // Default baud rate
-		skipFlash: true,   // Flashing is not supported
-		logChan:   make(chan SerialLogEntry, 1000),
-		imageCh:   make(chan []byte, 1),
-		result:    &SnapResult{},
+		device:        device,
+		duration:      duration,
+		graceDuration: 20 * time.Second, // Drain an in-flight framebuffer dump past `duration`
+		baudRate:      115200,           // Default baud rate
+		skipFlash:     true,             // Flashing is not supported
+		logChan:       make(chan SerialLogEntry, 1000),
+		imageCh:       make(chan []byte, 1),
+		result:        &SnapResult{},
 	}
 }
 
@@ -83,14 +85,15 @@ func NewExecutorWithDevice(deviceInfo *protocol.DeviceInfo, duration time.Durati
 	}
 
 	return &Executor{
-		device:     device,
-		deviceInfo: deviceInfo,
-		duration:   duration,
-		baudRate:   115200, // Default baud rate
-		skipFlash:  true,   // Flashing is not supported
-		logChan:    make(chan SerialLogEntry, 1000),
-		imageCh:    make(chan []byte, 1),
-		result:     &SnapResult{},
+		device:        device,
+		deviceInfo:    deviceInfo,
+		duration:      duration,
+		graceDuration: 20 * time.Second, // Drain an in-flight framebuffer dump past `duration`
+		baudRate:      115200,           // Default baud rate
+		skipFlash:     true,             // Flashing is not supported
+		logChan:       make(chan SerialLogEntry, 1000),
+		imageCh:       make(chan []byte, 1),
+		result:        &SnapResult{},
 	}
 }
 
@@ -110,6 +113,17 @@ func (e *Executor) GetDevice() string {
 // lines themselves are never stored in the log) and monitoring stops early.
 func (e *Executor) SetFramebuffer(enabled bool) {
 	e.framebuffer = enabled
+}
+
+// SetGraceDuration sets how long past the configured monitor duration the read
+// loop keeps reading when a framebuffer dump is still in flight. This ensures
+// an in-flight esp_lcd_screenshot payload is drained to FRAMEBUFFER_END instead
+// of being cut off mid-stream by the duration timeout. A non-positive value is
+// ignored (the constructor default is kept).
+func (e *Executor) SetGraceDuration(d time.Duration) {
+	if d > 0 {
+		e.graceDuration = d
+	}
 }
 
 // GetDeviceInfo returns the device info (may be nil for physical devices)
@@ -355,46 +369,118 @@ func (e *Executor) monitorPhysical(ctx context.Context) error {
 	var lineBuffer []byte
 	entryCount := 0
 
-	// Read serial data
+	flush := func() {
+		if len(lineBuffer) > 0 {
+			e.addLogEntry(string(lineBuffer))
+			entryCount++
+		}
+	}
+
+	// Process one chunk of serial data line by line, feeding framebuffer
+	// protocol lines to the collector and storing everything else in the log.
+	handleData := func(data []byte) {
+		for _, b := range data {
+			if b == '\n' || b == '\r' {
+				if len(lineBuffer) > 0 {
+					line := string(lineBuffer)
+					lineBuffer = nil
+					if !e.ingestFramebufferLine(line) {
+						e.addLogEntry(line)
+						entryCount++
+					}
+					// The framebuffer dump is a known end-of-output
+					// signature: stop listening instead of waiting out
+					// the full duration.
+					if e.framebufferComplete() {
+						log.Debug().Int("entries", entryCount).Msg("Framebuffer captured, stopping serial monitoring early")
+						cancel()
+					}
+				}
+			} else if b >= 32 && b <= 126 { // Printable ASCII
+				lineBuffer = append(lineBuffer, b)
+			}
+		}
+	}
+
+	// Read serial data. The configured duration bounds the monitor context, but
+	// an esp_lcd_screenshot dump can still be streaming when it elapses (the
+	// payload is ~155 KB of base64 and takes several seconds to transmit). When
+	// that happens we drain the in-flight dump to FRAMEBUFFER_END instead of
+	// cutting it off mid-stream, so the PNG is always produced.
 	for {
+		// Non-blocking check: has the configured duration elapsed?
+		elapsed := false
 		select {
 		case <-monitorCtx.Done():
-			// Flush remaining buffer
-			if len(lineBuffer) > 0 {
-				e.addLogEntry(string(lineBuffer))
-				entryCount++
-			}
-			log.Debug().Int("entries", entryCount).Msg("Serial monitoring completed")
-			return nil
+			elapsed = true
+		default:
+		}
 
-		case data := <-session.Data():
-			// Process incoming data line by line
-			for _, b := range data {
-				if b == '\n' || b == '\r' {
-					if len(lineBuffer) > 0 {
-						line := string(lineBuffer)
-						lineBuffer = nil
-						if !e.ingestFramebufferLine(line) {
-							e.addLogEntry(line)
-							entryCount++
-						}
-						// The framebuffer dump is a known end-of-output
-						// signature: stop listening instead of waiting out
-						// the full duration.
-						if e.framebufferComplete() {
-							log.Debug().Int("entries", entryCount).Msg("Framebuffer captured, stopping serial monitoring early")
-							cancel()
-						}
-					}
-				} else if b >= 32 && b <= 126 { // Printable ASCII
-					lineBuffer = append(lineBuffer, b)
-				}
+		if elapsed {
+			// The duration elapsed. If a dump is still in flight, drain it so
+			// it is not chopped off; otherwise just exit.
+			if e.framebuffer && e.framebufferActive() {
+				log.Debug().Msg("Duration elapsed mid-dump; draining in-flight framebuffer")
+				e.extendForDump(session, &lineBuffer, &entryCount)
 			}
+			break
+		}
+
+		select {
+		case data := <-session.Data():
+			handleData(data)
 
 		case err := <-session.Errors():
 			if err != nil {
 				log.Warn().Err(err).Msg("Serial monitor error")
 				return err
+			}
+		}
+	}
+
+	flush()
+	log.Debug().Int("entries", entryCount).Msg("Serial monitoring completed")
+	return nil
+}
+
+// extendForDump keeps reading the serial session until the in-flight
+// framebuffer dump completes, aborts, or the grace window (graceDuration)
+// elapses. The line buffer and log entry count are updated in place. It
+// returns true if the dump completed within the grace window.
+func (e *Executor) extendForDump(
+	session *monitor.StreamSession,
+	lineBuffer *[]byte,
+	entryCount *int,
+) bool {
+	graceCtx, cancel := context.WithTimeout(context.Background(), e.graceDuration)
+	defer cancel()
+
+	for {
+		select {
+		case <-graceCtx.Done():
+			return false
+		case data := <-session.Data():
+			for _, b := range data {
+				if b == '\n' || b == '\r' {
+					if len(*lineBuffer) > 0 {
+						line := string(*lineBuffer)
+						*lineBuffer = nil
+						if !e.ingestFramebufferLine(line) {
+							e.addLogEntry(line)
+							*entryCount++
+						}
+					}
+				} else if b >= 32 && b <= 126 { // Printable ASCII
+					*lineBuffer = append(*lineBuffer, b)
+				}
+			}
+			if e.framebufferComplete() {
+				return true
+			}
+		case err := <-session.Errors():
+			if err != nil {
+				log.Warn().Err(err).Msg("Serial monitor error during dump drain")
+				return false
 			}
 		}
 	}
@@ -422,6 +508,15 @@ func (e *Executor) framebufferComplete() bool {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	return e.fbCollector != nil && (e.fbCollector.Complete() || e.fbCollector.Err() != nil)
+}
+
+// framebufferActive reports whether a framebuffer dump is currently being
+// collected (i.e. we are inside a FRAMEBUFFER_BEGIN ... FRAMEBUFFER_END block
+// and still awaiting the remaining payload lines).
+func (e *Executor) framebufferActive() bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.fbCollector != nil && e.fbCollector.Active() && !e.fbCollector.Complete()
 }
 
 // addLogEntry adds a log entry with level detection

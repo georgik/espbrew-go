@@ -488,12 +488,20 @@ func (f *Flasher) connect() error {
 		case ResetAuto:
 			// Uniform reset cycle for every port. A UART-bridge board
 			// (CH340, CH9102, CP210x) also enumerates as /dev/ttyACM* but has
-			// no USB-JTAG peripheral, so the first attempt must be the classic
-			// DTR/RTS reset. Native-USB boards (ESP32-S3/C3/C5/C6/H2 USB-JTAG)
-			// fall through to attempt 1, which tries the USB-JTAG reset.
+			// no USB-JTAG peripheral, so the first attempt must be the DTR/RTS
+			// reset. Native-USB boards (ESP32-S3/C3/C5/C6/H2 USB-JTAG) fall
+			// through to attempt 1, which tries the USB-JTAG reset.
+			//
+			// The first attempt uses the atomic `unixTightReset` (DTR + RTS
+			// toggled in a single ioctl) rather than the sequential
+			// `classicReset`. This matches espflash's `UnixTightReset`-first
+			// strategy for USB-to-Serial bridges: the simultaneous transition
+			// is what reliably enters download mode, and a marginal reset
+			// leaves the chip in a state that drops out mid-flash (see
+			// docs/flashing-implementation.md, "Intermittent Flash Failure").
 			switch attempt % 3 {
 			case 0:
-				classicReset(f.port, defaultResetDelay)
+				unixTightReset(f.port, defaultResetDelay)
 			case 1:
 				// Second attempt: try the USB-JTAG/Serial reset path. When it
 				// succeeds we're done connecting; otherwise fall through to the
