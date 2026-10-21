@@ -12,6 +12,8 @@ import (
 	"syscall"
 	"time"
 	"unsafe"
+
+	"github.com/rs/zerolog/log"
 )
 
 // USB device file system ioctls
@@ -234,6 +236,8 @@ func getPortStatusIoctl(hub *Hub, port int) (*PortStatus, error) {
 
 // setPortPowerIoctl sets port power via USB ioctl and verifies the change.
 func setPortPowerIoctl(hub *Hub, port int, on bool) error {
+	log.Debug().Str("hub", hub.Location).Int("port", port).Bool("on", on).
+		Msg("Native USB hub port power (ioctl)")
 	f, err := getHubDevFile(hub)
 	if err != nil {
 		return fmt.Errorf("open hub device: %w", err)

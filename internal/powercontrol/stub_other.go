@@ -13,6 +13,9 @@ func init() {
 	getPortStatus = func(*Hub, int) (*PortStatus, error) {
 		return nil, ErrNotSupported
 	}
+	// No enumeration cache on non-Linux platforms, so no hub has a linked
+	// counterpart and dual-hub linking is skipped entirely.
+	hubInCache = func(string) bool { return false }
 }
 
 // linkDualHubs links dual-interface hub counterparts.

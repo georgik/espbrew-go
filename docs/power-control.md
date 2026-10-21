@@ -6,10 +6,30 @@ This document describes the internal implementation of ESPBrew's native USB hub 
 
 ESPBrew implements USB hub power control using two mechanisms:
 
-1. **USBDEVFS ioctl** (primary) - Direct communication with USB device files via kernel ioctls
-2. **sysfs write interface** (fallback) - Writing to `/sys/bus/usb/devices/*/port*/disable` files (kernel >= 6.0)
+1. **sysfs write interface** (primary) - Writing to `/sys/bus/usb/devices/<if>/\<location\>-portN/disable` files (kernel >= 6.0). This is the path that works on **parent hubs** (hubs with downstream sub-hubs), which is what real deployments need.
+2. **USBDEVFS ioctl** (fallback) - Direct communication with USB device files via kernel ioctls. Used only when the kernel is too old for the sysfs `disable` file (`ErrKernelTooOld`).
 
-The implementation uses no external dependencies (no libusb, no cgo bindings), relying entirely on the Go standard library and Linux kernel interfaces.
+The implementation uses no external dependencies (no libusb, no cgo bindings, **no uhubctl**), relying entirely on the Go standard library and Linux kernel interfaces.
+
+### Which path is actually used
+
+`setPortPower` is wired to `setPortPowerSysfsOrIoctl` (see `internal/powercontrol/sysfs_linux.go`):
+
+```go
+func setPortPowerSysfsOrIoctl(hub *Hub, port int, on bool) error {
+    if err := setPortPowerLinux(hub, port, on); err != nil {
+        if errors.Is(err, ErrKernelTooOld) {
+            return setPortPowerIoctl(hub, port, on) // legacy kernels without the disable file
+        }
+        return err
+    }
+    return nil
+}
+```
+
+sysfs is tried first because it needs **no `/dev/bus/usb` access** and works on parent hubs.
+The ioctl path needs the `usbfs` filesystem mounted (it is **not** on the production host kernel
+`7.0.0-1019-nvidia`, where `/proc/filesystems` has no `usbfs` line) and can only reach leaf hubs.
 
 ## Hub Discovery
 
@@ -43,7 +63,37 @@ The filter uses `hasDownstreamHub()` which:
 3. Checks if any entry has a dot in its name (sub-hub format like `X-Y.Z`)
 4. Verifies it's actually a hub by checking `bDeviceClass == 0x09`
 
-Only "leaf" hubs (hubs with no downstream hub devices) are included for power control.
+Only "leaf" hubs (hubs with no downstream hub devices) are included for power control **discovery**.
+
+### Driving parent hubs
+
+The discovery filter above is deliberately **not** a hard restriction on driving. A board can sit
+on a **parent hub** (a hub that itself has downstream sub-hubs) — e.g. the staging board sits on
+`1-6` (a `0bda:5411` hub) at port 1, exposing the CH9102 at `1-6.1`. Driving the parent hub's port
+is exactly what powers the board off and on.
+
+`FindHubByLocation` handles this:
+
+1. It first checks the enumerated leaf-hub list (`listHubsLinux`).
+2. If the location is a parent hub (not in the leaf cache), it resolves it with the sysfs
+   fallback (`hubParseFallback`), which reads the hub's ports directly from `/sys/bus/usb/devices`.
+
+`SetPortPowerDual` then drives it directly:
+
+```go
+func (c *controller) SetPortPowerDual(hub *Hub, port int, on bool) error {
+    // Only link dual-interface partners that we actually enumerated.
+    if hubInCache != nil && hubInCache(hub.Location) && hub.Counterpart == nil {
+        linkDualHubs(hub)
+    }
+    // ...drive primary (and secondary, if present) port...
+}
+```
+
+For a parent hub that was **not** enumerated (so it has no `Counterpart`), `linkDualHubs` is
+skipped and the single parent port is driven directly. This is the path the staging deployment
+uses, and it is why the sysfs interface is the primary mechanism — the ioctl path cannot address
+parent hubs at all.
 
 ## Dual-Interface Hub Coordination
 
@@ -74,24 +124,28 @@ Coordinates power operations across dual-interface hubs:
 
 ## Power Control Implementation
 
-### setPortPowerIoctl() (Primary Path)
+### setPortPowerLinux() (Primary Path)
 
-Uses USBDEVFS ioctl via `/dev/bus/usb/<bus>/<device>`:
+Writes to sysfs `disable` files. The path is per-interface:
 
-1. Opens the hub device file by resolving location to bus/device numbers
-2. Sends control transfer via `USBDEVFS_CONTROL` ioctl:
-   - **Power ON**: SET_FEATURE request with `USB_PORT_FEAT_POWER` (value 8)
-   - **Power OFF**: CLEAR_FEATURE request with `USB_PORT_FEAT_POWER`
-3. For USB 3.0 hubs, waits 100ms after power off for link teardown
-4. Verifies the power state actually changed via readback
+```
+/sys/bus/usb/devices/<interfaceDir>/<location>-portN/disable
+```
 
-### setPortPowerLinux() (Fallback Path)
+e.g. `/sys/bus/usb/devices/1-6:1.0/1-6-port1/disable` for the parent hub `1-6`, port 1.
 
-Writes to sysfs `disable` file:
-- `"1"` = disable port (power off)
-- `"0"` = enable port (power on)
+- `"1"` = disable the port (power off)
+- `"0"` = enable the port (power on)
 
-This path is available on Linux kernel >= 6.0 but is not wired up by default in the current implementation.
+Available on Linux kernel >= 6.0. This is the **primary** path and the only one that works on
+parent hubs. Note that the write can be blocked at the kernel level (see *Deployment* below).
+
+### setPortPowerIoctl() (Fallback Path)
+
+Uses USBDEVFS ioctl via `/dev/bus/usb/<bus>/<device>`. Only reached when the sysfs write fails with
+`ErrKernelTooOld` (kernel < 6.0, so the `disable` file does not exist). Requires the `usbfs`
+filesystem to be mounted — it is **not** on the production host kernel, so this path is effectively
+dead there and sysfs is the only option.
 
 ## Port Status Decoding
 
@@ -113,10 +167,41 @@ Reads port status via USB GET_STATUS class request:
 ### Linux (`sysfs_linux.go`)
 
 Full implementation with:
-- Hub discovery via sysfs enumeration
-- Dual-hub linking and coordination
-- USBDEVFS ioctl power control
-- Port status reading via ioctl
+- Hub discovery via sysfs enumeration (leaf hubs)
+- Parent-hub resolution via `hubParseFallback`
+- Dual-hub linking and coordination (only for enumerated hubs)
+- **Hybrid** power control: `setPortPowerSysfsOrIoctl` tries sysfs first, falls back to ioctl
+  only on `ErrKernelTooOld`. `init()` wires `setPortPower = setPortPowerSysfsOrIoctl`.
+- Port status reading via ioctl (`getPortStatusIoctl`)
+
+### Deployment (k3s / container)
+
+Driving the sysfs `disable` file from inside a container has **two** independent blockers, both of
+which must be cleared for the power control to work in a pod:
+
+1. **`/sys` must be mounted read-write.** The default Kubernetes mount of `/sys` is read-only, so
+   the write fails with `EACCES`. Add a `hostPath` volume mounting the host `/sys` at `/sys`
+   (`type: Directory`, read-write).
+2. **The kernel blocks the write unless the container is privileged.** Even a read-write `/sys`
+   mount plus `CAP_SYS_ADMIN` returns `-EPERM` for the `disable` file — the host kernel (7.0.x)
+   enforces sysfs write-protection independent of capabilities. The write succeeds only when the
+   container runs with `securityContext.privileged: true`.
+
+Staging is a test/dev instance, so `privileged: true` is acceptable there. Production uses the
+`esp.dev/serial-port` device-plugin (not hub power control) and does **not** need this.
+
+```yaml
+# deployment-staging.yaml
+volumeMounts:
+  - name: sys
+    mountPath: /sys          # host /sys, read-write
+volumes:
+  - name: sys
+    hostPath: { path: /sys, type: Directory }
+container:
+  securityContext:
+    privileged: true         # required: kernel blocks disable-file writes otherwise
+```
 
 ### Non-Linux (`stub_other.go`)
 
@@ -206,18 +291,17 @@ The implementation defines specific error types:
 ### Verification Commands
 
 ```bash
-# List all discovered hubs
-./espbrew power status
-
-# Check specific hub status
-./espbrew power status --location <hub-location>
-
-# Verify with uhubctl (optional)
-uhubctl -l <location> -p <port>
-
-# List serial devices before/after
+# List serial devices before/after a cycle (board should disappear then reappear)
 ls -la /dev/serial/by-id/
+
+# Confirm the hub port was actually toggled in sysfs
+# (parent hub 1-6, port 1): the value flips between 0 and 1
+cat /sys/bus/usb/devices/1-6:1.0/1-6-port1/disable
 ```
+
+The authoritative proof that a power cycle rebooted the board is a **fresh USB enumeration**: the
+board's `devnum` in `/sys/bus/usb/devices/1-6.1/uevent` changes after each cycle, and the
+`/dev/serial/by-id` node is removed and recreated.
 
 ## Supported Hardware
 
@@ -228,6 +312,14 @@ ls -la /dev/serial/by-id/
   - USB 3.x hub at location `4-2` (4 ports)
   - Sub-hubs at `1-5.3`, `4-2.3` where devices connect
 
+### Tested Parent Hub
+
+- **Generic USB 2.0 hub** (vendor:product `0bda:5411`)
+  - Parent hub at location `1-6` (has downstream sub-hubs), port 1
+  - Drives the **waveshare CH9102** board (`1a86:55d3`, exposed as `1-6.1`)
+  - This is the staging power-control target and the case that required the sysfs-primary,
+    parent-hub-driving path described above.
+
 ### Known Compatible Chips
 
 - Product ID pairs: `{5411, 0411}`, `{5413, 0413}`, `{5414, 0414}`
@@ -236,11 +328,13 @@ ls -la /dev/serial/by-id/
 
 Potential improvements to the power control implementation:
 
-1. **Enable sysfs fallback path** - Wire up `setPortPowerLinux` as primary or fallback
-2. **Extended hub discovery** - Support for additional dual-interface hub vendors
-3. **Advanced topology handling** - Better support for multi-level USB hub chains
-4. **Windows/macOS support** - Platform-specific implementations for non-Linux systems
-5. **Real-time status monitoring** - Watch for device connection/disconnection events
+1. **Extended hub discovery** - Support for additional dual-interface hub vendors
+2. **Advanced topology handling** - Better support for multi-level USB hub chains
+3. **Platform parity** - Windows/macOS implementations for non-Linux systems
+4. **Real-time status monitoring** - Watch for device connection/disconnection events
+
+> Note: the sysfs path is now the primary mechanism and uhubctl is no longer a dependency, so the
+> "enable sysfs fallback" item from earlier drafts is complete.
 
 ## References
 

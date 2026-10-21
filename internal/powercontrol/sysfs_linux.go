@@ -4,6 +4,7 @@
 package powercontrol
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -42,8 +43,9 @@ var (
 
 func init() {
 	listHubs = listHubsLinux
-	setPortPower = setPortPowerIoctl
+	setPortPower = setPortPowerSysfsOrIoctl
 	getPortStatus = getPortStatusIoctl
+	hubInCache = func(loc string) bool { return findHubInCache(loc) != nil }
 }
 
 // invalidateCache invalidates the hub cache.
@@ -515,6 +517,26 @@ func setPortPowerLinux(hub *Hub, port int, on bool) error {
 	// Invalidate cache after power change
 	invalidateCache()
 
+	return nil
+}
+
+// setPortPowerSysfsOrIoctl is the default setPortPower implementation on Linux.
+//
+// It prefers the sysfs port-disable path (setPortPowerLinux): that path works
+// for BOTH leaf hubs and PARENT hubs (a board plugged into a parent hub's port,
+// e.g. the waveshare CH9102 on hub "1-6", which listHubs deliberately skips and
+// which the ioctl path cannot drive), and it needs no /dev/bus/usb access.
+//
+// It falls back to the USB-DEVFS ioctl path only when sysfs is unavailable
+// (kernel < 6.0, so the per-port "disable" file does not exist), preserving
+// support on older kernels.
+func setPortPowerSysfsOrIoctl(hub *Hub, port int, on bool) error {
+	if err := setPortPowerLinux(hub, port, on); err != nil {
+		if errors.Is(err, ErrKernelTooOld) {
+			return setPortPowerIoctl(hub, port, on)
+		}
+		return err
+	}
 	return nil
 }
 

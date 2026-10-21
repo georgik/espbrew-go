@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/rs/zerolog/log"
 )
 
 var (
@@ -122,6 +124,12 @@ func (c *controller) FindHubByLocation(loc string) (*Hub, error) {
 	if err != nil {
 		return nil, ErrHubNotFound
 	}
+	// A hub resolved here (rather than from the leaf-hub list) is typically a
+	// PARENT hub that listHubs skips. Log it so parent-hub power control is
+	// observable in the logs.
+	log.Debug().Str("location", loc).Str("vendor", hub.Vendor).
+		Str("product", hub.Product).Bool("super_speed", hub.SuperSpeed).
+		Msg("Hub resolved from sysfs fallback (parent hub)")
 	return &hub, nil
 }
 
@@ -154,8 +162,14 @@ func (c *controller) SetPortPowerDual(hub *Hub, port int, on bool) error {
 		return ErrPortNotFound
 	}
 
-	// Link dual hubs if not already linked
-	if hub.Counterpart == nil {
+	// Link dual hubs if not already linked. Only a hub that came from the
+	// enumerated leaf-hub list can have a real dual-interface counterpart that
+	// is also in that list. A hub resolved directly by location is typically a
+	// PARENT hub (one carrying downstream devices) that listHubs deliberately
+	// skips, so it is NOT in the cache: trying to link it would instead match an
+	// unrelated leaf hub of the same vendor and switch that hub's port. Drive
+	// such hubs directly.
+	if hubInCache != nil && hubInCache(hub.Location) && hub.Counterpart == nil {
 		linkDualHubs(hub)
 	}
 
@@ -230,6 +244,13 @@ var (
 	listHubs      func() ([]Hub, error)
 	setPortPower  func(*Hub, int, bool) error
 	getPortStatus func(*Hub, int) (*PortStatus, error)
+	// hubInCache reports whether a hub at the given location is present in the
+	// enumerated leaf-hub cache. It lets the shared controller decide whether a
+	// hub can have a real dual-interface partner (only enumerated hubs can) or
+	// must be driven directly (a PARENT hub resolved by location, which
+	// listHubs skips). It is always safe to call; platforms without a cache
+	// report false.
+	hubInCache func(string) bool
 )
 
 func init() {
