@@ -599,6 +599,18 @@ func (h *SnapAPI) executeSnap(ctx context.Context, devicePath string, req *SnapR
 		executor.SetFramebuffer(true)
 	}
 
+	// Power-cycle a power-managed board right before the monitor starts so the
+	// esp_lcd_screenshot dump fires at a predictable time (~5.5s after the
+	// reset) inside the monitor window. Without this the dump can land before
+	// the monitor begins listening, so no framebuffer is captured. No-op for
+	// boards that are not power-managed. WakeDeviceForSnap holds the board
+	// busy for the whole monitor window so the idle sweeper cannot power the
+	// hub port off mid-snapshot; defer releases it when this returns.
+	if h.leader != nil {
+		h.leader.WakeDeviceForSnap(devicePath)
+		defer h.leader.ReleaseDeviceBusy(devicePath)
+	}
+
 	// Execute snap
 	result, err := executor.Run(ctx)
 	if err != nil {

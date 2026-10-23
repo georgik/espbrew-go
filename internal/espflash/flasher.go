@@ -68,6 +68,17 @@ type FlasherOptions struct {
 	// Default: ResetDefault.
 	ResetMode ResetMode
 
+	// ResetBridge forces the DTR/RTS bootloader reset used for USB-UART-bridge
+	// boards (CH340, CH9102, CP210x, FTDI). Such boards have NO native
+	// USB-JTAG peripheral — the USB endpoint is a UART bridge — so the
+	// USB-JTAG reset path is dead weight and its reopenPort() is disruptive on
+	// a device that never disconnects. When true, connect() uses only the
+	// atomic DTR/RTS reset (matching esptool.py's bridge reset strategy) and
+	// verifies the chip entered download mode via its boot log. The flash
+	// layer sets this automatically once it detects a bridge board by its USB
+	// vendor id (see internal/flash). Default: false.
+	ResetBridge bool
+
 	// ConnectAttempts is the number of connection attempts before failing.
 	// Default: 7, use 2 for fast mode.
 	ConnectAttempts int
@@ -486,6 +497,21 @@ func (f *Flasher) connect() error {
 			}
 			continue
 		case ResetAuto:
+			// A USB-UART-bridge board (CH340, CH9102, CP210x, FTDI) enumerates
+			// as /dev/ttyACM* too, but it has NO native USB-JTAG peripheral: the
+			// USB endpoint is a UART bridge, so the reset is driven purely with
+			// DTR/RTS. The USB-JTAG path below is therefore dead weight for
+			// such a board, and its reopenPort() is disruptive on a device that
+			// never disconnects. When the flash layer has flagged the board as a
+			// bridge (FlasherOptions.ResetBridge), use only the atomic DTR/RTS
+			// reset — matching esptool.py's bridge reset strategy — and confirm
+			// the chip actually entered download mode via its boot log.
+			if f.opts.ResetBridge {
+				unixTightReset(f.port, defaultResetDelay)
+				f.probeBootLog()
+				break
+			}
+
 			// Uniform reset cycle for every port. A UART-bridge board
 			// (CH340, CH9102, CP210x) also enumerates as /dev/ttyACM* but has
 			// no USB-JTAG peripheral, so the first attempt must be the DTR/RTS
@@ -652,6 +678,56 @@ func (f *Flasher) syncToBootloader() (bool, error) {
 	// USB re-enumeration after the reset above. Return false so the
 	// caller loops back and issues another reset attempt.
 	return false, nil
+}
+
+// probeBootLog captures the bytes the chip prints on the serial line right
+// after the reset and logs whether they confirm the chip entered download
+// mode. The ESP32 bootloader announces download mode with a
+// "boot: ... waiting for download" line; seeing it means the DTR/RTS reset
+// worked and the chip is ready to take a flash. Not seeing it is not fatal —
+// the sync loop is the real gate — but is logged so a marginal reset surfaces
+// as a clear early signal instead of a late, confusing SLIP timeout.
+//
+// It runs only on the first reset attempt so a multi-attempt connect pays the
+// capture cost once; the sync loop re-checks on every attempt.
+func (f *Flasher) probeBootLog() {
+	log := readBootLog(f.port, 500*time.Millisecond)
+	lower := strings.ToLower(log)
+	switch {
+	case strings.Contains(lower, "waiting for download"):
+		f.logf("boot log confirms download mode")
+	case strings.TrimSpace(log) != "":
+		f.logf("boot log seen but no 'waiting for download' (chip may still be running the app; a power-cycle-coordinated reset may be needed)")
+	default:
+		f.logf("boot log empty after reset (no serial output captured)")
+	}
+}
+
+// readBootLog captures whatever the chip prints on the serial line during the
+// `timeout` window and returns it as a string. Used to confirm, right after a
+// reset, that the chip entered bootloader download mode. An empty result means
+// the chip printed nothing in the window (or the read never produced data).
+func readBootLog(port serial.Port, timeout time.Duration) string {
+	if port == nil {
+		return ""
+	}
+	if err := port.SetReadTimeout(timeout); err != nil {
+		return ""
+	}
+	var out bytes.Buffer
+	buf := make([]byte, 512)
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		n, err := port.Read(buf)
+		if n > 0 {
+			out.Write(buf[:n])
+		}
+		if err != nil {
+			// Read timeout or EOF ends the capture window.
+			break
+		}
+	}
+	return out.String()
 }
 
 // detectChip identifies the connected ESP chip.

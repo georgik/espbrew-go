@@ -3,6 +3,7 @@ package cluster
 import (
 	"errors"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/georgik/espbrew-go/internal/config"
@@ -158,6 +159,22 @@ func (l *LeaderNode) wakeDevice(path string) {
 	// board is reported awake while it enumerates.
 	l.sleeper.Touch(path)
 
+	// Mark the board in use so the idle timer starts counting from now and the
+	// board is reported awake while it enumerates.
+	l.setStateAwake(path)
+
+	delay := l.sleeper.WakeDelay()
+	log.Info().Str("path", path).Dur("wake_delay", delay).
+		Msg("Device woken, waiting for enumeration before operation")
+	if delay > 0 {
+		time.Sleep(delay)
+	}
+}
+
+// setStateAwake mirrors the manager's awake state onto the live device record
+// so the API and flash/monitor selection report the board as available. It is
+// safe to call on a board that is already awake.
+func (l *LeaderNode) setStateAwake(path string) {
 	l.mu.Lock()
 	if dev, exists := l.state.Devices[path]; exists {
 		dev.Sleeping = false
@@ -167,12 +184,91 @@ func (l *LeaderNode) wakeDevice(path string) {
 		l.state.Devices[path] = dev
 	}
 	l.mu.Unlock()
+}
 
-	delay := l.sleeper.WakeDelay()
-	log.Info().Str("path", path).Dur("wake_delay", delay).
-		Msg("Device woken, waiting for enumeration before operation")
-	if delay > 0 {
-		time.Sleep(delay)
+// wakeDeviceForFlash prepares a power-managed board for a flash. It performs a
+// full hub power cycle (cold boot) when the node can control the hub, then
+// wakes the board and waits for enumeration. The power cycle is the "reliable
+// cold boot" that lets the subsequent DTR/RTS bootloader reset (the flasher's
+// ResetBridge path) land on a freshly rebooted chip instead of one still
+// running the app.
+//
+// It is a no-op for boards that are not power-managed. A power-cycle failure is
+// non-fatal (logged, then falls back to wakeDevice): a board on a node without
+// a controllable hub still flashes via the DTR/RTS reset alone.
+func (l *LeaderNode) wakeDeviceForFlash(path string) {
+	if l.sleeper != nil && isPowerManagedPath(l, path) {
+		if err := l.sleeper.PowerCycle(path); err != nil {
+			log.Warn().Str("path", path).Err(err).
+				Msg("Power cycle before flash failed (falling back to DTR/RTS reset alone)")
+		} else {
+			log.Info().Str("path", path).Msg("Power-cycled board before flash (cold boot)")
+		}
+	}
+	l.wakeDevice(path)
+	// PowerCycle already flipped the manager's sleeping flag and powered the
+	// port back on, so wakeDevice() returns early without mirroring that state
+	// onto the live record. Do it here so the board is reported awake (and
+	// available for selection) regardless of which path woke it.
+	l.setStateAwake(path)
+}
+
+// WakeDeviceForSnap power-cycles a power-managed board so the snapshot monitor
+// starts from a fresh boot. The esp_lcd_screenshot framebuffer dump fires once
+// per boot at generation 10 (~5.5s after the reset); coordinating that reset
+// with the start of the monitor window makes the dump land well inside the
+// window, so it is captured reliably instead of firing before the monitor
+// begins listening (which leaves only the periodic re-dump ~38s later, usually
+// past the window).
+//
+// It is a no-op for boards that are not power-managed. A power-cycle failure is
+// non-fatal (logged, then continues): the monitor still runs against a live
+// board. The follow-through wakeDevice() gives the chip a moment to
+// re-enumerate so the monitor opens the fresh node rather than a stale one.
+func (l *LeaderNode) WakeDeviceForSnap(path string) {
+	if l.sleeper != nil && isPowerManagedPath(l, path) {
+		if err := l.sleeper.PowerCycle(path); err != nil {
+			log.Warn().Str("path", path).Err(err).
+				Msg("Power cycle before snap failed (continuing)")
+		} else {
+			log.Info().Str("path", path).Msg("Power-cycled board before snap (fresh boot)")
+		}
+	}
+	// Hold the board busy for the whole wake-up + monitor window so the idle
+	// sweeper cannot power the hub port off mid-snapshot. PowerCycle already
+	// cleared the sleeping flag, so wakeDevice() below early-returns without
+	// calling Touch(); the busy flag is what keeps the sweeper away. The
+	// caller releases it once the monitor finishes (see ReleaseDeviceBusy).
+	if l.sleeper != nil {
+		l.sleeper.SetBusy(path, true)
+	}
+	l.wakeDevice(path)
+	// PowerCycle flips the sleeping flag, so wakeDevice() would skip its
+	// enumeration wait. Poll the /dev/serial/by-id node until it reappears (the
+	// USB-UART bridge has re-enumerated) so the monitor opens the freshly
+	// created node instead of a stale/absent one. Without this the monitor
+	// fails to open the port ("no such file or directory") and the snapshot is
+	// empty.
+	l.waitForUSBNode(path, 5*time.Second)
+	l.setStateAwake(path)
+}
+
+// waitForUSBNode polls os.Readlink on the given /dev/serial/by-id path until it
+// resolves (the board has re-enumerated after a power cycle) or the timeout
+// elapses. A power-cycled USB-UART bridge drops its by-id symlink for a short
+// window while the kernel re-enumerates it, so callers that start an operation
+// immediately after a cycle must wait out that window first.
+func (l *LeaderNode) waitForUSBNode(path string, timeout time.Duration) {
+	deadline := time.Now().Add(timeout)
+	for {
+		if _, err := os.Readlink(path); err == nil {
+			return
+		}
+		if !time.Now().Before(deadline) {
+			log.Warn().Str("path", path).Msg("USB node did not re-enumerate within timeout")
+			return
+		}
+		time.Sleep(100 * time.Millisecond)
 	}
 }
 
@@ -184,6 +280,13 @@ func (l *LeaderNode) releaseDeviceAfterOp(path string) {
 	}
 	l.sleeper.SetBusy(path, false)
 	l.sleeper.Touch(path)
+}
+
+// ReleaseDeviceBusy is the exported counterpart used by the snap path: the
+// monitor holds the board busy from just after the power cycle until the
+// monitor finishes, then releases it here so the idle sweeper resumes.
+func (l *LeaderNode) ReleaseDeviceBusy(path string) {
+	l.releaseDeviceAfterOp(path)
 }
 
 // isPowerManagedPath reports whether the given port is a power-managed board

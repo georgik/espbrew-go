@@ -17,6 +17,10 @@ type recordingPort struct {
 	dtrCalls []bool
 	rtsCalls []bool
 	calls    []lineCall
+	// closeCount records how many times the port was closed. The USB-JTAG
+	// reset path reconnects by closing and reopening the port, so a non-zero
+	// count is the tell-tale sign that path ran.
+	closeCount int
 }
 
 type lineCall struct {
@@ -36,12 +40,15 @@ func (r *recordingPort) SetRTS(rts bool) error {
 	return nil
 }
 
-func (r *recordingPort) Write(p []byte) (int, error)                          { return len(p), nil }
-func (r *recordingPort) Read(p []byte) (int, error)                           { return 0, nil }
-func (r *recordingPort) SetMode(mode *serial.Mode) error                      { return nil }
-func (r *recordingPort) SetReadTimeout(t time.Duration) error                 { return nil }
-func (r *recordingPort) SetWriteTimeout(t time.Duration) error                { return nil }
-func (r *recordingPort) Close() error                                         { return nil }
+func (r *recordingPort) Write(p []byte) (int, error)           { return len(p), nil }
+func (r *recordingPort) Read(p []byte) (int, error)            { return 0, nil }
+func (r *recordingPort) SetMode(mode *serial.Mode) error       { return nil }
+func (r *recordingPort) SetReadTimeout(t time.Duration) error  { return nil }
+func (r *recordingPort) SetWriteTimeout(t time.Duration) error { return nil }
+func (r *recordingPort) Close() error {
+	r.closeCount++
+	return nil
+}
 func (r *recordingPort) ResetInputBuffer() error                              { return nil }
 func (r *recordingPort) ResetOutputBuffer() error                             { return nil }
 func (r *recordingPort) GetModemStatusBits() (*serial.ModemStatusBits, error) { return nil, nil }

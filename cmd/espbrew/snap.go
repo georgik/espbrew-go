@@ -19,6 +19,14 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// maxFlashRetries is the number of flash attempts the snap command makes before
+// giving up. A flash can cascade: a block lost to RX-FIFO overflow strands the
+// bootloader so it leaves download mode, and a plain re-send cannot recover.
+// Re-submitting the job re-triggers the leader's power-cycle (wakeDeviceForFlash),
+// which re-enters bootloader reliably, so retrying the whole job recovers.
+// With a per-attempt failure rate p, N attempts fail with probability p^N.
+const maxFlashRetries = 4
+
 var snapCmd = &cobra.Command{
 	Use:   "snap [flags]",
 	Short: "Capture snapshot from camera-enabled ESP device",
@@ -356,7 +364,11 @@ func runClusterSnap() error {
 
 		log.Info().Int("images", len(images)).Str("device", devicePath).Msg("Multi-image flash via cluster")
 
-		// Flash each image sequentially
+		// Flash each image sequentially. A failed attempt is retried: a flash can
+		// cascade when a block is lost to RX-FIFO overflow, stranding the bootloader
+		// so it leaves download mode and a plain re-send cannot recover. Re-submitting
+		// the job re-triggers the leader's power-cycle (wakeDeviceForFlash), which
+		// re-enters bootloader reliably, so retrying the whole job is what recovers.
 		for i, img := range images {
 			log.Info().
 				Str("image", img.name).
@@ -366,52 +378,80 @@ func runClusterSnap() error {
 				Int("total", len(images)).
 				Msg("Uploading to cluster")
 
+			// Upload the firmware once; the returned FileID is reused on retries so
+			// we do not re-upload on every power-cycle-coordinated retry.
 			uploadResp, err := client.UploadFirmware(img.path)
 			if err != nil {
 				return fmt.Errorf("upload %s: %w", img.name, err)
 			}
+			fileID := uploadResp.FileID
 
-			log.Info().Str("image", img.name).Str("job_id", uploadResp.FileID).Msg("Flash job submitted")
-
-			// Submit flash job with offset
-			submitReq := cluster.FlashSubmitRequest{
-				DevicePath: devicePath,
-				FileID:     uploadResp.FileID,
-				ClientID:   "espbrew-snap",
-				Offset:     img.offset,
-			}
-
-			flashResp, err := client.SubmitFlash(submitReq)
-			if err != nil {
-				return fmt.Errorf("submit flash %s: %w", img.name, err)
-			}
-
-			log.Info().Str("image", img.name).Str("job_id", flashResp.JobID).Msg("Flash job submitted")
-
-			// Wait for completion
-			progressClient, err := client.ConnectProgress(flashResp.JobID)
-			if err != nil {
-				return fmt.Errorf("connect progress: %w", err)
-			}
-
-			completed := false
-			err = progressClient.Stream(func(msg cluster.ProgressMessage) {
-				switch msg.Type {
-				case "progress":
-					displaySnapProgressBar(msg.Progress, msg.Status)
-				case "complete":
-					completed = true
-					if msg.Status == "completed" {
-						log.Info().Str("image", img.name).Msg("Flash completed successfully")
-					} else {
-						log.Error().Str("error", msg.Error).Msg("Flash failed")
-					}
+			var flashErr error
+			for attempt := 0; attempt < maxFlashRetries; attempt++ {
+				if attempt > 0 {
+					log.Info().
+						Int("attempt", attempt+1).
+						Int("max", maxFlashRetries).
+						Str("image", img.name).
+						Msg("Retrying flash after power-cycle reset")
 				}
-			})
-			progressClient.Close()
 
-			if err != nil || !completed {
-				return fmt.Errorf("%s flash did not complete successfully", img.name)
+				submitReq := cluster.FlashSubmitRequest{
+					DevicePath: devicePath,
+					FileID:     fileID,
+					ClientID:   "espbrew-snap",
+					Offset:     img.offset,
+				}
+
+				flashResp, submitErr := client.SubmitFlash(submitReq)
+				if submitErr != nil {
+					flashErr = fmt.Errorf("submit flash %s: %w", img.name, submitErr)
+					log.Error().Err(flashErr).Str("image", img.name).Msg("Flash submit failed")
+					continue
+				}
+
+				// Wait for completion.
+				progressClient, perr := client.ConnectProgress(flashResp.JobID)
+				if perr != nil {
+					flashErr = fmt.Errorf("connect progress: %w", perr)
+					log.Error().Err(flashErr).Str("image", img.name).Msg("Flash progress stream failed")
+					continue
+				}
+
+				var completeErr error
+				completed := false
+				streamErr := progressClient.Stream(func(msg cluster.ProgressMessage) {
+					switch msg.Type {
+					case "progress":
+						displaySnapProgressBar(msg.Progress, msg.Status)
+					case "complete":
+						completed = true
+						if msg.Status != "completed" {
+							completeErr = fmt.Errorf("%s", msg.Error)
+						}
+					}
+				})
+				progressClient.Close()
+
+				if streamErr != nil {
+					flashErr = streamErr
+					continue
+				}
+				if !completed {
+					flashErr = fmt.Errorf("flash job did not complete successfully")
+					continue
+				}
+				if completeErr != nil {
+					flashErr = completeErr
+					continue
+				}
+
+				log.Info().Str("image", img.name).Msg("Flash completed successfully")
+				break
+			}
+
+			if flashErr != nil {
+				return flashErr
 			}
 		}
 

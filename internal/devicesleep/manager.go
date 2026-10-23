@@ -16,6 +16,7 @@
 package devicesleep
 
 import (
+	"fmt"
 	"sync"
 	"time"
 
@@ -47,6 +48,12 @@ type Config struct {
 	// SweepPeriod is how often the background sweeper checks for idle boards.
 	// Default 5s.
 	SweepPeriod time.Duration
+	// CycleDelay is the pause between powering a hub port off and back on during
+	// a PowerCycle. It gives the device time to fully disconnect (so its USB
+	// enumeration is fresh) before power returns, which is what makes the
+	// subsequent DTR/RTS reset land on a genuinely cold-rebooted chip. Default
+	// 500ms.
+	CycleDelay time.Duration
 }
 
 // DefaultConfig returns the production defaults.
@@ -55,6 +62,7 @@ func DefaultConfig() Config {
 		WakeDelay:   1 * time.Second,
 		IdleTimeout: 2 * time.Minute,
 		SweepPeriod: 5 * time.Second,
+		CycleDelay:  500 * time.Millisecond,
 	}
 }
 
@@ -285,6 +293,51 @@ func (m *Manager) Sleep(path string) error {
 	m.mu.Unlock()
 	log.Info().Str("path", path).Str("location", d.location).
 		Int("port", d.port).Msg("Device put to sleep (hub port powered off)")
+	return nil
+}
+
+// PowerCycle performs a full hub power cycle (off → on) for a registered
+// power-managed board, forcing a cold boot. It is the "reliable cold boot"
+// step that precedes the DTR/RTS bootloader reset: powering the port off and
+// back on reboots the chip fresh, and the subsequent ResetBridge reset then
+// forces it into download mode. Unlike Wake, PowerCycle always cycles the
+// power even if the board is already awake.
+//
+// It is a no-op (ErrUnknownDevice) for an unregistered board and is rejected
+// (ErrBusy) for a board mid-operation, so a cycle cannot interrupt a flash.
+func (m *Manager) PowerCycle(path string) error {
+	m.mu.Lock()
+	d, ok := m.devs[path]
+	m.mu.Unlock()
+	if !ok {
+		return ErrUnknownDevice
+	}
+	if d.busy {
+		return ErrBusy
+	}
+	hub, err := m.ctrl.FindHubByLocation(d.location)
+	if err != nil {
+		return err
+	}
+	// Power off, wait for the device to fully disconnect, then power on.
+	// The gap is what makes the re-enumeration fresh, so the DTR/RTS reset
+	// lands on a genuinely cold-rebooted chip.
+	if err := m.ctrl.SetPortPowerDual(hub, d.port, false); err != nil {
+		return fmt.Errorf("power off: %w", err)
+	}
+	delay := m.cfg.CycleDelay
+	if delay <= 0 {
+		delay = 500 * time.Millisecond
+	}
+	time.Sleep(delay)
+	if err := m.ctrl.SetPortPowerDual(hub, d.port, true); err != nil {
+		return fmt.Errorf("power on: %w", err)
+	}
+	m.mu.Lock()
+	d.sleeping = false
+	m.mu.Unlock()
+	log.Info().Str("path", path).Str("location", d.location).
+		Int("port", d.port).Msg("Device power-cycled (cold boot)")
 	return nil
 }
 

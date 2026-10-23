@@ -571,8 +571,10 @@ func (l *LeaderNode) EnqueueJobWithOffsetAndErase(firmwarePath, devicePath strin
 	}
 
 	// Wake a sleeping power-managed board before it is used. This powers its
-	// hub port on and waits for enumeration; it is a no-op otherwise.
-	l.wakeDevice(devicePath)
+	// hub port on and waits for enumeration; it is a no-op otherwise. For a
+	// power-managed board on a controllable hub this first cold-boots it
+	// (PowerCycle) so the DTR/RTS bootloader reset lands on a fresh chip.
+	l.wakeDeviceForFlash(devicePath)
 
 	job := l.queue.EnqueueFlash(firmwarePath, devicePath, offset, erase, diagram)
 
@@ -632,8 +634,10 @@ func (l *LeaderNode) EnqueueEraseJob(devicePath string, eraseAll bool, address, 
 		return nil, fmt.Errorf("device is disabled: %s", devicePath)
 	}
 
-	// Wake a sleeping power-managed board before it is used.
-	l.wakeDevice(devicePath)
+	// Wake a sleeping power-managed board before it is used. For a
+	// power-managed board on a controllable hub this first cold-boots it
+	// (PowerCycle) so the DTR/RTS bootloader reset lands on a fresh chip.
+	l.wakeDeviceForFlash(devicePath)
 
 	job := l.queue.EnqueueErase(devicePath, eraseAll, address, size)
 

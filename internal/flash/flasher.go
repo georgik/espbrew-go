@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/georgik/espbrew-go/internal/chips"
 	"github.com/georgik/espbrew-go/internal/espflash"
@@ -79,7 +80,7 @@ func (f *Flasher) Flash(ctx context.Context, req *FlashRequest) *FlashResult {
 	}
 
 	// Resolve stable device path to actual port
-	port, err := resolveDevicePath(req.Port)
+	port, err := resolveDevicePathWithRetry(ctx, req.Port, maxResolveTimeout)
 	if err != nil {
 		return &FlashResult{Success: false, Error: fmt.Errorf("resolve device path: %w", err)}
 	}
@@ -124,6 +125,10 @@ func (f *Flasher) Flash(ctx context.Context, req *FlashRequest) *FlashResult {
 		// Disable FastMode for USB CDC ports - they re-enumerate after reset
 		espOpts.FastMode = f.opts.FastMode && !isUSBPort(port)
 		espOpts.SkipUnchanged = f.opts.SkipUnchanged
+		// CH340/CH9102/CP210x boards are USB-UART bridges (no native
+		// USB-JTAG): force the DTR/RTS bootloader reset and skip the dead
+		// USB-JTAG path. Detected from the board's USB vendor id.
+		espOpts.ResetBridge = detectBridgeBoard(port)
 
 		flasher, err := espflash.New(ctx, port, espOpts)
 		if err != nil {
@@ -207,6 +212,10 @@ func (f *Flasher) Flash(ctx context.Context, req *FlashRequest) *FlashResult {
 	// Disable FastMode for USB CDC ports - they re-enumerate after reset
 	espOpts.FastMode = f.opts.FastMode && !isUSBPort(port)
 	espOpts.SkipUnchanged = f.opts.SkipUnchanged
+	// CH340/CH9102/CP210x boards are USB-UART bridges (no native
+	// USB-JTAG): force the DTR/RTS bootloader reset and skip the dead
+	// USB-JTAG path. Detected from the board's USB vendor id.
+	espOpts.ResetBridge = detectBridgeBoard(port)
 
 	flasher, err := espflash.New(ctx, port, espOpts)
 	if err != nil {
@@ -385,7 +394,7 @@ type ReadFlashResult struct {
 // ReadFlash reads data from the device's flash memory at the specified address
 func (f *Flasher) ReadFlash(ctx context.Context, req *ReadFlashRequest) *ReadFlashResult {
 	// Resolve stable device path to actual port
-	port, err := resolveDevicePath(req.Port)
+	port, err := resolveDevicePathWithRetry(ctx, req.Port, maxResolveTimeout)
 	if err != nil {
 		return &ReadFlashResult{Success: false, Error: fmt.Errorf("resolve device path: %w", err)}
 	}
@@ -442,7 +451,7 @@ type EraseResult struct {
 // EraseFlash erases the device's flash memory
 func (f *Flasher) EraseFlash(ctx context.Context, req *EraseRequest) *EraseResult {
 	// Resolve stable device path to actual port
-	port, err := resolveDevicePath(req.Port)
+	port, err := resolveDevicePathWithRetry(ctx, req.Port, maxResolveTimeout)
 	if err != nil {
 		return &EraseResult{Success: false, Error: fmt.Errorf("resolve device path: %w", err)}
 	}
@@ -592,10 +601,29 @@ func isUSBPort(port string) bool {
 	return len(port) > 11 && port[:11] == "/dev/ttyACM" || len(port) > 11 && port[:11] == "/dev/cu.usb"
 }
 
-// resolveDevicePath resolves a stable device path (by-id) to the actual port path.
-// On Linux, resolves /dev/serial/by-id/* symlinks to /dev/ttyUSB* or /dev/ttyACM*.
-// On other platforms or for direct paths, returns the path as-is.
-func resolveDevicePath(path string) (string, error) {
+// maxResolveTimeout bounds how long resolveDevicePathWithRetry waits for a
+// power-cycled or freshly-reset USB device to re-enumerate and reappear under
+// its /dev/serial/by-id link. A full hub power cycle drops the USB link and the
+// kernel (plus udev) needs a moment to mint the symlink again; 15s is a
+// comfortable upper bound that still fails fast enough to surface a genuinely
+// dead or detached board.
+const maxResolveTimeout = 15 * time.Second
+
+// resolveDevicePathWithRetry resolves a /dev/serial/by-id path to its kernel
+// node, retrying while the symlink is temporarily absent.
+//
+// A power-cycled or freshly-reset USB-UART board drops its by-id symlink for
+// the whole re-enumeration window (udev has not yet created the link), so a
+// single readlink fails with ENOENT even though the board is perfectly healthy.
+// Retrying lets the resolution wait out that window instead of failing the
+// whole operation. This is the common failure mode right after a hub power
+// cycle (see devicesleep.PowerCycle) or a DTR/RTS bootloader reset, both of
+// which disconnect the USB link.
+//
+// timeout bounds the total wall-clock wait; 0 defers only to ctx (retry until
+// the context is cancelled). A non-by-id path or a non-Linux host is returned
+// immediately, without any retrying.
+func resolveDevicePathWithRetry(ctx context.Context, path string, timeout time.Duration) (string, error) {
 	if runtime.GOOS != "linux" {
 		return path, nil
 	}
@@ -605,13 +633,127 @@ func resolveDevicePath(path string) (string, error) {
 		return path, nil
 	}
 
-	// Resolve the symlink to get the actual device path
-	target, err := os.Readlink(path)
-	if err != nil {
-		return "", fmt.Errorf("read symlink %s: %w", path, err)
-	}
+	// path is <byIdDir>/<name>; retry reading that single link.
+	return resolveByIDLink(ctx, filepath.Dir(path), filepath.Base(path), timeout)
+}
 
-	// Convert relative symlink target to absolute path
-	resolved := filepath.Join(filepath.Dir(path), target)
-	return resolved, nil
+// resolveByIDLink reads a single /dev/serial/by-id/<name> link inside byIdDir,
+// retrying while the link is temporarily absent.
+//
+// A power-cycled or freshly-reset USB-UART board drops its by-id link for the
+// whole re-enumeration window (udev has not yet created it), so a single
+// readlink fails with ENOENT even though the board is healthy. Retrying lets
+// this wait out that window instead of failing the whole operation. This is the
+// common failure mode right after a hub power cycle (see devicesleep.PowerCycle)
+// or a DTR/RTS bootloader reset, both of which disconnect the USB link.
+//
+// timeout bounds the total wall-clock wait; 0 defers only to ctx (retry until
+// the context is cancelled).
+func resolveByIDLink(ctx context.Context, byIdDir, name string, timeout time.Duration) (string, error) {
+	const retryGap = 250 * time.Millisecond
+	deadline := time.Now().Add(timeout)
+
+	var lastErr error
+	for {
+		// Convert relative symlink target to absolute path.
+		target, err := os.Readlink(filepath.Join(byIdDir, name))
+		if err == nil {
+			resolved := filepath.Join(byIdDir, target)
+			log.Debug().Str("by-id", filepath.Join(byIdDir, name)).Str("resolved", resolved).Msg("Device path resolved")
+			return resolved, nil
+		}
+		lastErr = fmt.Errorf("read symlink %s: %w", filepath.Join(byIdDir, name), err)
+
+		// Decide whether to keep waiting out the re-enumeration window. We stop
+		// when the wall-clock deadline (when set) is exceeded or the context is
+		// cancelled.
+		if timeout > 0 && !time.Now().Before(deadline) {
+			break
+		}
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return "", ctxErr
+		}
+
+		timer := time.NewTimer(retryGap)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return "", ctx.Err()
+		case <-timer.C:
+		}
+	}
+	return "", lastErr
+}
+
+// bridgeVendors lists the USB vendor ids of the UART-bridge chips whose boards
+// are reset purely with DTR/RTS (no native USB-JTAG peripheral). A board is
+// treated as a bridge when its /dev/serial/by-id name encodes one of these.
+var bridgeVendors = []string{"1a86", "3171", "10c4", "0403"}
+
+// detectBridgeBoard reports whether the given serial port sits behind a
+// USB-UART bridge (CH9102/CH340/CH341, CP210x, FTDI) rather than a native
+// USB-JTAG/Serial endpoint. Bridge boards have no USB-JTAG peripheral, so
+// flashing must use the DTR/RTS reset (FlasherOptions.ResetBridge), not the
+// USB-JTAG path.
+//
+// It matches the /dev/serial/by-id symlink whose target is `port`: the
+// symlink name encodes the USB vendor id (e.g.
+// "usb-1a86_USB_Single_Serial_…"), the reliable, driver-independent signal.
+// It is a no-op (returns false) on non-Linux hosts or when the by-id node is
+// unavailable, so callers can set the flag unconditionally.
+func detectBridgeBoard(port string) bool {
+	return detectBridgeBoardIn(port, "/dev/serial/by-id")
+}
+
+// detectBridgeBoardIn is the testable core of detectBridgeBoard: it looks the
+// port up in the given /dev/serial/by-id directory. See detectBridgeBoard for
+// the semantics.
+func detectBridgeBoardIn(port string, byIDDir string) bool {
+	if runtime.GOOS != "linux" {
+		return false
+	}
+	portBase := filepath.Base(port)
+	entries, err := os.ReadDir(byIDDir)
+	if err != nil {
+		return false
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		name := e.Name() // e.g. "usb-1a86_USB_Single_Serial_5971084553-if00"
+		target, err := os.Readlink(filepath.Join(byIDDir, name))
+		if err != nil {
+			continue
+		}
+		// The symlink target is the kernel node name ("ttyACM5") or a full
+		// path ("/dev/ttyACM5"); compare on the basename.
+		if filepath.Base(target) != portBase {
+			continue
+		}
+		return vendorInName(name)
+	}
+	return false
+}
+
+// vendorInName reports whether a /dev/serial/by-id name encodes a bridge
+// vendor id. The name begins with "usb-<vid>"; the match is bounded so a 4-hex
+// vendor id never matches a longer id (e.g. "1a86" must not match "1a860").
+func vendorInName(name string) bool {
+	lower := strings.ToLower(name)
+	for _, vid := range bridgeVendors {
+		prefix := "usb-" + vid
+		if strings.HasPrefix(lower, prefix) {
+			rest := lower[len(prefix):]
+			if rest == "" || !isHexChar(rest[0]) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// isHexChar reports whether b is a lowercase hex digit (0-9, a-f).
+func isHexChar(b byte) bool {
+	return b >= '0' && b <= '9' || b >= 'a' && b <= 'f'
 }

@@ -2,6 +2,8 @@ package cluster
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -32,6 +34,7 @@ func newSleepTestLeader(t *testing.T, devices ...config.DeviceConfig) (*LeaderNo
 			WakeDelay:   0, // no artificial delay in tests
 			IdleTimeout: 40 * time.Millisecond,
 			SweepPeriod: 10 * time.Millisecond,
+			CycleDelay:  0, // no power-cycle pause in tests
 		},
 	}
 
@@ -343,5 +346,65 @@ func TestLeaderPowerDeviceRefusedWhileBusy(t *testing.T) {
 	// The refused request must not have toggled the port.
 	if !mock.IsPoweredOn("1-2", 1) {
 		t.Errorf("a busy board's port must stay powered on")
+	}
+}
+
+// TestWakeDeviceForSnapHoldsBoardBusy guards the regression where WakeDeviceForSnap
+// power-cycled the board (clearing the sleeping flag) but wakeDevice() then
+// early-returned without calling Touch(), leaving lastUsed stale so the idle
+// sweeper powered the hub port off mid-snapshot. The busy flag held by
+// WakeDeviceForSnap must keep the sweeper away for the whole monitor window.
+func TestWakeDeviceForSnapHoldsBoardBusy(t *testing.T) {
+	// Give waitForUSBNode a resolvable by-id link so it returns immediately
+	// instead of waiting out its timeout against a non-existent node.
+	byId := t.TempDir()
+	node := filepath.Join(byId, "ttyACM0")
+	if err := os.WriteFile(node, []byte("x"), 0o644); err != nil {
+		t.Fatalf("write node: %v", err)
+	}
+	link := filepath.Join(byId, "usb-powerboard-if00")
+	if err := os.Symlink(node, link); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+	path := link
+
+	leader, mock := newSleepTestLeader(t, config.DeviceConfig{
+		Path:        path,
+		ID:          "esp-aa:bb:cc:dd:ee:ff-if00",
+		ChipType:    "ESP32-C3",
+		Alias:       "power-board",
+		USBLocation: "1-2",
+		USBPort:     2,
+	})
+
+	// The board starts sleeping.
+	if !leader.sleeper.IsSleeping(path) {
+		t.Fatal("board should start sleeping")
+	}
+
+	// WakeDeviceForSnap power-cycles, waits for enumeration, and must hold the
+	// board busy so the idle sweeper cannot power the hub port off
+	// mid-snapshot.
+	leader.WakeDeviceForSnap(path)
+
+	if !leader.sleeper.IsBusy(path) {
+		t.Errorf("board should be busy after WakeDeviceForSnap")
+	}
+	if !mock.IsPoweredOn("1-2", 2) {
+		t.Errorf("hub port should be powered on after wake")
+	}
+
+	// Even with a stale lastUsed, the busy flag must keep the sweeper from
+	// powering the board off. This is the exact condition that used to kill a
+	// live snapshot.
+	if down := leader.sleeper.Sweep(time.Now().Add(10 * time.Minute)); len(down) != 0 {
+		t.Errorf("sweeper must not power down a busy board, got %v", down)
+	}
+
+	// Releasing busy must clear the flag so the idle sweeper resumes
+	// controlling the board after the monitor finishes.
+	leader.ReleaseDeviceBusy(path)
+	if leader.sleeper.IsBusy(path) {
+		t.Errorf("board should no longer be busy after ReleaseDeviceBusy")
 	}
 }
