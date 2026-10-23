@@ -58,17 +58,24 @@ jobs:
         run: go build -o bin/testsummary ./tools/testsummary
 
       - name: Test
-        # Write `go test -json` output to a file first, then feed it to the
-        # summarizer. A shell pipe (`|`) is NOT portable across the runners:
-        # bash (Linux/macOS) supports it, but PowerShell (Windows) refuses to
-        # run an executable in the middle of a pipeline ("Cannot run a
-        # document in the middle of a pipeline"). The redirect `>` works in
-        # bash, PowerShell, and cmd.exe, and the summarizer now accepts the
-        # file path as an argument. A relative path is used (not $GITHUB_TEMP,
-        # which is not set on every runner) so the file is always writable.
-        # Exit code stays non-zero on failure, so CI still fails exactly as
-        # before — only the report is now readable at the end.
+        # Two goals: (1) surface the failure directly in the CI log, and
+        # (2) keep the end-of-run summary from testsummary. The previous
+        # `go test -json > file` hid ALL output behind a JSON stream that only
+        # the summarizer could read, so a failing test produced exit code 1
+        # with nothing to diagnose (this is what made the macOS failure
+        # invisible). We therefore:
+        #   - run WITHOUT -json and pipe through `tee` so the standard test
+        #     output (=== RUN / --- FAIL / race reports / error messages) is
+        #     visible in the log AND captured to a file for debugging;
+        #   - additionally capture the -json stream for the summarizer.
+        # `tee` is a bash utility; the test matrix runs only on ubuntu/* and
+        # macos runners (all bash), so a pipe is safe here — unlike the old
+        # Windows concern that motivated the original `>` redirect.
         run: |
+          # `pipefail` makes this step exit non-zero when the primary plain
+          # run fails (tee's own exit code would otherwise mask it).
+          set -o pipefail
+          go test -race -count=1 ./... 2>&1 | tee test-output.txt
           go test -json -race -count=1 ./... > test-results.json
           ./bin/testsummary test-results.json
 
