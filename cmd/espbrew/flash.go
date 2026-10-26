@@ -74,7 +74,7 @@ func init() {
 	flashCmd.Flags().IntVar(&flashOpts.flashRetries, "flash-retries", 3, "Number of flash attempts on failure (a reset cycle clears the UART-bridge cascade)")
 	flashCmd.Flags().IntVar(&flashOpts.offset, "offset", 0, "Flash offset (default 0x0, ignored with --preset)")
 	flashCmd.Flags().StringVar(&flashOpts.preset, "preset", "app", "Offset preset: bootloader, partitions, app")
-	flashCmd.Flags().StringVar(&flashOpts.chip, "chip", "auto", "Chip type (auto, esp8266, esp32, esp32s2, esp32s3, esp32c3, esp32c6, esp32h2)")
+	flashCmd.Flags().StringVar(&flashOpts.chip, "chip", "auto", "Chip type (auto, esp8266, esp32, esp32s2, esp32s3, esp32c3, esp32c6, esp32h2, esp32p4)")
 	flashCmd.Flags().StringVar(&flashOpts.flashMode, "fm", "keep", "Flash mode (keep, qio, qout, dio, dout)")
 	flashCmd.Flags().StringVar(&flashOpts.flashFreq, "ff", "keep", "Flash frequency (keep, 80m, 40m, 26m, 20m)")
 	flashCmd.Flags().StringVar(&flashOpts.flashSize, "fs", "keep", "Flash size (keep, 1MB, 2MB, 4MB, 8MB, 16MB)")
@@ -255,23 +255,97 @@ func detectChipFromProject(cwd string, projType project.ProjectType) chips.Chip 
 	defer cargo.Close()
 
 	scanner := bufio.NewScanner(cargo)
+	// Parse the Cargo.toml dependency table. A crate's name is declared on its
+	// own line (e.g. `esp-hal = {`) and its `features = [...]` array can appear
+	// on the *next* line(s), so matching the crate name and the features on a
+	// single line (the old heuristic) misses the common multi-line form:
+	//
+	//     esp-hal = {
+	//         git = "...",
+	//         features = ["esp32p4", "unstable"]
+	//     }
+	//
+	// Instead we track the crate currently being declared (the table key on
+	// the line that opens a `{` block, or the key of any inline table) and,
+	// whenever we see a `features = [...]` line, check its chip names if the
+	// open crate is an esp crate.
+	var currentCrate string
 	for scanner.Scan() {
-		line := scanner.Text()
-		if !strings.Contains(line, "esp-hal") || !strings.Contains(line, "features") {
-			continue
+		line := strings.TrimSpace(scanner.Text())
+
+		// Update the crate we are currently inside. A line of the form
+		// `<key> = {` opens a dependency table; remember `<key>`.
+		if key, ok := tableKey(line); ok {
+			currentCrate = key
 		}
-		for _, name := range []string{
-			"esp32c3", "esp32c6", "esp32c2", "esp32c5", "esp32h2",
-			"esp32s3", "esp32s2", "esp32",
-		} {
-			if strings.Contains(line, fmt.Sprintf(`"%s"`, name)) {
-				if chip, ok := chips.ParseChip(name); ok {
-					return chip
-				}
+
+		// A line that closes the table (bare `}`) ends the block.
+		if strings.TrimRight(line, " ") == "}" {
+			currentCrate = ""
+		}
+
+		// If this line carries a features array and the open crate is an esp
+		// crate, look for a chip name inside the array.
+		if currentCrate != "" && strings.Contains(line, "features") {
+			if chip, ok := chipInFeatures(currentCrate, line); ok {
+				return chip
 			}
 		}
 	}
 	return 0
+}
+
+// tableKey returns the left-hand-side key of a TOML table assignment such as
+// `esp-hal = {`. It returns ok=false for lines that do not open a table.
+func tableKey(line string) (string, bool) {
+	// Only lines that assign a table (`key = {`) start a dependency block.
+	idx := strings.Index(line, "=")
+	if idx <= 0 || idx+1 >= len(line) || line[idx+1] != ' ' {
+		return "", false
+	}
+	// Skip whitespace after `=` to find the `{`.
+	rest := line[idx+1:]
+	rest = strings.TrimLeft(rest, " \t")
+	if len(rest) == 0 || rest[0] != '{' {
+		return "", false
+	}
+	key := strings.TrimSpace(line[:idx])
+	// The key must be a bare identifier (no quotes) to be a table name.
+	if key == "" || strings.ContainsAny(key, "\"'") {
+		return "", false
+	}
+	return key, true
+}
+
+// chipInFeatures reports whether the given features line (inside a dependency
+// table for `crate`) names a known ESP chip. It returns ok=false when no chip
+// feature is present.
+func chipInFeatures(crate, line string) (chips.Chip, bool) {
+	// Only esp-family crates carry chip features.
+	if !strings.HasPrefix(crate, "esp-") && crate != "esp-hal" {
+		return 0, false
+	}
+	// Extract the first `[...]` array on the line (the features list).
+	open := strings.Index(line, "[")
+	if open < 0 {
+		return 0, false
+	}
+	close := strings.Index(line[open:], "]")
+	if close < 0 {
+		return 0, false
+	}
+	array := line[open : open+close+1]
+	for _, name := range []string{
+		"esp32c3", "esp32c6", "esp32c2", "esp32c5", "esp32h2",
+		"esp32s3", "esp32s2", "esp32", "esp32p4",
+	} {
+		if strings.Contains(array, fmt.Sprintf(`"%s"`, name)) {
+			if chip, ok := chips.ParseChip(name); ok {
+				return chip, true
+			}
+		}
+	}
+	return 0, false
 }
 
 // resolveFlashChip picks the chip used to convert a detected ELF into an

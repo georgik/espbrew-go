@@ -76,14 +76,32 @@ func sameMemoryRegion(addr1, addr2 uint32) bool {
 		(inDRAM(addr1) && inDRAM(addr2))
 }
 
-// isInIROM checks if an address is in the IROM region (needs memory mapping alignment)
-func isInIROM(addr uint32) bool {
-	return addr >= IROM_START && addr < IROM_END
+// chipFlashRegion returns the IROM and DROM (flash) address windows for a chip.
+// The bootloader classifies ELF segments as flash or RAM using these windows,
+// exactly as espflash does via Chip::addr_is_flash / the chip metadata memory
+// layout. The windows differ per chip: most chips map flash at 0x42000000, but
+// the ESP32-P4 maps its flash at 0x40000000.
+func chipFlashRegion(chip Chip) (iromStart, iromEnd, dromStart, dromEnd uint32) {
+	switch chip {
+	case ChipESP32P4:
+		// ESP32-P4: flash (SOC_IROM/SOC_DROM) mapped at 0x40000000.
+		return 0x40000000, 0x42000000, 0x40000000, 0x42000000
+	default:
+		// ESP32-S3, C3, C6, H2, ...: flash mapped at 0x42000000.
+		return IROM_START, IROM_END, DROM_START, DROM_END
+	}
 }
 
-// isInDROM checks if an address is in the DROM region (needs memory mapping alignment)
-func isInDROM(addr uint32) bool {
-	return addr >= DROM_START && addr < DROM_END
+// isInIROM checks if an address is in the chip's IROM region (needs memory mapping alignment)
+func isInIROM(chip Chip, addr uint32) bool {
+	s, e, _, _ := chipFlashRegion(chip)
+	return addr >= s && addr < e
+}
+
+// isInDROM checks if an address is in the chip's DROM region (needs memory mapping alignment)
+func isInDROM(chip Chip, addr uint32) bool {
+	_, _, s, e := chipFlashRegion(chip)
+	return addr >= s && addr < e
 }
 
 // ExtendedImageHeader is the extended ESP image header (24 bytes)
@@ -119,18 +137,19 @@ type Segment struct {
 
 // ImageBuilder builds ESP-IDF format images
 type ImageBuilder struct {
-	chip        chips.Chip
-	flashMode   uint8
-	flashSize   uint8
-	flashFreq   uint8
-	entry       uint32
-	segments    []Segment
-	romSegments []Segment
-	ramSegments []Segment
-	mmuPageSize uint32
-	bootloader  []byte
-	partition   []byte
-	lastSegAddr uint32 // Track last segment address for region change detection
+	chip          chips.Chip
+	flashMode     uint8
+	flashSize     uint8
+	flashFreq     uint8
+	entry         uint32
+	segments      []Segment
+	romSegments   []Segment
+	ramSegments   []Segment
+	mmuPageSize   uint32
+	bootloader    []byte
+	partition     []byte
+	appDescSha256 *[32]byte // ELF SHA256 to stamp into the app descriptor
+	lastSegAddr   uint32    // Track last segment address for region change detection
 }
 
 // Chip is an alias for chips.Chip for convenience
@@ -148,6 +167,8 @@ const (
 	ChipESP32C5  = chips.ChipESP32C5
 	ChipESP32C61 = chips.ChipESP32C61
 	ChipESP32P4  = chips.ChipESP32P4
+	ChipESP32H4  = chips.ChipESP32H4
+	ChipESP32S31 = chips.ChipESP32S31
 )
 
 // FlashMode represents the flash read mode
@@ -268,9 +289,52 @@ func (b *ImageBuilder) SetMMUPageSize(size uint32) {
 	b.mmuPageSize = size
 }
 
+// SetAppDescriptorSha256 sets the SHA256 of the source ELF file. espflash
+// stamps this into the app descriptor's app_elf_sha256 field (offset 144 in
+// esp_app_desc_t); we replicate it so the produced image matches espflash.
+func (b *ImageBuilder) SetAppDescriptorSha256(sha [32]byte) {
+	b.appDescSha256 = &sha
+}
+
 // AddSegment adds a code/data segment
 func (b *ImageBuilder) AddSegment(addr uint32, data []byte) {
 	b.segments = append(b.segments, Segment{Addr: addr, Data: data})
+}
+
+// appDescriptorMagicWord is ESP_APP_DESC_MAGIC_WORD. Every valid app descriptor
+// starts with it, so we can locate the descriptor inside its segment without
+// re-parsing the ELF (which is what espflash does via .flash.appdesc).
+const appDescriptorMagicWord uint32 = 0xABCD5432
+
+// hasAppDescriptorMagic reports whether seg.Data contains an app descriptor
+// (identified by its magic word) anywhere in its first appDescriptorSize bytes.
+func hasAppDescriptorMagic(data []byte) bool {
+	// The magic is the first 4 bytes of an app descriptor; the descriptor is
+	// always at the start of the segment that contains it.
+	if len(data) < 4 {
+		return false
+	}
+	return readU32LE(data[0:4]) == appDescriptorMagicWord
+}
+
+// appDescriptorMMUPageSize reads the "MMU page size in log base 2" field from an
+// app descriptor and returns the page size (1 << field). It returns 0 when the
+// descriptor is absent or the field is 0, signalling the caller to fall back to
+// the builder's default page size.
+func appDescriptorMMUPageSize(data []byte) uint32 {
+	if len(data) < 4+180 {
+		return 0
+	}
+	field := data[4+180-4] // mmu_page_size sits 180 bytes after the magic start
+	if field == 0 || field > 16 {
+		return 0
+	}
+	return uint32(1) << field
+}
+
+// readU32LE reads a little-endian u32.
+func readU32LE(b []byte) uint32 {
+	return uint32(b[0]) | uint32(b[1])<<8 | uint32(b[2])<<16 | uint32(b[3])<<24
 }
 
 // segmentPadding calculates padding needed for IROM/DROM alignment
@@ -305,44 +369,92 @@ func (b *ImageBuilder) BuildAppImage() ([]byte, error) {
 	var romSegments []Segment
 	var ramSegments []Segment
 	for _, seg := range segmentsToProcess {
-		if isInIROM(seg.Addr) || isInDROM(seg.Addr) {
+		if isInIROM(b.chip, seg.Addr) || isInDROM(b.chip, seg.Addr) {
 			romSegments = append(romSegments, seg)
 		} else {
 			ramSegments = append(ramSegments, seg)
 		}
 	}
 
-	// Merge ROM segments (but NOT RAM segments - espflash keeps them separate)
-	romMerged := b.mergeSegments(romSegments)
-
-	// Pad ROM segments to 4-byte alignment
-	romPadded := b.padSegments(romMerged)
-
-	// Sort RAM segments by address
-	sort.Slice(ramSegments, func(i, j int) bool {
-		return ramSegments[i].Addr < ramSegments[j].Addr
-	})
-
-	// RAM segments are merged only if EXACTLY adjacent (like espflash)
-	// Unlike ROM segments, we don't add padding between RAM segments
-	ramMerged := b.mergeAdjacentExact(ramSegments)
+	// Merge adjacent segments, then pad to 4-byte alignment.
+	//
+	// This mirrors espflash exactly: `pad_align_segments(merge_adjacent_segments(..))`
+	// is applied to BOTH the flash segments and the RAM segments. Merging first
+	// avoids the overlapping-segment problem that padding-then-merging would
+	// introduce, and padding last keeps every segment 4-byte aligned so the
+	// bootloader can trust the SegmentHeader.Length field.
+	//
+	// NOTE: unlike the old code, RAM segments are merged with the same
+	// 4-byte-gap tolerance as ROM segments (mergeSegments), not only when
+	// exactly adjacent. That is what espflash does, and it is required for the
+	// gap-filling before flash segments to line up.
+	flashSegments := b.padSegments(b.mergeSegments(romSegments))
+	ramMerged := b.padSegments(b.mergeSegments(ramSegments))
 
 	// Build image
 	var buf bytes.Buffer
 
-	// Build extended header
-	header := ExtendedImageHeader{
-		Magic:          ESP_MAGIC,
-		SegmentCount:   0, // Will be updated later
-		FlashMode:      b.flashMode,
-		FlashSizeFreq:  (b.flashSize << 4) | b.flashFreq,
-		Entry:          b.entry,
-		WPPin:          WP_PIN_DISABLED,
-		ChipID:         b.chip.ESPChipID(),
-		MinRev:         0,
-		MinChipRevFull: 0,
-		MaxChipRevFull: 0x63, // Support all chip revisions (99 = 0x63)
-		AppendDigest:   1,
+	// Build the 24-byte extended image header.
+	//
+	// We mirror espflash exactly: the app header is derived from the
+	// bootloader's header, then specific fields are overridden. Building the
+	// header from the bootloader yields the correct max_chip_rev_full (the
+	// ESP32-P4 v3 bootloader declares 399), which the P4 v3 bootloader checks
+	// against the silicon revision. The previous hardcoded 0xFFFF made the P4
+	// v3 bootloader reject the image with
+	// "chip revision check failed. Required <= v0.99, found vX.X".
+	var header ExtendedImageHeader
+	if len(b.bootloader) >= 24 {
+		// Copy the 24-byte header from the bootloader verbatim, then override
+		// the fields espflash overrides when building the app header (see
+		// image_format/idf.rs): flash_config and entry always change; wp_pin,
+		// chip_id and append_digest are normalised. The remaining fields
+		// (flash_mode, min_rev, min/max chip rev, reserved) are kept from the
+		// bootloader.
+		header = ExtendedImageHeader{
+			Magic:          b.bootloader[0],
+			SegmentCount:   b.bootloader[1],
+			FlashMode:      b.bootloader[2],
+			FlashSizeFreq:  b.bootloader[3],
+			Entry:          binary.LittleEndian.Uint32(b.bootloader[4:8]),
+			WPPin:          b.bootloader[8],
+			ClkQDrv:        b.bootloader[9],
+			D_CSDrv:        b.bootloader[10],
+			GD_WPDrv:       b.bootloader[11],
+			ChipID:         binary.LittleEndian.Uint16(b.bootloader[12:14]),
+			MinRev:         b.bootloader[14],
+			MinChipRevFull: binary.LittleEndian.Uint16(b.bootloader[15:17]),
+			MaxChipRevFull: binary.LittleEndian.Uint16(b.bootloader[17:19]),
+			AppendDigest:   b.bootloader[23],
+		}
+		// Keep the bootloader's reserved bytes (offsets 19..23).
+		copy(header.Reserved[:], b.bootloader[19:23])
+
+		// Override the fields espflash overrides.
+		header.FlashSizeFreq = (b.flashSize << 4) | b.flashFreq
+		header.Entry = b.entry
+		header.WPPin = WP_PIN_DISABLED
+		header.ChipID = b.chip.ESPChipID()
+		header.AppendDigest = 1
+	} else {
+		// No bootloader available (e.g. chips without an embedded bootloader):
+		// keep the previous hand-constructed header so behaviour is unchanged.
+		header = ExtendedImageHeader{
+			Magic:          ESP_MAGIC,
+			SegmentCount:   0, // Will be updated later
+			FlashMode:      b.flashMode,
+			FlashSizeFreq:  (b.flashSize << 4) | b.flashFreq,
+			Entry:          b.entry,
+			WPPin:          WP_PIN_DISABLED,
+			ChipID:         b.chip.ESPChipID(),
+			MinRev:         0,
+			MinChipRevFull: 0,
+			// Support all chip revisions. espflash uses u16::MAX here; the old
+			// 0x63 (= 99 -> v0.99) capped the max supported revision at v0.99,
+			// which made the P4 v3 bootloader reject rev >= 3.0 silicon.
+			MaxChipRevFull: 0xFFFF,
+			AppendDigest:   1,
+		}
 	}
 
 	// Write header (24 bytes extended header)
@@ -352,90 +464,100 @@ func (b *ImageBuilder) BuildAppImage() ([]byte, error) {
 	var checksum uint8 = ESP_CHECKSUM_MAGIC
 	segmentCount := 0
 
-	// Separate DROM and IROM segments (they have different alignment requirements)
-	var dromSegments []Segment
-	var iromSegments []Segment
-	for _, seg := range romPadded {
-		if isInDROM(seg.Addr) {
-			dromSegments = append(dromSegments, seg)
-		} else {
-			iromSegments = append(iromSegments, seg)
+	// Place every flash segment with per-segment MMU-page alignment, filling
+	// the gaps with RAM-segment data (or zeros) — exactly like espflash.
+	//
+	// This is the core of the P4 fix. The ESP32 (including P4) bootloader
+	// verifies that each flash segment's data lands at a file offset whose
+	// value modulo the MMU page size equals the segment's load address modulo
+	// that page size. The old code only aligned the first IROM segment and then
+	// wrote the rest back-to-back, so every later P4 segment landed at the
+	// wrong offset and the v3 bootloader rejected the image with
+	// "Segment N load address 0x…, doesn't match data 0x…".
+	//
+	// We no longer split DROM from IROM: espflash treats every flash segment
+	// uniformly, and for the P4 the whole flash window (0x40000000..) is a
+	// single region anyway.
+
+	// Bubble the app descriptor segment to the first position (like espflash)
+	// and pick up the MMU page size it requests. Bubbling after merging/padding
+	// is safe because the descriptor's bytes do not move, only its order.
+	appDescIndex := -1
+	mmuPageSize := b.mmuPageSize
+	for i := range flashSegments {
+		if hasAppDescriptorMagic(flashSegments[i].Data) {
+			appDescIndex = i
+			if ps := appDescriptorMMUPageSize(flashSegments[i].Data); ps > 0 {
+				mmuPageSize = ps
+			}
+			break
 		}
 	}
-
-	// Use a mutable copy of ramMerged for padding (espflash uses RAM to fill gaps)
-	remainingRam := make([]Segment, len(ramMerged))
-	copy(remainingRam, ramMerged)
-
-	// Process DROM segments first (no alignment needed, just write them)
-	for _, seg := range dromSegments {
-		checksum = b.saveFlashSegment(&buf, seg, checksum, b.mmuPageSize)
-		segmentCount++
+	if appDescIndex >= 0 && appDescIndex != 0 {
+		flashSegments[0], flashSegments[appDescIndex] = flashSegments[appDescIndex], flashSegments[0]
 	}
 
-	// Fill gap with RAM segments before IROM
-	// espflash writes RAM segments here to avoid large padding segments
-	if len(iromSegments) > 0 {
-		// Calculate where IROM needs to be (absolute file offset)
-		// IROM alignment: file_offset % IROM_ALIGN == (seg.Addr - SEG_HEADER_LEN) % IROM_ALIGN
-		iromSeg := iromSegments[0]
-		alignmentOffset := (iromSeg.Addr - SEG_HEADER_LEN) % b.mmuPageSize
-		currentPage := buf.Len() / int(b.mmuPageSize)
-		targetOffset := currentPage*int(b.mmuPageSize) + int(alignmentOffset)
-
-		// If targetOffset is behind us, move to next page
-		if targetOffset < buf.Len() {
-			targetOffset = (currentPage+1)*int(b.mmuPageSize) + int(alignmentOffset)
-		}
-
-		// Write RAM segments (splitting if needed) until we reach target offset
-		for len(remainingRam) > 0 && buf.Len()+8 < targetOffset {
-			ramSeg := remainingRam[0]
-			remaining := targetOffset - (buf.Len() + 8 + len(ramSeg.Data))
-
-			if remaining >= 0 {
-				// Full segment fits
-				checksum = b.saveSegment(&buf, ramSeg, checksum)
-				segmentCount++
-				remainingRam = remainingRam[1:]
-			} else {
-				// Need to split segment
-				splitLen := uint32(targetOffset - (buf.Len() + 8))
-				padSeg := Segment{
-					Addr: ramSeg.Addr,
-					Data: ramSeg.Data[:splitLen],
-				}
-				checksum = b.saveSegment(&buf, padSeg, checksum)
-				segmentCount++
-				// Keep remainder for later
-				remainingRam[0] = Segment{
-					Addr: ramSeg.Addr + splitLen,
-					Data: ramSeg.Data[splitLen:],
+	// Stamp the ELF SHA256 into the app descriptor's app_elf_sha256 field,
+	// matching espflash (image_format/idf.rs). The descriptor sits at the
+	// start of its segment, and app_elf_sha256 is at offset 144. This must
+	// happen before the segments are written so the image checksum covers it.
+	if b.appDescSha256 != nil {
+		for i := range flashSegments {
+			if hasAppDescriptorMagic(flashSegments[i].Data) {
+				const appDescShaOffset = 144
+				if appDescShaOffset+32 <= uint32(len(flashSegments[i].Data)) {
+					copy(flashSegments[i].Data[appDescShaOffset:appDescShaOffset+32], b.appDescSha256[:])
 				}
 				break
 			}
 		}
-
-		// Add padding to align IROM (if any gap remains)
-		for buf.Len()+8 < targetOffset {
-			padLen := uint32(targetOffset - (buf.Len() + 8))
-			padSegHeader := SegmentHeader{Addr: 0, Length: padLen}
-			_ = binary.Write(&buf, binary.LittleEndian, padSegHeader)
-			for i := uint32(0); i < padLen; i++ {
-				buf.WriteByte(0)
-				checksum ^= byte(i & 0xFF)
-			}
-			segmentCount++
-		}
-
-		// Write IROM segments
-		for _, seg := range iromSegments {
-			checksum = b.saveFlashSegment(&buf, seg, checksum, b.mmuPageSize)
-			segmentCount++
-		}
 	}
 
-	// Write remaining RAM segments WITHOUT padding (espflash behavior)
+	remainingRam := ramMerged
+	for _, seg := range flashSegments {
+	flushLoop:
+		for {
+			padLen := segmentPadding(buf.Len(), seg, mmuPageSize)
+
+			switch {
+			case padLen > SEG_HEADER_LEN && len(remainingRam) > 0:
+				// Fill the gap with RAM-segment data. Split up to padLen bytes
+				// off the first RAM segment and save them as a filler segment;
+				// the remainder is kept for later (like espflash split_off).
+				ram := remainingRam[0]
+				take := padLen
+				if take > uint32(len(ram.Data)) {
+					take = uint32(len(ram.Data))
+				}
+				checksum = b.saveSegment(&buf, Segment{Addr: ram.Addr, Data: ram.Data[:take]}, checksum)
+				segmentCount++
+				if take < uint32(len(ram.Data)) {
+					remainingRam[0] = Segment{Addr: ram.Addr + take, Data: ram.Data[take:]}
+				} else {
+					remainingRam = remainingRam[1:]
+				}
+			case padLen > 0:
+				// Fill the gap with a zero-filled dummy segment (no 4-byte
+				// alignment padding, exactly like espflash).
+				var hdr [SEG_HEADER_LEN]byte
+				binary.LittleEndian.PutUint32(hdr[0:], 0)
+				binary.LittleEndian.PutUint32(hdr[4:], padLen)
+				buf.Write(hdr[:])
+				buf.Write(make([]byte, padLen))
+				segmentCount++
+			default:
+				// padLen == 0: segment is aligned, stop filling.
+				// NOTE: this must be a labeled break — a bare break would
+				// only exit the switch, not the loop, and spin forever.
+				break flushLoop
+			}
+		}
+
+		checksum = b.saveFlashSegment(&buf, seg, checksum, mmuPageSize)
+		segmentCount++
+	}
+
+	// Write any RAM segments that were not consumed by gap filling.
 	for _, seg := range remainingRam {
 		checksum = b.saveSegment(&buf, seg, checksum)
 		segmentCount++
@@ -557,8 +679,11 @@ func (b *ImageBuilder) bootloaderOffset() uint32 {
 	switch b.chip {
 	case ChipESP32, ChipESP32S2:
 		return 0x1000
+	case ChipESP32P4:
+		// espflash: Chip::boot_address() returns 0x2000 for the ESP32-P4.
+		return 0x2000
 	default:
-		// ESP32-S3, C3, C6, H2 use 0x0
+		// ESP32-S3, C3, C6, C61, H2 use 0x0.
 		return 0x0
 	}
 }
@@ -575,65 +700,43 @@ func (b *ImageBuilder) mergeSegments(segments []Segment) []Segment {
 		return segments
 	}
 
-	// Sort by address
+	// Sort by address, mirroring espflash's merge_adjacent_segments.
 	sort.Slice(segments, func(i, j int) bool {
 		return segments[i].Addr < segments[j].Addr
 	})
 
+	// Merge logic mirrors espflash exactly:
+	//   * a segment that starts exactly where the current one ends is joined
+	//     and its real bytes are appended;
+	//   * a segment within 3 bytes is joined too (the bootloader 4-byte
+	//     aligns anyway), with the small gap zero-filled;
+	//   * otherwise it starts a new merged segment.
+	// Crucially, the next segment's REAL bytes are always appended -- never
+	// zeros. The old code appended zero padding for the adjacent case, which
+	// silently dropped RAM-segment bytes and produced a zero-filled app image
+	// that crashed with "Illegal instruction" on the ESP32-P4.
 	var merged []Segment
-	current := segments[0]
-
-	for _, next := range segments[1:] {
-		end := current.Addr + uint32(len(current.Data))
-		if next.Addr <= end {
-			// Overlapping or adjacent - merge
-			newEnd := next.Addr + uint32(len(next.Data))
-			if newEnd > end {
-				// Extend current segment
-				padding := make([]byte, newEnd-end)
-				current.Data = append(current.Data, padding...)
-			}
-		} else {
-			// Check if segments can be merged with 4-byte padding
-			maxPadding := (4 - end%4) % 4
-			if end+maxPadding >= next.Addr {
-				// Merge by adding padding
-				padding := make([]byte, next.Addr-end)
-				current.Data = append(current.Data, padding...)
-			} else {
-				// Non-overlapping - save current and start new
-				merged = append(merged, current)
-				current = next
+	for _, seg := range segments {
+		if len(merged) > 0 {
+			last := &merged[len(merged)-1]
+			lastEnd := last.Addr + uint32(len(last.Data))
+			if seg.Addr >= lastEnd {
+				if seg.Addr == lastEnd {
+					// Contiguous: append the next segment's real bytes.
+					last.Data = append(last.Data, seg.Data...)
+					continue
+				}
+				maxPadding := (4 - (lastEnd % 4)) % 4
+				if lastEnd+maxPadding >= seg.Addr {
+					// Small gap: zero-fill it, then append the real bytes.
+					last.Data = append(last.Data, make([]byte, seg.Addr-lastEnd)...)
+					last.Data = append(last.Data, seg.Data...)
+					continue
+				}
 			}
 		}
+		merged = append(merged, seg)
 	}
-	merged = append(merged, current)
-
-	return merged
-}
-
-// mergeAdjacentExact merges only exactly adjacent segments (no padding added)
-// Used for RAM segments to match espflash behavior
-func (b *ImageBuilder) mergeAdjacentExact(segments []Segment) []Segment {
-	if len(segments) == 0 {
-		return segments
-	}
-
-	var merged []Segment
-	current := segments[0]
-
-	for _, next := range segments[1:] {
-		end := current.Addr + uint32(len(current.Data))
-		if next.Addr == end {
-			// Exactly adjacent - merge without padding
-			current.Data = append(current.Data, next.Data...)
-		} else {
-			// Not adjacent - save current and start new
-			merged = append(merged, current)
-			current = next
-		}
-	}
-	merged = append(merged, current)
 
 	return merged
 }
@@ -680,22 +783,39 @@ func DefaultPartitionTable(chip Chip, flashSize uint32) []byte {
 		PHY_INIT_SIZE = 0x1000
 	)
 
-	var appAddr, appSize uint32
+	appAddr := uint32(0x10000)
+
+	// maxPartitionSize mirrors espflash's MAX_PARTITION_SIZE constant
+	// (src/image_format/idf.rs): a factory partition never exceeds 16 MB.
+	const maxPartitionSize = 16 * 1000 * 1024
+
+	// Per-chip base factory size. espflash keeps these only as a fallback for
+	// when the flash size is unknown (see default_partition_table); espbrew
+	// always knows the flash size, so the base is used only as a last resort.
+	var baseSize uint32
 	switch chip {
-	case ChipESP32S2:
-		appAddr = 0x10000
-		appSize = 0x100000 // 1MB
-	case ChipESP32S3:
-		appAddr = 0x10000
-		appSize = 0x100000 // 1MB (can be scaled by flash size)
+	case ChipESP32S2, ChipESP32S3, ChipESP32S31:
+		baseSize = 0x100000 // 1 MB
 	default:
-		appAddr = 0x10000
-		appSize = 0x300000 // 3MB for ESP32/C3
+		baseSize = 0x3f0000
 	}
 
-	// Limit app size by available flash
-	if appAddr+appSize > flashSize {
+	// espflash sizes the factory partition to the detected flash size:
+	//
+	//     min(flash_size - app_addr, MAX_PARTITION_SIZE)
+	//
+	// (falling back to the per-chip base above only when the size is unknown).
+	// espbrew always knows the flash size, so it always applies the formula.
+	// On a 16 MB chip `flash - 0x10000` is 0xff0000, but that is capped at
+	// MAX_PARTITION_SIZE (0xfa0000) — exactly what espflash produces.
+	var appSize uint32
+	if flashSize == 0 {
+		appSize = baseSize
+	} else {
 		appSize = flashSize - appAddr
+		if appSize > maxPartitionSize {
+			appSize = maxPartitionSize
+		}
 	}
 
 	// Build the real partition entries.

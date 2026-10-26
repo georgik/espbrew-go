@@ -67,7 +67,7 @@ func TestImageFormatDebug(t *testing.T) {
 		t.Logf("  RAM[%d]: addr=0x%08x len=%d %s", i, s.Addr, len(s.Data), memType)
 	}
 
-	imageData, err := ConvertELFToESPImage(data, chips.ChipESP32S3)
+	imageData, err := ConvertELFToESPImage(data, chips.ChipESP32S3, 0)
 	if err != nil {
 		t.Fatal(err)
 	}

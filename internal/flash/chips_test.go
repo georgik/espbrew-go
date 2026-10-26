@@ -16,7 +16,7 @@ func TestBootloaderOffset_AllChips(t *testing.T) {
 		{"ESP32-C5", 0x2000},
 		{"ESP32-C6", 0x0},
 		{"ESP32-H2", 0x0},
-		{"ESP32-P4-Rev1", 0x2000},
+		{"ESP32-P4", 0x2000},
 	}
 
 	for _, tt := range tests {

@@ -18,7 +18,7 @@ func TestImageFormat(t *testing.T) {
 		t.Skip("Rust ESP binary not found")
 	}
 
-	result, err := ConvertELFToESPImage(data, chips.ChipESP32S3)
+	result, err := ConvertELFToESPImage(data, chips.ChipESP32S3, 0)
 	if err != nil {
 		t.Fatalf("ConvertELFToESPImage failed: %v", err)
 	}
@@ -154,7 +154,7 @@ func TestImageHeaderBytes(t *testing.T) {
 		t.Skip("Rust ESP binary not found")
 	}
 
-	result, err := ConvertELFToESPImage(data, chips.ChipESP32S3)
+	result, err := ConvertELFToESPImage(data, chips.ChipESP32S3, 0)
 	if err != nil {
 		t.Fatalf("ConvertELFToESPImage failed: %v", err)
 	}
@@ -242,7 +242,7 @@ func TestVirtualDeviceWrite(t *testing.T) {
 		t.Skip("Rust ESP binary not found")
 	}
 
-	result, err := ConvertELFToESPImage(data, chips.ChipESP32S3)
+	result, err := ConvertELFToESPImage(data, chips.ChipESP32S3, 0)
 	if err != nil {
 		t.Fatalf("ConvertELFToESPImage failed: %v", err)
 	}

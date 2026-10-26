@@ -53,6 +53,15 @@ var flashRanges = map[chips.Chip]flashRange{
 		DROMStart: 0x3C000000, DROMEnd: 0x3C800000,
 		IRAMStart: 0x40380000, IRAMEnd: 0x403A0000,
 	},
+	// ESP32-P4 (riscv32imafc). Code/const is flash-mapped at 0x40000000,
+	// SRAM/DRAM data lives at 0x4ff40000. The linker emits a low flash
+	// mapping here, so the ROM window covers 0x40000000..0x42000000 and the
+	// RAM window covers the 0x4ff4xxxx region.
+	chips.ChipESP32P4: {
+		IROMStart: 0x40000000, IROMEnd: 0x42000000,
+		DROMStart: 0x40000000, DROMEnd: 0x42000000,
+		IRAMStart: 0x4ff00000, IRAMEnd: 0x50000000,
+	},
 }
 
 // ELFSegment represents a segment from an ELF file

@@ -1,6 +1,7 @@
 package flash
 
 import (
+	"crypto/sha256"
 	"encoding/binary"
 	"fmt"
 
@@ -9,8 +10,12 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
-// ConvertELFToESPImage converts an ELF file to ESP-IDF binary format with bootloader
-func ConvertELFToESPImage(elfData []byte, chip chips.Chip) ([]byte, error) {
+// ConvertELFToESPImage converts an ELF file to ESP-IDF binary format with bootloader.
+//
+// revision selects the revision-aware ESP32-P4 bootloader variant (v0 for
+// rev < 3.0, v3 for rev >= 3.0); it is ignored for every other chip. A revision
+// of 0 means "unknown" and falls back to the v0 variant.
+func ConvertELFToESPImage(elfData []byte, chip chips.Chip, revision int) ([]byte, error) {
 	// Extract entry point from ELF header (offset 24, 4 bytes, little-endian)
 	if len(elfData) < 28 {
 		return nil, fmt.Errorf("ELF file too short")
@@ -26,29 +31,52 @@ func ConvertELFToESPImage(elfData []byte, chip chips.Chip) ([]byte, error) {
 
 	log.Info().Int("rom_segments", len(romSegments)).Int("ram_segments", len(ramSegments)).Msg("ELF segments extracted")
 
-	// NOTE: We deliberately do NOT populate ELF SHA256 in app descriptor.
-	// espflash leaves this as "0.0.0" version string, and populating SHA256
-	// was causing boot failures. The SHA256 was overwriting actual code data.
-	// elfSHA256 := sha256.Sum256(elfData)
-	// log.Info().Str("sha256", fmt.Sprintf("%x", elfSHA256)).Msg("ELF SHA256 calculated")
-
 	// Create image builder
 	builder := espfmt.NewImageBuilder(espfmt.Chip(chip))
 	builder.SetEntry(entryPoint)
 
-	// Set flash size based on chip type (ESP32-S3 boards typically have 16MB)
+	// Stamp the ELF SHA256 into the app descriptor's app_elf_sha256 field,
+	// matching espflash (image_format/idf.rs). The descriptor is a fixed 256-
+	// byte region at the start of its segment, so writing the hash IN PLACE at
+	// its app_elf_sha256 field (offset 144) never shifts or overwrites code.
+	elfSHA256 := sha256.Sum256(elfData)
+	builder.SetAppDescriptorSha256(elfSHA256)
+	log.Info().Str("sha256", fmt.Sprintf("%x", elfSHA256)).Msg("ELF SHA256 calculated")
+
+	// Set flash size based on chip type. The ESP32-S3-Box and the ESP32-P4
+	// Function Eval Board ship with 16MB of flash, so their app image header
+	// must declare 16MB (flash_config 0x40) to match espflash; a 4MB declaration
+	// would make the header disagree with the board and the bootloader.
 	flashSize := 4 * 1024 * 1024
-	if chip == chips.ChipESP32S3 {
-		flashSize = 16 * 1024 * 1024 // ESP32-S3-Box has 16MB
-		log.Info().Int("flash_size_mb", 16).Msg("Using 16MB flash size for ESP32-S3")
+	if chip == chips.ChipESP32S3 || chip == chips.ChipESP32P4 {
+		flashSize = 16 * 1024 * 1024
+		log.Info().Int("flash_size_mb", 16).Msg("Using 16MB flash size")
 	}
 	builder.SetFlashSize(espfmt.FlashSizeFromMB(uint32(flashSize / (1024 * 1024))))
 
 	// Get bootloader (downloads from GitHub if not cached)
-	bootloader, err := espfmt.GetBootloader(espfmt.Chip(chip), espfmt.Xtal40MHz)
+	bootloader, err := espfmt.GetBootloader(espfmt.Chip(chip), espfmt.Xtal40MHz, revision)
 	if err != nil {
 		log.Warn().Err(err).Msg("No bootloader available, building app-only image")
 	} else {
+		// Patch the bootloader header's flash-config byte so the bootloader
+		// reads the SPI flash at 40 MHz. The ROM and 2nd-stage bootloader read
+		// flash using the flash-config byte in the *bootloader's own* header,
+		// not the app header. The bundled P4 bootloaders ship with an 80 MHz
+		// config; flashing them verbatim makes the 2nd-stage bootloader read
+		// the app at 80 MHz and crash with an Illegal instruction on flash that
+		// cannot keep up. espflash patches this byte (image_format/idf.rs)
+		// before flashing, defaulting to the chip's default frequency (40 MHz
+		// for P4). We replicate that here so the image boots the same way.
+		//
+		// espflash uses the default flash size (4 MB) and the default
+		// frequency; the frequency nibble (0x0 = 40 MHz) is what sets the read
+		// speed, giving flash-config byte 0x20.
+		bootloader = espfmt.PatchBootloaderFlashConfig(
+			bootloader,
+			espfmt.FlashSize4MB,
+			espfmt.FlashFreq40MHz,
+		)
 		builder.SetBootloader(bootloader)
 		log.Info().Int("bootloader_size", len(bootloader)).Msg("Using bootloader")
 	}

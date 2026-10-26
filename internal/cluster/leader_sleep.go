@@ -4,12 +4,14 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/georgik/espbrew-go/internal/config"
 	"github.com/georgik/espbrew-go/internal/devicesleep"
 	"github.com/georgik/espbrew-go/internal/persistence"
 	"github.com/georgik/espbrew-go/internal/powercontrol"
+	"github.com/georgik/espbrew-go/internal/powercycler"
 	"github.com/georgik/espbrew-go/pkg/protocol"
 	"github.com/rs/zerolog/log"
 )
@@ -22,9 +24,26 @@ func (l *LeaderNode) sleepController() devicesleep.Controller {
 	if l.powerCtrl != nil {
 		return l.powerCtrl
 	}
-	// Opt-in uhubctl controller: drives the hub by its location string, so it
-	// can power boards that sit on a PARENT hub (which the default sysfs
-	// controller's listHubs skips). Enabled with ESPBREW_POWER_UHUBCTL. The
+	// Power-cycler mode. "remote" (or "external") drives hub port power by
+	// calling the dedicated, privileged hub-power pod over the cluster network,
+	// so the leader itself stays non-privileged. "direct" (the default) uses
+	// the in-process controller (local sysfs, needs a privileged pod). The mode
+	// is read from LeaderConfig first, then the ESPBREW_POWER_MODE env var, so
+	// it can be set via the Deployment manifest or the environment.
+	mode := strings.ToLower(strings.TrimSpace(l.config.PowerMode))
+	if mode == "" {
+		mode = strings.ToLower(strings.TrimSpace(os.Getenv("ESPBREW_POWER_MODE")))
+	}
+	if mode == "remote" || mode == "external" {
+		url := strings.TrimSpace(l.config.PowerRemoteURL)
+		if url == "" {
+			url = strings.TrimSpace(os.Getenv("ESPBREW_POWER_REMOTE_URL"))
+		}
+		log.Info().Str("mode", mode).Str("remote_url", url).
+			Msg("Power-cycler mode: remote (hub-power pod)")
+		return powercycler.NewRemote(url)
+	}
+	// Default: opt-in uhubctl controller, else the platform controller. The
 	// platform-specific selection lives in powercontrol.NewPreferredController,
 	// so this file stays cross-platform.
 	return powercontrol.NewPreferredController()
@@ -226,12 +245,14 @@ func (l *LeaderNode) wakeDeviceForFlash(path string) {
 // board. The follow-through wakeDevice() gives the chip a moment to
 // re-enumerate so the monitor opens the fresh node rather than a stale one.
 func (l *LeaderNode) WakeDeviceForSnap(path string) {
+	powerCycled := false
 	if l.sleeper != nil && isPowerManagedPath(l, path) {
 		if err := l.sleeper.PowerCycle(path); err != nil {
 			log.Warn().Str("path", path).Err(err).
 				Msg("Power cycle before snap failed (continuing)")
 		} else {
 			log.Info().Str("path", path).Msg("Power-cycled board before snap (fresh boot)")
+			powerCycled = true
 		}
 	}
 	// Hold the board busy for the whole wake-up + monitor window so the idle
@@ -243,13 +264,15 @@ func (l *LeaderNode) WakeDeviceForSnap(path string) {
 		l.sleeper.SetBusy(path, true)
 	}
 	l.wakeDevice(path)
-	// PowerCycle flips the sleeping flag, so wakeDevice() would skip its
-	// enumeration wait. Poll the /dev/serial/by-id node until it reappears (the
-	// USB-UART bridge has re-enumerated) so the monitor opens the freshly
-	// created node instead of a stale/absent one. Without this the monitor
-	// fails to open the port ("no such file or directory") and the snapshot is
-	// empty.
-	l.waitForUSBNode(path, 5*time.Second)
+	// Only a power cycle re-enumerates the USB-UART bridge, dropping its
+	// /dev/serial/by-id symlink for a moment. Wait for it to reappear so the
+	// monitor opens the freshly created node instead of a stale/absent one.
+	// Skip the wait when nothing was power-cycled (virtual or non-power-managed
+	// devices): there is nothing to re-enumerate, and polling a path that never
+	// resolves would just burn the full 5s timeout.
+	if powerCycled {
+		l.waitForUSBNode(path, 5*time.Second)
+	}
 	l.setStateAwake(path)
 }
 

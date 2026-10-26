@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"os"
 	"time"
 
 	"go.bug.st/serial"
@@ -65,9 +66,6 @@ const (
 
 	// espImageMagic is the first byte of a valid ESP firmware image.
 	espImageMagic byte = 0xE9
-
-	// romInvalidRecvMsg is the error code for invalid message.
-	romInvalidRecvMsg byte = 0x05
 )
 
 // Default timeouts
@@ -78,6 +76,34 @@ const (
 	md5Timeout          = 30 * time.Second
 	eraseWritePerMBRate = 10 * time.Second // per megabyte
 )
+
+// p4CommandDeadline is the overall wall-clock budget for the command()
+// read loop. The ESP32-P4 ROM defers each reply until the NEXT command
+// arrives (one-command pipeline lag), and a priming-sync backlog can
+// leave many stale frames to drain first, so we allow up to 8 s before
+// giving up on a silent chip. See wiki/esp32-p4-flash-solution.md.
+//
+// It is a var (not a const) purely so tests can temporarily shorten it
+// to keep the "silent chip fails fast" test fast instead of blocking for
+// 8 s. Production code always uses the 8 s value.
+var p4CommandDeadline = 8 * time.Second
+
+// p4MaxStaleFrames caps how many non-matching frames (poke replies,
+// priming-sync leftovers) we tolerate before failing a command.
+var p4MaxStaleFrames = 256
+
+// syncPokePayload is the SYNC command frame sent as a follow-up "poke" after
+// every other command. The ESP32-P4 ROM defers a command's reply until the
+// next command is received, so this poke flushes the queued reply. See
+// wiki/esp32-p4-flash-solution.md.
+var syncPokePayload = func() []byte {
+	p := make([]byte, 36)
+	p[0], p[1], p[2], p[3] = 0x07, 0x07, 0x12, 0x20
+	for i := 4; i < len(p); i++ {
+		p[i] = 0x55
+	}
+	return p
+}()
 
 // conn wraps the serial port and provides the low-level protocol operations.
 type conn struct {
@@ -129,6 +155,9 @@ func checksum(data []byte) uint32 {
 //
 // Packet format: [direction=0x00] [opcode] [data_length:16LE] [checksum:32LE] [data...]
 func (c *conn) sendCommand(opcode byte, data []byte, chk uint32) error {
+	if os.Getenv("EB_DEBUG") != "" {
+		fmt.Printf("[DBG send] op=0x%02X len=%d usesUSB=%v\n", opcode, len(data), c.usesUSB)
+	}
 	pkt := make([]byte, 8+len(data))
 	pkt[0] = respDirectionReq
 	pkt[1] = opcode
@@ -172,7 +201,17 @@ type commandResponse struct {
 
 // command sends a command and reads the response.
 // If waitResponse is false, the command is sent but no response is read.
+//
+// The ESP32-P4 ROM defers each reply until the NEXT command is received
+// (one-command pipeline lag). We therefore send a follow-up SYNC "poke" to
+// flush the queued reply, and (in ROM mode) Drain() the write so the command
+// is fully transmitted before we read. The read loop is guarded by a
+// wall-clock deadline and drains stale frames (poke replies, priming-sync
+// leftovers). See wiki/esp32-p4-flash-solution.md.
 func (c *conn) command(opcode byte, data []byte, chk uint32, timeout time.Duration, waitResponse bool) (*commandResponse, error) {
+	if os.Getenv("EB_DEBUG") != "" {
+		fmt.Printf("[DBG command] op=0x%02X waitResponse=%v stub=%v\n", opcode, waitResponse, c.stub)
+	}
 	if err := c.sendCommand(opcode, data, chk); err != nil {
 		return nil, fmt.Errorf("send command 0x%02X: %w", opcode, err)
 	}
@@ -181,8 +220,41 @@ func (c *conn) command(opcode byte, data []byte, chk uint32, timeout time.Durati
 		return nil, nil
 	}
 
-	// Try to get a matching response (filter for correct opcode)
-	for range 100 {
+	if os.Getenv("EB_DEBUG") != "" {
+		fmt.Printf("[DBG command] sending sync poke for 0x%02X\n", opcode)
+	}
+
+	// Send a SYNC poke so the P4 ROM flushes the queued reply for the command
+	// we just sent. Harmless for other chips: their reply already arrived and
+	// is read first, so the poke's own reply is simply drained as stale.
+	if err := c.sendCommand(cmdSync, syncPokePayload, 0); err != nil {
+		return nil, fmt.Errorf("send sync poke: %w", err)
+	}
+
+	// In ROM mode Drain() so the command is fully transmitted before we read.
+	// In stub mode we must NOT Drain(): right after the OHAI handshake the RAM
+	// flash stub is not yet reading commands, so Drain() (the tcdrain
+	// equivalent) blocks forever waiting for the chip to consume the write.
+	// The poke write itself is fine. See
+	// wiki/esp32-p4-flash-solution.md.
+	if !c.isStub() {
+		if os.Getenv("EB_DEBUG") != "" {
+			fmt.Printf("[DBG command] draining for 0x%02X (start)\n", opcode)
+		}
+		if err := c.port.Drain(); err != nil {
+			return nil, fmt.Errorf("drain: %w", err)
+		}
+		if os.Getenv("EB_DEBUG") != "" {
+			fmt.Printf("[DBG command] draining for 0x%02X (done)\n", opcode)
+		}
+	}
+
+	// Read loop guarded by a wall-clock deadline. Drain stale frames (poke
+	// replies / priming-sync leftovers) until we find the matching opcode or
+	// run out of time / tolerance.
+	deadline := time.Now().Add(p4CommandDeadline)
+	stale := 0
+	for time.Now().Before(deadline) {
 		// Check for context cancellation between retries
 		if c.ctx != nil {
 			select {
@@ -192,12 +264,32 @@ func (c *conn) command(opcode byte, data []byte, chk uint32, timeout time.Durati
 			}
 		}
 
-		frame, err := c.reader.ReadFrame(timeout)
+		// Cap each read by the time left until the deadline so we fail fast
+		// instead of looping up to 100 * timeout on a silent chip.
+		readTimeout := timeout
+		if rem := time.Until(deadline); rem < readTimeout {
+			readTimeout = rem
+		}
+		if readTimeout <= 0 {
+			readTimeout = 50 * time.Millisecond
+		}
+
+		frame, err := c.reader.ReadFrame(readTimeout)
 		if err != nil {
-			return nil, err
+			// Timeout (or any read error): the reply may simply be late, or we
+			// are draining a stale frame. Count it and keep going.
+			stale++
+			if stale > p4MaxStaleFrames {
+				break
+			}
+			continue
 		}
 
 		if len(frame) < 8 {
+			stale++
+			if stale > p4MaxStaleFrames {
+				break
+			}
 			continue
 		}
 
@@ -206,14 +298,22 @@ func (c *conn) command(opcode byte, data []byte, chk uint32, timeout time.Durati
 		val := binary.LittleEndian.Uint32(frame[4:8])
 		respData := frame[8:]
 
+		if os.Getenv("EB_DEBUG") != "" {
+			fmt.Printf("[DBG read] op=0x%02X resp=0x%02X val=0x%08X len=%d (stale=%d)\n", opRet, resp, val, len(respData), stale)
+		}
+
 		if resp != respDirectionResp {
 			continue
 		}
 
 		if opRet != opcode {
-			// Check if this is an error response to flush
-			if len(respData) >= 2 && respData[0] != 0 && respData[1] == romInvalidRecvMsg {
-				continue
+			// Non-matching opcode: a stale poke reply or priming-sync
+			// leftover. Count it like espflash does and stop if too many
+			// accumulate, so a chip that never answers this opcode fails
+			// fast instead of looping until the wall-clock deadline.
+			stale++
+			if stale > p4MaxStaleFrames {
+				break
 			}
 			continue
 		}
@@ -224,7 +324,7 @@ func (c *conn) command(opcode byte, data []byte, chk uint32, timeout time.Durati
 		}, nil
 	}
 
-	return nil, fmt.Errorf("no valid response for command 0x%02X after 100 retries", opcode)
+	return nil, fmt.Errorf("no valid response for command 0x%02X after poke", opcode)
 }
 
 // checkCommand sends a command and checks the status in the response.
@@ -291,10 +391,11 @@ func (c *conn) sync() (uint32, error) {
 	}
 
 	// The ROM bootloader sends up to 7 additional sync responses after the
-	// first one. Drain them by reading frames directly (don't send new
-	// commands). Use a short timeout: the responses should already be in the
-	// serial buffer or arrive within a few milliseconds.
-	for range 7 {
+	// first one, plus the reply to the SYNC "poke" that command() sent. Drain
+	// them by reading frames directly (don't send new commands). Use a short
+	// timeout: the responses should already be in the serial buffer or arrive
+	// within a few milliseconds.
+	for range 10 {
 		if _, err := c.reader.ReadFrame(50 * time.Millisecond); err != nil {
 			break // no more responses waiting — stop early
 		}
@@ -707,6 +808,14 @@ func (c *conn) loadStub(s *stub) error {
 	c.port.ResetInputBuffer() //nolint:errcheck
 	c.reader = newSlipReader(c.port, c.ctx)
 	c.stub = true
+
+	// Give the stub a brief moment to enter its command loop after the
+	// MemEnd jump and to let the USB-JTAG/serial link settle. The very
+	// first command sent immediately after OHAI is otherwise lost on the
+	// P4, which previously left the stub appearing silent to the first
+	// command. This mirrors espflash's load_stub() (see
+	// wiki/esp32-p4-flash-solution.md).
+	time.Sleep(250 * time.Millisecond)
 	return nil
 }
 

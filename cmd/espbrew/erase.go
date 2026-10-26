@@ -6,6 +6,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/georgik/espbrew-go/internal/chips"
 	"github.com/georgik/espbrew-go/internal/cluster"
 	"github.com/georgik/espbrew-go/internal/device"
 	"github.com/georgik/espbrew-go/internal/flash"
@@ -62,7 +63,7 @@ func init() {
 	eraseCmd.Flags().StringVar(&eraseOpts.address, "address", "0", "Start address for region erase (hex format)")
 	eraseCmd.Flags().StringVar(&eraseOpts.size, "size", "0", "Size for region erase (hex format)")
 	eraseCmd.Flags().BoolVar(&eraseOpts.eraseAll, "all", true, "Erase entire flash")
-	eraseCmd.Flags().StringVar(&eraseOpts.chip, "chip", "auto", "Chip type (auto, esp8266, esp32, esp32s2, esp32s3, esp32c3, esp32c6, esp32h2)")
+	eraseCmd.Flags().StringVar(&eraseOpts.chip, "chip", "auto", "Chip type (auto, esp8266, esp32, esp32s2, esp32s3, esp32c3, esp32c6, esp32h2, esp32p4)")
 
 	rootCmd.AddCommand(eraseCmd)
 }
@@ -251,6 +252,12 @@ func runEraseLocal() error {
 		Size:     size,
 		EraseAll: eraseAll,
 		Progress: progress,
+	}
+	// Resolve the chip so the espflash reset strategy matches. "auto" (or an
+	// unrecognized value) leaves req.Chip == 0, i.e. espflash auto-detects;
+	// an explicit "esp32p4" forces the P4 forceP4Download reset.
+	if c, ok := chips.ParseChip(eraseOpts.chip); ok {
+		req.Chip = c
 	}
 
 	if eraseAll {

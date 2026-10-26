@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"time"
 
 	"go.bug.st/serial"
@@ -165,6 +166,9 @@ func (r *slipReader) ReadFrame(timeout time.Duration) ([]byte, error) {
 			return nil, fmt.Errorf("failed to set read timeout: %w", err)
 		}
 		n, err := r.port.Read(buf)
+		if os.Getenv("EB_DEBUG") != "" {
+			fmt.Printf("[DBG rawread] n=%d err=%v bytes=%x\n", n, err, buf[:n])
+		}
 		if err != nil && err != io.EOF {
 			if n == 0 {
 				continue

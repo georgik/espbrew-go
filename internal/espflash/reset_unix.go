@@ -5,7 +5,10 @@ package espflash
 import (
 	"errors"
 	"reflect"
+	"syscall"
+	"unsafe"
 
+	"go.bug.st/serial"
 	"golang.org/x/sys/unix"
 )
 
@@ -45,4 +48,25 @@ func setDTRandRTSAtomic(port interface{}, dtr, rts bool) error {
 
 	// Perform the atomic ioctl
 	return unix.IoctlSetPointerInt(fd, unix.TIOCMSET, status)
+}
+
+// tioCMGet reads back the current modem line status (DTR/RTS bits) via
+// TIOCMGET so callers can verify the lines were actually toggled. Returns 0 if
+// the port handle cannot be resolved.
+func tioCMGet(port serial.Port) int {
+	const ptrKind = reflect.Ptr
+	v := reflect.ValueOf(port)
+	if v.Kind() == ptrKind {
+		v = v.Elem()
+	}
+	handleField := v.FieldByName("handle")
+	if !handleField.IsValid() || handleField.Kind() != reflect.Int {
+		return -1
+	}
+	fd := int(handleField.Int())
+	var status int
+	if _, _, err := syscall.Syscall(syscall.SYS_IOCTL, uintptr(fd), unix.TIOCMGET, uintptr(unsafe.Pointer(&status))); err != 0 {
+		return -2
+	}
+	return status
 }

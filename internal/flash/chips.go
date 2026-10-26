@@ -3,16 +3,16 @@ package flash
 // Bootloader offsets from espflasher chip definitions.
 // These are the flash offsets where bootloader images are located.
 const (
-	BootloaderOffsetESP8266     = 0x0
-	BootloaderOffsetESP32       = 0x1000
-	BootloaderOffsetESP32S2     = 0x1000
-	BootloaderOffsetESP32S3     = 0x0
-	BootloaderOffsetESP32C2     = 0x0
-	BootloaderOffsetESP32C3     = 0x0
-	BootloaderOffsetESP32C5     = 0x2000
-	BootloaderOffsetESP32C6     = 0x0
-	BootloaderOffsetESP32H2     = 0x0
-	BootloaderOffsetESP32P4Rev1 = 0x2000
+	BootloaderOffsetESP8266 = 0x0
+	BootloaderOffsetESP32   = 0x1000
+	BootloaderOffsetESP32S2 = 0x1000
+	BootloaderOffsetESP32S3 = 0x0
+	BootloaderOffsetESP32C2 = 0x0
+	BootloaderOffsetESP32C3 = 0x0
+	BootloaderOffsetESP32C5 = 0x2000
+	BootloaderOffsetESP32C6 = 0x0
+	BootloaderOffsetESP32H2 = 0x0
+	BootloaderOffsetESP32P4 = 0x2000
 )
 
 // Common preset offsets
@@ -43,8 +43,8 @@ func BootloaderOffset(chipName string) (uint32, bool) {
 		return BootloaderOffsetESP32C6, true
 	case "ESP32-H2":
 		return BootloaderOffsetESP32H2, true
-	case "ESP32-P4-Rev1":
-		return BootloaderOffsetESP32P4Rev1, true
+	case "ESP32-P4":
+		return BootloaderOffsetESP32P4, true
 	default:
 		return 0, false
 	}

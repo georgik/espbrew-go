@@ -27,6 +27,12 @@ type FlasherOptions struct {
 	Erase         bool // Enable erase before flash (default: false)
 	FastMode      bool // Enable fast connection mode (default: true)
 	SkipUnchanged bool // Skip flashing unchanged segments (default: false)
+
+	// ResetMode selects how the chip is reset into bootloader mode. It is
+	// forwarded verbatim to the espflash layer. Default: espflash.ResetAuto
+	// (try USB-JTAG, then classic DTR/RTS, then no-reset), which matches the
+	// historical behaviour of the flash path when this field is left unset.
+	ResetMode espflash.ResetMode
 }
 
 type FlashResult struct {
@@ -44,6 +50,7 @@ func NewFlasher(opts *FlasherOptions) *Flasher {
 			Erase:         false,
 			FastMode:      true,
 			SkipUnchanged: false,
+			ResetMode:     espflash.ResetAuto,
 		}
 	}
 	return &Flasher{opts: opts}
@@ -92,7 +99,7 @@ func (f *Flasher) Flash(ctx context.Context, req *FlashRequest) *FlashResult {
 	if DetectFileType(firmware) == FileTypeELF {
 		log.Info().Msg("ELF file detected, converting to ESP-IDF binary format")
 
-		// Detect chip from request or default
+		// Detect chip from request or default.
 		chip := req.Chip
 		if chip == 0 {
 			// Try to detect from ELF sections or default to ESP32S3
@@ -100,20 +107,11 @@ func (f *Flasher) Flash(ctx context.Context, req *FlashRequest) *FlashResult {
 			log.Info().Msg("Chip not specified, defaulting to ESP32-S3")
 		}
 
-		bin, err := ConvertELFToESPImage(firmware, chip)
-		if err != nil {
-			log.Error().Err(err).Msg("Failed to convert ELF to ESP-IDF image")
-			return &FlashResult{Success: false, Error: fmt.Errorf("ELF conversion: %w", err)}
-		}
-		log.Info().Int("original_bytes", len(firmware)).Int("converted_bytes", len(bin)).Msg("ELF converted to ESP-IDF format")
-
-		// Parse multi-part format
-		parts, err := ParseMultiPartImage(bin)
-		if err != nil {
-			log.Error().Err(err).Msg("Failed to parse multi-part image")
-			return &FlashResult{Success: false, Error: fmt.Errorf("parse multipart: %w", err)}
-		}
-
+		// Attach to the device first so we can detect the chip revision.
+		// The revision is required to pick the right revision-aware
+		// ESP32-P4 bootloader variant (v0 vs v3) when we build the image
+		// below, mirroring espflash's flow where the revision is known
+		// before the image is assembled.
 		logger := &flashLogger{port: port}
 
 		espOpts := espflash.DefaultOptions()
@@ -122,6 +120,10 @@ func (f *Flasher) Flash(ctx context.Context, req *FlashRequest) *FlashResult {
 		espOpts.Compress = f.opts.Compress // use compression like esptool (reduces wire data, avoids RX-FIFO overflow)
 		espOpts.Erase = f.opts.Erase
 		espOpts.Logger = logger
+		// Forward the caller-selected reset strategy. Default (ResetAuto)
+		// preserves historical behaviour; the reset-reliability sweep sets this
+		// explicitly to compare strategies.
+		espOpts.ResetMode = f.opts.ResetMode
 		// Disable FastMode for USB CDC ports - they re-enumerate after reset
 		espOpts.FastMode = f.opts.FastMode && !isUSBPort(port)
 		espOpts.SkipUnchanged = f.opts.SkipUnchanged
@@ -129,6 +131,28 @@ func (f *Flasher) Flash(ctx context.Context, req *FlashRequest) *FlashResult {
 		// USB-JTAG): force the DTR/RTS bootloader reset and skip the dead
 		// USB-JTAG path. Detected from the board's USB vendor id.
 		espOpts.ResetBridge = detectBridgeBoard(port)
+		// Force the espflash reset strategy to match the requested chip (see
+		// the ELF branch). Without this, ChipType stays ChipAuto and the
+		// ESP32-P4 never enters download mode under the classic reset.
+		espOpts.ChipType = espflashChipType(req.Chip)
+		// Force the espflash reset strategy to match the requested chip.
+		// Without this, ChipType stays ChipAuto and enterBootloaderReset()
+		// falls back to the classic DTR/RTS reset, which cannot latch the
+		// ESP32-P4's native USB-Serial-JTAG peripheral into download mode.
+		// forceP4Download() is only selected when ChipType == ChipESP32P4.
+		espOpts.ChipType = espflashChipType(req.Chip)
+
+		// ESP32-P4: the RAM-stub flash path stalls on this chip — the
+		// compressed path (0x10/11/12) hangs at FLASH_DEFL_END, and the
+		// uncompressed path (0x02/03/04) times out at FlashData because the
+		// stub path skips the post-command Drain() that the P4's one-command
+		// pipeline lag needs. espflash's known-working path for P4 is ROM
+		// mode (--no-stub): no stub, uncompressed flash, Drain() applied.
+		// Skip the stub so the ROM bootloader handles the flash directly,
+		// mirroring espflash exactly. See wiki/esp32-p4-flash-solution.md.
+		if req.Chip == chips.ChipESP32P4 {
+			espOpts.SkipStub = true
+		}
 
 		flasher, err := espflash.New(ctx, port, espOpts)
 		if err != nil {
@@ -142,6 +166,26 @@ func (f *Flasher) Flash(ctx context.Context, req *FlashRequest) *FlashResult {
 		// Log detected chip for visibility
 		chipName := flasher.ChipName()
 		log.Info().Str("chip", chipName).Msg("Detected chip")
+
+		// The revision selects the revision-aware ESP32-P4 bootloader
+		// variant (v0 for rev < 3.0, v3 for rev >= 3.0); it is ignored for
+		// every other chip. 0 means "unknown" and falls back to v0.
+		revision := flasher.Revision()
+		log.Info().Int("revision", revision).Msg("Detected chip revision")
+
+		bin, err := ConvertELFToESPImage(firmware, chip, revision)
+		if err != nil {
+			log.Error().Err(err).Msg("Failed to convert ELF to ESP-IDF image")
+			return &FlashResult{Success: false, Error: fmt.Errorf("ELF conversion: %w", err)}
+		}
+		log.Info().Int("original_bytes", len(firmware)).Int("converted_bytes", len(bin)).Msg("ELF converted to ESP-IDF format")
+
+		// Parse multi-part format
+		parts, err := ParseMultiPartImage(bin)
+		if err != nil {
+			log.Error().Err(err).Msg("Failed to parse multi-part image")
+			return &FlashResult{Success: false, Error: fmt.Errorf("parse multipart: %w", err)}
+		}
 
 		// Flash ALL parts (bootloader + partition table + app) in a SINGLE
 		// compressed-flash session, matching esptool's write_flash flow:
@@ -300,7 +344,7 @@ func (f *Flasher) flashVirtual(ctx context.Context, req *FlashRequest) *FlashRes
 			}
 		}
 
-		bin, err := ConvertELFToESPImage(firmware, chipType)
+		bin, err := ConvertELFToESPImage(firmware, chipType, 0)
 		if err != nil {
 			log.Error().Err(err).Msg("Failed to convert ELF to ESP-IDF image")
 			return &FlashResult{Success: false, Error: fmt.Errorf("ELF conversion: %w", err)}
@@ -473,6 +517,10 @@ func (f *Flasher) EraseFlash(ctx context.Context, req *EraseRequest) *EraseResul
 	espOpts.FastMode = f.opts.FastMode && !isUSBPort(port)
 	espOpts.SkipUnchanged = f.opts.SkipUnchanged
 
+	// Force the espflash reset strategy to match the requested chip (see
+	// Flash()). Without this, ChipType stays ChipAuto and the ESP32-P4
+	// never enters download mode under the classic reset.
+	espOpts.ChipType = espflashChipType(req.Chip)
 	// Open connection
 	flasher, err := espflash.New(ctx, port, espOpts)
 	if err != nil {
@@ -591,6 +639,38 @@ func (f *Flasher) eraseVirtual(ctx context.Context, req *EraseRequest) *EraseRes
 	return &EraseResult{
 		Success: true,
 		Bytes:   eraseSize,
+	}
+}
+
+// espflashChipType maps a chips.Chip onto the espflash.ChipType used to
+// select the bootloader reset strategy. It returns espflash.ChipAuto for
+// unknown chips (chip == 0) and for chips espflash does not support, so the
+// espflash layer keeps auto-detecting after connect. Chip==0 is treated as
+// "unknown" rather than "ESP32" because resolveFlashChip returns 0 when it
+// could not determine the chip.
+func espflashChipType(c chips.Chip) espflash.ChipType {
+	switch c {
+	case chips.ChipESP32S2:
+		return espflash.ChipESP32S2
+	case chips.ChipESP32S3:
+		return espflash.ChipESP32S3
+	case chips.ChipESP32C3:
+		return espflash.ChipESP32C3
+	case chips.ChipESP32C6:
+		return espflash.ChipESP32C6
+	case chips.ChipESP32H2:
+		return espflash.ChipESP32H2
+	case chips.ChipESP32C2:
+		return espflash.ChipESP32C2
+	case chips.ChipESP32C5:
+		return espflash.ChipESP32C5
+	case chips.ChipESP32C61:
+		return espflash.ChipESP32C6
+	case chips.ChipESP32P4:
+		return espflash.ChipESP32P4
+	default:
+		// 0 (unknown) and unsupported chips (ESP32-H4, ESP32-S31) -> auto.
+		return espflash.ChipAuto
 	}
 }
 

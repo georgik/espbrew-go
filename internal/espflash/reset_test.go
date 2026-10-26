@@ -218,4 +218,21 @@ func TestHardResetUSBDeassertsDTRFirst(t *testing.T) {
 	first := port.calls[0]
 	assert.Equal(t, "DTR", first.line, "first call must be SetDTR on USB path")
 	assert.False(t, first.value, "first SetDTR must be false (release GPIO0)")
+
+	// The USB path must match espflash::reset_after_flash for
+	// USB_SERIAL_JTAG_PID exactly:
+	//   DTR=false; RTS=true; DTR=false; RTS=true; RTS=false
+	// (with 100ms sleeps between, which do not record calls).
+	want := []lineCall{
+		{"DTR", false},
+		{"RTS", true},
+		{"DTR", false},
+		{"RTS", true},
+		{"RTS", false},
+	}
+	require.Len(t, port.calls, len(want),
+		"USB reset must issue exactly the espflash reset_after_flash control-line calls")
+	for i, w := range want {
+		assert.Equal(t, w, port.calls[i], "call %d must match espflash sequence", i)
+	}
 }
