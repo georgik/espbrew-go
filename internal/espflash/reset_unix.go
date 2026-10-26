@@ -4,8 +4,11 @@ package espflash
 
 import (
 	"errors"
+	"fmt"
+	"os"
 	"reflect"
 	"syscall"
+	"time"
 	"unsafe"
 
 	"go.bug.st/serial"
@@ -69,4 +72,42 @@ func tioCMGet(port serial.Port) int {
 		return -2
 	}
 	return status
+}
+
+// forceP4Download enters the ESP32-P4 serial bootloader via the DTR/RTS control
+// lines, using the exact polarity verified on the Conway board (see
+// /tmp/p4probe/main.go forceDownload). The P4 native USB-Serial-JTAG peripheral
+// does not need a USB-JTAG re-enumeration to accept the serial bootloader: holding
+// IO0 (DTR) LOW across the EN reset pulse (RTS) latches the chip into download
+// mode. The polarity on this board is:
+//
+//	DTR=true  -> IO0 LOW  -> download mode
+//	DTR=false -> IO0 HIGH -> run application
+//	RTS=false -> EN LOW   -> chip held in reset (active low)
+//	RTS=true  -> EN HIGH  -> reset released
+//
+// The critical transition is releasing EN (RTS false->true) WHILE IO0 is still
+// LOW (DTR=true); the chip then boots into the serial bootloader. Only after the
+// boot does DTR go low/high so the bootloader flag stays latched.
+func forceP4Download(port serial.Port) {
+	step := func(name string, dtr, rts bool) {
+		setDTRandRTS(port, dtr, rts) //nolint:errcheck
+		if os.Getenv("EB_DEBUG") != "" {
+			got := tioCMGet(port)
+			fmt.Printf("[DBG reset] %s -> set(DTR=%v RTS=%v) readback(DTR=%v RTS=%v)\n",
+				name, dtr, rts, got&unix.TIOCM_DTR != 0, got&unix.TIOCM_RTS != 0)
+		}
+	}
+	// IO0 LOW (download), EN released.
+	step("idle", true, true)
+	time.Sleep(150 * time.Millisecond)
+	// Keep IO0 LOW, assert EN (reset active).
+	step("reset-pulse", true, false)
+	time.Sleep(200 * time.Millisecond)
+	// Release EN while IO0 still LOW -> chip latches into download mode.
+	step("release-en", true, true)
+	time.Sleep(200 * time.Millisecond)
+	// Release IO0 (keep EN released) so the port is idle for the sync loop.
+	step("release-io0", false, true)
+	time.Sleep(200 * time.Millisecond)
 }
