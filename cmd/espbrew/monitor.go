@@ -115,8 +115,13 @@ func runMonitorRemote() error {
 		log.Info().Str("device", devicePath).Msg("Auto-selected available device")
 	}
 
-	// Reserve device for monitoring
-	clientID := "espbrew-monitor-" + randomID(8)
+	// The remote server session is the sole holder of the device reservation:
+	// it reserves the device the instant it opens the serial port and releases
+	// it the instant the port closes (see internal/monitor/stream.go). The
+	// CLI therefore no longer reserves the device over HTTP for monitoring,
+	// which removes the old two-owner race (client HTTP reservation vs.
+	// server-session acquisition) and couples the reservation to the exact
+	// lifetime of the OS serial port.
 	monitorClient := cluster.NewMonitorClient(monitorOpts.clusterURL, devicePath, cluster.MonitorConfig{
 		Baud:        monitorOpts.baud,
 		Reset:       monitorOpts.resetFirst,
@@ -124,15 +129,6 @@ func runMonitorRemote() error {
 		ExitOnError: monitorOpts.exitOnError,
 		Duration:    time.Duration(monitorOpts.duration) * time.Second,
 	})
-
-	log.Info().Str("device", devicePath).Str("cluster", monitorOpts.clusterURL).Msg("Reserving device for monitoring")
-	if err := monitorClient.ReserveDevice(clientID, 300); err != nil {
-		log.Warn().Err(err).Msg("Could not reserve device (may already be reserved)")
-	}
-	defer func() {
-		log.Info().Str("device", devicePath).Msg("Releasing device")
-		monitorClient.ReleaseDevice(clientID)
-	}()
 
 	return runMonitorRemoteStream(monitorClient)
 }

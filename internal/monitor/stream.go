@@ -18,16 +18,18 @@ import (
 // package (which would create an import cycle). The concrete adapter, wired in
 // the http package, delegates to the leader's *cluster.DeviceRegistry.
 //
-// The contract is simple: Acquire must succeed before the OS port is opened
+// The contract is simple: Reserve must succeed before the OS port is opened
 // and Release must run after it is closed, so the reservation is held for the
 // whole session lifetime. This makes the cluster-level lock track the exact
 // port the OS mutex protects, instead of leaking until the 30-minute TTL
-// cleanup.
+// cleanup. The server session is the sole holder of the reservation: the
+// remote CLI no longer reserves the device over HTTP, so there is a single
+// owner and the lock is freed the instant the port closes.
 type DeviceReservation interface {
-	// Acquire claims the reservation for owner before the port opens. It
+	// Reserve claims the reservation for owner before the port opens. It
 	// reports whether the claim succeeded; a false result means another
 	// owner already holds it.
-	Acquire(path, owner string) bool
+	Reserve(path, owner string) bool
 	// Release frees the reservation after the port closes.
 	Release(path, owner string)
 	// Owner reports who currently holds the reservation, for error messages.
@@ -92,12 +94,12 @@ func (s *StreamSession) Start() error {
 		BaudRate: s.config.BaudRate,
 	}
 
-	// Acquire the cluster device reservation before touching the OS serial
+	// Reserve the cluster device reservation before touching the OS serial
 	// port, so the reservation lock tracks the same port the OS mutex
 	// protects. A concurrent flash is blocked while a monitor holds the port,
 	// and the reservation is held for the whole session lifetime.
 	if s.reservation != nil {
-		if !s.reservation.Acquire(s.config.Port, s.id) {
+		if !s.reservation.Reserve(s.config.Port, s.id) {
 			owner := s.reservation.Owner(s.config.Port)
 			return fmt.Errorf("device reserved by: %s", owner)
 		}

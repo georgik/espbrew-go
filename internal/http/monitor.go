@@ -59,7 +59,7 @@ type registryReservation struct {
 	devices *cluster.DeviceRegistry
 }
 
-func (r registryReservation) Acquire(path, owner string) bool {
+func (r registryReservation) Reserve(path, owner string) bool {
 	return r.devices.Reserve(path, owner)
 }
 
