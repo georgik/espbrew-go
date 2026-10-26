@@ -459,6 +459,11 @@ func runFlashRemote(args []string) error {
 	}
 
 	var lastErr error
+	// prevJobID tracks the most recently submitted flash job. A retry that
+	// re-submits while the previous job is still flashing must wait for it to
+	// release the device reservation, otherwise the re-submit fails with
+	// "device not available".
+	var prevJobID string
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		if attempt > 1 {
 			log.Info().Int("attempt", attempt).Int("max", maxAttempts).Msg("Retrying flash after previous failure")
@@ -493,8 +498,27 @@ func runFlashRemote(args []string) error {
 
 		flashResp, err := client.SubmitFlash(submitReq)
 		if err != nil {
-			return fmt.Errorf("submit flash: %w", err)
+			// A still-running previous flash job (for example one whose
+			// progress WebSocket failed to connect but which is still flashing
+			// on the leader) can still hold the device reservation, so the
+			// re-submit in this retry loop fails with "device not available".
+			// Wait for that job to reach a terminal state — which releases the
+			// reservation on the leader — and retry the submit once instead of
+			// failing immediately.
+			if isDeviceUnavailable(err) && prevJobID != "" {
+				if waitErr := waitForJobReleased(client, prevJobID); waitErr != nil {
+					log.Warn().Err(waitErr).Str("job_id", prevJobID).Msg("Waiting for previous flash job to release the device")
+				} else {
+					log.Info().Str("job_id", prevJobID).Msg("Previous flash job released the device; retrying submit")
+					flashResp, err = client.SubmitFlash(submitReq)
+				}
+			}
+			if err != nil {
+				return fmt.Errorf("submit flash: %w", err)
+			}
 		}
+
+		prevJobID = flashResp.JobID
 
 		log.Info().Str("job_id", flashResp.JobID).Msg("Flash job submitted, streaming progress...")
 
@@ -556,6 +580,54 @@ func runFlashRemote(args []string) error {
 	}
 
 	return fmt.Errorf("flash failed after %d attempt(s): %w", maxAttempts, lastErr)
+}
+
+// How long the flash retry loop waits for a still-running previous job to reach
+// a terminal state (and thus release the device reservation on the leader)
+// before giving up and reporting the original submit error.
+const jobReleaseTimeout = 3 * time.Minute
+
+// Poll interval while waiting for a previous flash job to release the device.
+const jobReleasePollInterval = 2 * time.Second
+
+// isDeviceUnavailable reports whether an error from SubmitFlash means the
+// device is currently reserved by another job (HTTP 409 with the
+// "device not available" message from the leader).
+func isDeviceUnavailable(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "device not available")
+}
+
+// waitForJobReleased polls a previously submitted job until it reaches a
+// terminal state, at which point the leader has released the device reservation
+// it held (see LeaderNode.handleJobResults). It returns an error if the deadline
+// elapses first so the retry loop never blocks forever on a stuck job.
+func waitForJobReleased(client *cluster.Client, jobID string) error {
+	deadline := time.Now().Add(jobReleaseTimeout)
+	for {
+		status, err := client.GetJob(jobID)
+		if err == nil && isTerminalJobStatus(status.Status) {
+			return nil
+		}
+		if err != nil {
+			log.Debug().Err(err).Str("job_id", jobID).Msg("Polling previous flash job status")
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("timed out waiting for job %s to release the device reservation", jobID)
+		}
+		time.Sleep(jobReleasePollInterval)
+	}
+}
+
+// isTerminalJobStatus reports whether a job has reached a state in which the
+// leader will no longer hold its device reservation.
+func isTerminalJobStatus(status string) bool {
+	switch status {
+	case string(cluster.JobComplete), string(cluster.JobFailed),
+		string(cluster.JobCancelled), string(cluster.JobTimedOut):
+		return true
+	default:
+		return false
+	}
 }
 
 func displayProgressBar(progress int, status string) {
