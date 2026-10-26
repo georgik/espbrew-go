@@ -55,7 +55,7 @@ func TestHardwareFlashAndVerify(t *testing.T) {
 	t.Logf("Flash successful: %d bytes", result.Bytes)
 
 	// Convert ELF to get source data for MD5 comparison
-	imgData, err := ConvertELFToESPImage(elfData, chips.ChipESP32S3)
+	imgData, err := ConvertELFToESPImage(elfData, chips.ChipESP32S3, 0)
 	if err != nil {
 		t.Fatalf("Failed to convert ELF: %v", err)
 	}

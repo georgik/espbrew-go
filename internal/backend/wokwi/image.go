@@ -38,7 +38,7 @@ const maxFirstOffset uint32 = 0x20000
 // chip selects the flash/RAM layout used when converting an ELF.
 func assembleSections(chip chips.Chip, firmware []byte) ([]api.FlashSection, error) {
 	if flash.DetectFileType(firmware) == flash.FileTypeELF {
-		combined, err := flash.ConvertELFToESPImage(firmware, chip)
+		combined, err := flash.ConvertELFToESPImage(firmware, chip, 0)
 		if err != nil {
 			return nil, fmt.Errorf("assemble image from ELF: %w", err)
 		}

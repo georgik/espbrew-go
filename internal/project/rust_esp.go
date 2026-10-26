@@ -81,6 +81,7 @@ func (d *RustESPDetector) hasESPTarget(configPath string) (bool, error) {
 		"xtensa-esp32", "xtensa-esp32s2", "xtensa-esp32s3",
 		"xtensa-esp32c3", "xtensa-esp32c6", "xtensa-esp32h2",
 		"riscv32imac-unknown-none-elf", "riscv32imc-unknown-none-elf",
+		"riscv32imafc-unknown-none-elf", // ESP32-P4
 	}
 
 	content, err := os.ReadFile(configPath)
@@ -145,6 +146,7 @@ func (d *RustESPDetector) findTargetDir(dir string) (string, error) {
 		"xtensa-esp32s3-none-elf", "xtensa-esp32s2-none-elf", "xtensa-esp32-none-elf",
 		"xtensa-esp32c3-none-elf", "xtensa-esp32c6-none-elf", "xtensa-esp32h2-none-elf",
 		"riscv32imac-unknown-none-elf", "riscv32imc-unknown-none-elf",
+		"riscv32imafc-unknown-none-elf", // ESP32-P4
 	}
 
 	for _, target := range espTargets {

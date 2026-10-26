@@ -77,6 +77,7 @@ func (d *WASMRustESPDetector) hasESPTarget(files *WASMFileMap, configPath string
 		"xtensa-esp32", "xtensa-esp32s2", "xtensa-esp32s3",
 		"xtensa-esp32c3", "xtensa-esp32c6", "xtensa-esp32h2",
 		"riscv32imac-unknown-none-elf", "riscv32imc-unknown-none-elf",
+		"riscv32imafc-unknown-none-elf", // ESP32-P4
 	}
 
 	for _, target := range espTargets {
@@ -219,14 +220,15 @@ func (d *WASMRustESPDetector) GetChipType(files *WASMFileMap) string {
 
 	// Map target triples to chip types
 	chipMap := map[string]string{
-		"xtensa-esp32-none-elf":        "ESP32",
-		"xtensa-esp32s2-none-elf":      "ESP32-S2",
-		"xtensa-esp32s3-none-elf":      "ESP32-S3",
-		"xtensa-esp32c3-none-elf":      "ESP32-C3",
-		"xtensa-esp32c6-none-elf":      "ESP32-C6",
-		"xtensa-esp32h2-none-elf":      "ESP32-H2",
-		"riscv32imac-unknown-none-elf": "ESP32-C6", // RISC-V variant
-		"riscv32imc-unknown-none-elf":  "ESP32-C6",
+		"xtensa-esp32-none-elf":         "ESP32",
+		"xtensa-esp32s2-none-elf":       "ESP32-S2",
+		"xtensa-esp32s3-none-elf":       "ESP32-S3",
+		"xtensa-esp32c3-none-elf":       "ESP32-C3",
+		"xtensa-esp32c6-none-elf":       "ESP32-C6",
+		"xtensa-esp32h2-none-elf":       "ESP32-H2",
+		"riscv32imac-unknown-none-elf":  "ESP32-C6", // RISC-V variant
+		"riscv32imc-unknown-none-elf":   "ESP32-C6",
+		"riscv32imafc-unknown-none-elf": "ESP32-P4", // ESP32-P4
 	}
 
 	for triple, chip := range chipMap {

@@ -47,7 +47,7 @@ func TestDownloadBootloader(t *testing.T) {
 
 	// Test downloading ESP32-S3 bootloader
 	chip := chips.ChipESP32S3
-	data, info, err := mgr.GetBootloader(chip)
+	data, info, err := mgr.GetBootloader(chip, 0)
 	if err != nil {
 		t.Fatalf("Failed to download bootloader for %s: %v", chip, err)
 	}
@@ -94,7 +94,7 @@ func TestDownloadAllBootloaders(t *testing.T) {
 
 	for _, chip := range testChips {
 		t.Run(chip.String(), func(t *testing.T) {
-			data, info, err := mgr.GetBootloader(chip)
+			data, info, err := mgr.GetBootloader(chip, 0)
 			if err != nil {
 				t.Fatalf("Failed to download bootloader for %s: %v", chip, err)
 			}
@@ -126,7 +126,7 @@ func TestBootloaderCacheHit(t *testing.T) {
 	chip := chips.ChipESP32S3
 
 	// First download
-	data1, info1, err := mgr.GetBootloader(chip)
+	data1, info1, err := mgr.GetBootloader(chip, 0)
 	if err != nil {
 		t.Fatalf("First download failed: %v", err)
 	}
@@ -136,7 +136,7 @@ func TestBootloaderCacheHit(t *testing.T) {
 	}
 
 	// Second download should hit cache
-	data2, info2, err := mgr.GetBootloader(chip)
+	data2, info2, err := mgr.GetBootloader(chip, 0)
 	if err != nil {
 		t.Fatalf("Second download failed: %v", err)
 	}

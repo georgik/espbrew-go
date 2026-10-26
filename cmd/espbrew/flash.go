@@ -74,7 +74,7 @@ func init() {
 	flashCmd.Flags().IntVar(&flashOpts.flashRetries, "flash-retries", 3, "Number of flash attempts on failure (a reset cycle clears the UART-bridge cascade)")
 	flashCmd.Flags().IntVar(&flashOpts.offset, "offset", 0, "Flash offset (default 0x0, ignored with --preset)")
 	flashCmd.Flags().StringVar(&flashOpts.preset, "preset", "app", "Offset preset: bootloader, partitions, app")
-	flashCmd.Flags().StringVar(&flashOpts.chip, "chip", "auto", "Chip type (auto, esp8266, esp32, esp32s2, esp32s3, esp32c3, esp32c6, esp32h2)")
+	flashCmd.Flags().StringVar(&flashOpts.chip, "chip", "auto", "Chip type (auto, esp8266, esp32, esp32s2, esp32s3, esp32c3, esp32c6, esp32h2, esp32p4)")
 	flashCmd.Flags().StringVar(&flashOpts.flashMode, "fm", "keep", "Flash mode (keep, qio, qout, dio, dout)")
 	flashCmd.Flags().StringVar(&flashOpts.flashFreq, "ff", "keep", "Flash frequency (keep, 80m, 40m, 26m, 20m)")
 	flashCmd.Flags().StringVar(&flashOpts.flashSize, "fs", "keep", "Flash size (keep, 1MB, 2MB, 4MB, 8MB, 16MB)")
@@ -255,23 +255,97 @@ func detectChipFromProject(cwd string, projType project.ProjectType) chips.Chip 
 	defer cargo.Close()
 
 	scanner := bufio.NewScanner(cargo)
+	// Parse the Cargo.toml dependency table. A crate's name is declared on its
+	// own line (e.g. `esp-hal = {`) and its `features = [...]` array can appear
+	// on the *next* line(s), so matching the crate name and the features on a
+	// single line (the old heuristic) misses the common multi-line form:
+	//
+	//     esp-hal = {
+	//         git = "...",
+	//         features = ["esp32p4", "unstable"]
+	//     }
+	//
+	// Instead we track the crate currently being declared (the table key on
+	// the line that opens a `{` block, or the key of any inline table) and,
+	// whenever we see a `features = [...]` line, check its chip names if the
+	// open crate is an esp crate.
+	var currentCrate string
 	for scanner.Scan() {
-		line := scanner.Text()
-		if !strings.Contains(line, "esp-hal") || !strings.Contains(line, "features") {
-			continue
+		line := strings.TrimSpace(scanner.Text())
+
+		// Update the crate we are currently inside. A line of the form
+		// `<key> = {` opens a dependency table; remember `<key>`.
+		if key, ok := tableKey(line); ok {
+			currentCrate = key
 		}
-		for _, name := range []string{
-			"esp32c3", "esp32c6", "esp32c2", "esp32c5", "esp32h2",
-			"esp32s3", "esp32s2", "esp32",
-		} {
-			if strings.Contains(line, fmt.Sprintf(`"%s"`, name)) {
-				if chip, ok := chips.ParseChip(name); ok {
-					return chip
-				}
+
+		// A line that closes the table (bare `}`) ends the block.
+		if strings.TrimRight(line, " ") == "}" {
+			currentCrate = ""
+		}
+
+		// If this line carries a features array and the open crate is an esp
+		// crate, look for a chip name inside the array.
+		if currentCrate != "" && strings.Contains(line, "features") {
+			if chip, ok := chipInFeatures(currentCrate, line); ok {
+				return chip
 			}
 		}
 	}
 	return 0
+}
+
+// tableKey returns the left-hand-side key of a TOML table assignment such as
+// `esp-hal = {`. It returns ok=false for lines that do not open a table.
+func tableKey(line string) (string, bool) {
+	// Only lines that assign a table (`key = {`) start a dependency block.
+	idx := strings.Index(line, "=")
+	if idx <= 0 || idx+1 >= len(line) || line[idx+1] != ' ' {
+		return "", false
+	}
+	// Skip whitespace after `=` to find the `{`.
+	rest := line[idx+1:]
+	rest = strings.TrimLeft(rest, " \t")
+	if len(rest) == 0 || rest[0] != '{' {
+		return "", false
+	}
+	key := strings.TrimSpace(line[:idx])
+	// The key must be a bare identifier (no quotes) to be a table name.
+	if key == "" || strings.ContainsAny(key, "\"'") {
+		return "", false
+	}
+	return key, true
+}
+
+// chipInFeatures reports whether the given features line (inside a dependency
+// table for `crate`) names a known ESP chip. It returns ok=false when no chip
+// feature is present.
+func chipInFeatures(crate, line string) (chips.Chip, bool) {
+	// Only esp-family crates carry chip features.
+	if !strings.HasPrefix(crate, "esp-") && crate != "esp-hal" {
+		return 0, false
+	}
+	// Extract the first `[...]` array on the line (the features list).
+	open := strings.Index(line, "[")
+	if open < 0 {
+		return 0, false
+	}
+	close := strings.Index(line[open:], "]")
+	if close < 0 {
+		return 0, false
+	}
+	array := line[open : open+close+1]
+	for _, name := range []string{
+		"esp32c3", "esp32c6", "esp32c2", "esp32c5", "esp32h2",
+		"esp32s3", "esp32s2", "esp32", "esp32p4",
+	} {
+		if strings.Contains(array, fmt.Sprintf(`"%s"`, name)) {
+			if chip, ok := chips.ParseChip(name); ok {
+				return chip, true
+			}
+		}
+	}
+	return 0, false
 }
 
 // resolveFlashChip picks the chip used to convert a detected ELF into an
@@ -385,6 +459,11 @@ func runFlashRemote(args []string) error {
 	}
 
 	var lastErr error
+	// prevJobID tracks the most recently submitted flash job. A retry that
+	// re-submits while the previous job is still flashing must wait for it to
+	// release the device reservation, otherwise the re-submit fails with
+	// "device not available".
+	var prevJobID string
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		if attempt > 1 {
 			log.Info().Int("attempt", attempt).Int("max", maxAttempts).Msg("Retrying flash after previous failure")
@@ -419,8 +498,27 @@ func runFlashRemote(args []string) error {
 
 		flashResp, err := client.SubmitFlash(submitReq)
 		if err != nil {
-			return fmt.Errorf("submit flash: %w", err)
+			// A still-running previous flash job (for example one whose
+			// progress WebSocket failed to connect but which is still flashing
+			// on the leader) can still hold the device reservation, so the
+			// re-submit in this retry loop fails with "device not available".
+			// Wait for that job to reach a terminal state — which releases the
+			// reservation on the leader — and retry the submit once instead of
+			// failing immediately.
+			if isDeviceUnavailable(err) && prevJobID != "" {
+				if waitErr := waitForJobReleased(client, prevJobID); waitErr != nil {
+					log.Warn().Err(waitErr).Str("job_id", prevJobID).Msg("Waiting for previous flash job to release the device")
+				} else {
+					log.Info().Str("job_id", prevJobID).Msg("Previous flash job released the device; retrying submit")
+					flashResp, err = client.SubmitFlash(submitReq)
+				}
+			}
+			if err != nil {
+				return fmt.Errorf("submit flash: %w", err)
+			}
 		}
+
+		prevJobID = flashResp.JobID
 
 		log.Info().Str("job_id", flashResp.JobID).Msg("Flash job submitted, streaming progress...")
 
@@ -482,6 +580,54 @@ func runFlashRemote(args []string) error {
 	}
 
 	return fmt.Errorf("flash failed after %d attempt(s): %w", maxAttempts, lastErr)
+}
+
+// How long the flash retry loop waits for a still-running previous job to reach
+// a terminal state (and thus release the device reservation on the leader)
+// before giving up and reporting the original submit error.
+const jobReleaseTimeout = 3 * time.Minute
+
+// Poll interval while waiting for a previous flash job to release the device.
+const jobReleasePollInterval = 2 * time.Second
+
+// isDeviceUnavailable reports whether an error from SubmitFlash means the
+// device is currently reserved by another job (HTTP 409 with the
+// "device not available" message from the leader).
+func isDeviceUnavailable(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "device not available")
+}
+
+// waitForJobReleased polls a previously submitted job until it reaches a
+// terminal state, at which point the leader has released the device reservation
+// it held (see LeaderNode.handleJobResults). It returns an error if the deadline
+// elapses first so the retry loop never blocks forever on a stuck job.
+func waitForJobReleased(client *cluster.Client, jobID string) error {
+	deadline := time.Now().Add(jobReleaseTimeout)
+	for {
+		status, err := client.GetJob(jobID)
+		if err == nil && isTerminalJobStatus(status.Status) {
+			return nil
+		}
+		if err != nil {
+			log.Debug().Err(err).Str("job_id", jobID).Msg("Polling previous flash job status")
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("timed out waiting for job %s to release the device reservation", jobID)
+		}
+		time.Sleep(jobReleasePollInterval)
+	}
+}
+
+// isTerminalJobStatus reports whether a job has reached a state in which the
+// leader will no longer hold its device reservation.
+func isTerminalJobStatus(status string) bool {
+	switch status {
+	case string(cluster.JobComplete), string(cluster.JobFailed),
+		string(cluster.JobCancelled), string(cluster.JobTimedOut):
+		return true
+	default:
+		return false
+	}
 }
 
 func displayProgressBar(progress int, status string) {

@@ -180,10 +180,10 @@ func TestFlashBeginParamLength(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			var written []byte
+			var writes [][]byte
 			mock := &mockPort{
 				writeFunc: func(data []byte) (int, error) {
-					written = data
+					writes = append(writes, data)
 					return len(data), nil
 				},
 				readFunc: func(buf []byte) (int, error) {
@@ -204,8 +204,10 @@ func TestFlashBeginParamLength(t *testing.T) {
 
 			_ = c.flashBegin(4096, 0x1000, false, false) // ignore errors from mock
 
-			// Decode the SLIP frame to get the packet
-			decoded := slipDecode(written)
+			// Decode the SLIP frame to get the packet. command() now sends a
+			// SYNC "poke" after the real command, so select the flashBegin
+			// frame rather than the last (poke) write.
+			decoded := slipDecode(findWrite(writes, cmdFlashBegin))
 			if len(decoded) < 8 {
 				t.Fatalf("packet too short: %d bytes", len(decoded))
 			}
@@ -233,10 +235,10 @@ func TestFlashDeflBeginParamLength(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			var written []byte
+			var writes [][]byte
 			mock := &mockPort{
 				writeFunc: func(data []byte) (int, error) {
-					written = data
+					writes = append(writes, data)
 					return len(data), nil
 				},
 				readFunc: func(buf []byte) (int, error) {
@@ -256,7 +258,9 @@ func TestFlashDeflBeginParamLength(t *testing.T) {
 
 			_ = c.flashDeflBegin(4096, 2048, 0x1000, false, false)
 
-			decoded := slipDecode(written)
+			// command() sends a SYNC "poke" after the real command, so select
+			// the flashDeflBegin frame rather than the last (poke) write.
+			decoded := slipDecode(findWrite(writes, cmdFlashDeflBeg))
 			if len(decoded) < 8 {
 				t.Fatalf("packet too short: %d bytes", len(decoded))
 			}
@@ -285,10 +289,10 @@ func TestChangeBaudSecondParam(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			var written []byte
+			var writes [][]byte
 			mock := &mockPort{
 				writeFunc: func(data []byte) (int, error) {
-					written = data
+					writes = append(writes, data)
 					return len(data), nil
 				},
 				readFunc: func(buf []byte) (int, error) {
@@ -307,7 +311,9 @@ func TestChangeBaudSecondParam(t *testing.T) {
 
 			_ = c.changeBaud(tt.newBaud, tt.oldBaud)
 
-			decoded := slipDecode(written)
+			// command() sends a SYNC "poke" after the real command, so select
+			// the changeBaud frame rather than the last (poke) write.
+			decoded := slipDecode(findWrite(writes, cmdChangeBaud))
 			if len(decoded) < 8+8 {
 				t.Fatalf("packet too short: %d bytes", len(decoded))
 			}

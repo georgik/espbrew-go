@@ -102,9 +102,15 @@ func TestResetBridgeOffStillTriesUSBJS(t *testing.T) {
 	defer cancel()
 
 	f := &Flasher{
-		port:    port,
-		conn:    mc,
-		portStr: "/dev/ttyACM0",
+		port: port,
+		conn: mc,
+		// Use a device path that does not exist on the build machine. reopenPort()
+		// still closes the mock port (setting closeCount) before attempting to
+		// re-open, so the assertion is unaffected; but pointing at a real device
+		// (e.g. /dev/ttyACM0) would open the actual connected board and leave the
+		// process hanging on exit while the tty drains an unconsumed write. A
+		// non-existent path keeps the test isolated from hardware.
+		portStr: "/dev/ttyespbrew-test-absent",
 		opts: &FlasherOptions{
 			ResetMode:   ResetAuto,
 			ResetBridge: false, // native USB-JTAG board

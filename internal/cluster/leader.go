@@ -72,6 +72,15 @@ type LeaderConfig struct {
 	InitialMode        string                    // Starting mode (default "discovery")
 	Devices            []config.DeviceConfig     // Explicit espbrew.toml device mapping
 	ConfigPath         string                    // espbrew.toml file (load + write target)
+	// PowerMode selects how hub port power is switched: "direct" (default) uses
+	// the in-process controller (local sysfs, needs a privileged pod); "remote"
+	// (or "external") drives the power by calling the dedicated, privileged
+	// hub-power pod over the cluster network, so the leader stays non-privileged.
+	PowerMode string
+	// PowerRemoteURL is the base URL of the remote hub-power service, used when
+	// PowerMode is "remote"/"external". Defaults to the espbrew-hub-power
+	// Service when empty.
+	PowerRemoteURL string
 	// SleepConfig overrides the sleep manager tunables (for tests). Nil =>
 	// devicesleep.DefaultConfig().
 	SleepConfig *devicesleep.Config
@@ -203,8 +212,14 @@ func (l *LeaderNode) Start(ctx context.Context) error {
 	// Start camera registry (handles discovery and watching)
 	camera.GetRegistry().Start()
 
-	// Wait for initial camera scan to complete
-	time.Sleep(500 * time.Millisecond)
+	// Wait for the initial camera scan to complete before discovering cameras,
+	// so discoverCameras() sees freshly-discovered devices. We wait on the
+	// registry's completion signal (returning as soon as the scan finishes)
+	// rather than a fixed delay, keeping 500ms as a safety timeout so a scan
+	// that never completes can't block startup indefinitely.
+	if !camera.GetRegistry().WaitForInitialScan(500 * time.Millisecond) {
+		log.Warn().Msg("Initial camera scan did not complete within timeout")
+	}
 
 	// Discover cameras on startup
 	l.discoverCameras()

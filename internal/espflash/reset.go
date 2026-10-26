@@ -163,19 +163,27 @@ func usbJTAGSerialReset(port serial.Port) {
 // hardReset performs a hardware reset (chip restarts and runs user code).
 func hardReset(port serial.Port, usesUSB bool) {
 	if usesUSB {
-		// On USB-JTAG/Serial, the peripheral latches DTR (GPIO0 state)
-		// at reset time. Correct sequence to clear download mode flag:
-		// 1. DTR=false (GPIO0=HIGH for normal boot)
-		// 2. RTS=false (clears download mode flag)
-		// 3. RTS=true (triggers reset)
-		// 4. RTS=false (exit reset)
-		port.SetDTR(false) //nolint:errcheck // GPIO0=HIGH
-		port.SetRTS(false) //nolint:errcheck // Clear download mode flag
+		// Matches espflash::reset_after_flash for USB_SERIAL_JTAG_PID.
+		// The P4 native USB-Serial-JTAG peripheral latches the IO0 (DTR)
+		// state at reset time, so we must hold IO0 HIGH (DTR=false) while
+		// toggling RTS through (1,1) to release the download-mode latch and
+		// let the chip boot into the application.
+		//
+		// Sequence (espflash, connection/reset.rs reset_after_flash):
+		//  1. sleep 100ms
+		//  2. DTR=false (GPIO0=HIGH)
+		//  3. sleep 100ms
+		//  4. RTS=true, DTR=false, RTS=true
+		//  5. sleep 100ms
+		//  6. RTS=false
 		time.Sleep(100 * time.Millisecond)
-		port.SetRTS(true) //nolint:errcheck // Trigger reset
+		port.SetDTR(false) //nolint:errcheck // GPIO0=HIGH
+		time.Sleep(100 * time.Millisecond)
+		port.SetRTS(true)  //nolint:errcheck // Reset (go through (1,1))
+		port.SetDTR(false) //nolint:errcheck // GPIO0=HIGH
+		port.SetRTS(true)  //nolint:errcheck
 		time.Sleep(100 * time.Millisecond)
 		port.SetRTS(false) //nolint:errcheck // Exit reset
-		time.Sleep(100 * time.Millisecond)
 		return
 	}
 

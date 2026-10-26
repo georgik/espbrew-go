@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/georgik/espbrew-go/internal/backend/wokwi"
+	"github.com/georgik/espbrew-go/internal/cluster"
 	"github.com/georgik/espbrew-go/internal/monitor"
 	"github.com/georgik/espbrew-go/pkg/protocol"
 	"github.com/gorilla/mux"
@@ -37,12 +38,37 @@ type MonitorServer struct {
 	// sessions runs Wokwi simulations for the leader. Nil when no leader is
 	// wired; Wokwi monitoring then reports the simulation is unavailable.
 	sessions *wokwi.SessionManager
+	// reservation couples the serial monitor to the cluster reservation lock.
+	// When set, the reservation is acquired before the OS port opens and
+	// released after it closes, so a concurrent flash is blocked while a
+	// monitor holds the port and freed the moment the monitor detaches.
+	reservation monitor.DeviceReservation
 }
 
 func NewMonitorServer() *MonitorServer {
 	return &MonitorServer{
 		streams: monitor.NewStreamManager(),
 	}
+}
+
+// registryReservation adapts the leader's *cluster.DeviceRegistry to the
+// monitor.DeviceReservation interface, coupling the serial monitor to the
+// cluster reservation lock: Acquire maps to Reserve, Release to Release, and
+// Owner to GetOwner.
+type registryReservation struct {
+	devices *cluster.DeviceRegistry
+}
+
+func (r registryReservation) Reserve(path, owner string) bool {
+	return r.devices.Reserve(path, owner)
+}
+
+func (r registryReservation) Release(path, owner string) {
+	r.devices.Release(path, owner)
+}
+
+func (r registryReservation) Owner(path string) string {
+	return r.devices.GetOwner(path)
 }
 
 func (s *MonitorServer) RegisterRoutes(r *mux.Router) {
@@ -119,6 +145,9 @@ func (s *MonitorServer) handleMonitorWebSocket(w http.ResponseWriter, r *http.Re
 	}
 
 	sessionID := r.RemoteAddr + ":" + port
+	// Couple the reservation lock to the serial-port lifecycle: acquire it
+	// before the port opens and release it after it closes.
+	cfg.Reservation = s.reservation
 	session, err := s.streams.Create(sessionID, cfg)
 	if err != nil {
 		s.sendMonitorError(conn, err.Error())

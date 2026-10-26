@@ -10,6 +10,7 @@ import (
 	"github.com/georgik/espbrew-go/internal/config"
 	"github.com/georgik/espbrew-go/internal/devicesleep"
 	"github.com/georgik/espbrew-go/internal/persistence"
+	"github.com/georgik/espbrew-go/internal/powercycler"
 )
 
 // newSleepTestLeader builds a leader whose sleep manager is driven by an
@@ -406,5 +407,41 @@ func TestWakeDeviceForSnapHoldsBoardBusy(t *testing.T) {
 	leader.ReleaseDeviceBusy(path)
 	if leader.sleeper.IsBusy(path) {
 		t.Errorf("board should no longer be busy after ReleaseDeviceBusy")
+	}
+}
+
+// TestSleepControllerDirectDefault verifies that with no mode configured the
+// leader falls back to the in-process controller (not a remote one).
+func TestSleepControllerDirectDefault(t *testing.T) {
+	leader := NewLeaderNode("test-leader", &LeaderConfig{PowerMode: ""}, nil)
+	ctrl := leader.sleepController()
+	if _, ok := ctrl.(*powercycler.RemoteController); ok {
+		t.Errorf("default mode should NOT return a remote controller")
+	}
+}
+
+// TestSleepControllerRemote verifies that PowerMode=remote selects the remote
+// controller, and that PowerRemoteURL is honored.
+func TestSleepControllerRemote(t *testing.T) {
+	leader := NewLeaderNode("test-leader", &LeaderConfig{
+		PowerMode:      "remote",
+		PowerRemoteURL: "http://hub-power.test:8080",
+	}, nil)
+	ctrl := leader.sleepController()
+	rc, ok := ctrl.(*powercycler.RemoteController)
+	if !ok {
+		t.Fatalf("expected *powercycler.RemoteController, got %T", ctrl)
+	}
+	if rc.BaseURL() != "http://hub-power.test:8080" {
+		t.Errorf("base URL = %q, want http://hub-power.test:8080", rc.BaseURL())
+	}
+}
+
+// TestSleepControllerExternalAlias verifies "external" is treated the same as
+// "remote" (either can be used to point the leader at any power-cycler).
+func TestSleepControllerExternalAlias(t *testing.T) {
+	leader := NewLeaderNode("test-leader", &LeaderConfig{PowerMode: "external"}, nil)
+	if _, ok := leader.sleepController().(*powercycler.RemoteController); !ok {
+		t.Errorf("external mode should select the remote controller")
 	}
 }

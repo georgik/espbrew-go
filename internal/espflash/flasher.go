@@ -94,6 +94,14 @@ type FlasherOptions struct {
 	// Default: true.
 	Compress bool
 
+	// SkipStub disables loading the RAM flash stub after connecting. Without
+	// the stub the ROM bootloader handles the flash directly using the
+	// uncompressed FlashBegin/FlashData/FlashEnd (0x02/0x03/0x04) sequence.
+	// This mirrors espflash's --no-stub mode, which is the path that works on
+	// the ESP32-P4 (the compressed stub path stalls at FLASH_DEFL_END).
+	// Default: false (load the stub).
+	SkipStub bool
+
 	// FlashMode sets the SPI flash access mode in the image header.
 	// Valid values: "qio", "qout", "dio", "dout".
 	// Empty string or "keep" preserves the value from the binary.
@@ -137,6 +145,14 @@ type Logger interface {
 type ProgressFunc func(current, total int)
 
 // DefaultOptions returns FlasherOptions with sensible defaults.
+// LastConnectAttempts records, in call order, the 0-based connect() attempt
+// index on which each successful bootloader sync finally succeeded. It is a
+// measurement hook for the reset-reliability sweep and is NOT part of the
+// public flashing API. It is written synchronously from connect() on the
+// goroutine that performs the connect, so it must only be read from a
+// single-threaded (non-parallel) test.
+var LastConnectAttempts []int
+
 func DefaultOptions() *FlasherOptions {
 	return &FlasherOptions{
 		BaudRate:        115200,
@@ -195,6 +211,10 @@ type Flasher struct {
 	opts    *FlasherOptions
 	portStr string
 	usesUSB bool
+	// revision is the detected chip revision (e.g. 301 for P4 rev 3.1). It is
+	// filled in by the chip's PostConnect hook and used to pick revision-specific
+	// behaviour such as the correct stub flasher. Zero means "unknown/not set".
+	revision int
 	// currentBaud is the UART baud rate the chip is ACTUALLY running at. It
 	// starts at the connect baud and is updated on every successful changeBaud.
 	// changeBaud passes this as the old-baud argument to the protocol so the
@@ -208,6 +228,12 @@ type Flasher struct {
 	ctx         context.Context
 	cancel      context.CancelFunc
 	closed      bool
+	// LastConnectAttempt records the 0-based connect() attempt index on which
+	// the bootloader sync finally succeeded. It is a measurement hook: 0 means
+	// the FIRST reset strategy caught the download window, >0 means a retry was
+	// needed. Used by the reset-reliability sweep to tell a working first-attempt
+	// reset from one that only works because a later attempt falls through.
+	LastConnectAttempt int
 }
 
 // openPortWithRetries opens a serial port, retrying while the port reports a
@@ -437,8 +463,32 @@ func (f *Flasher) BootloaderFlashOffset() (uint32, bool) {
 	return f.chip.BootloaderFlashOffset, true
 }
 
+// Revision returns the detected chip revision (e.g. 301 for ESP32-P4 rev 3.1).
+// It is filled in by the chip's PostConnect hook and used to select
+// revision-specific artifacts such as the P4 bootloader (v0 vs v3).
+// Returns 0 if the chip has not been detected yet (e.g. connect() has not
+// completed).
+func (f *Flasher) Revision() int {
+	return f.revision
+}
+
 // connect performs the bootloader connection sequence:
 // reset → sync → detect chip.
+// enterBootloaderReset drives the chip into the serial bootloader using the
+// reset strategy appropriate for the requested chip. For the ESP32-P4 the
+// classic DTR/RTS sequences latch the wrong IO0 polarity on the native
+// USB-Serial-JTAG peripheral, so the chip boots the application instead of
+// entering download mode. forceP4Download holds IO0 (DTR) LOW across the EN
+// reset pulse, which reliably latches the P4 into the serial bootloader. See
+// wiki/esp32-p4-flash-solution.md.
+func (f *Flasher) enterBootloaderReset(port serial.Port, delay time.Duration) {
+	if f.opts.ChipType == ChipESP32P4 {
+		forceP4Download(port)
+		return
+	}
+	unixTightReset(port, delay)
+}
+
 func (f *Flasher) connect() error {
 	f.logf("Connecting to %s...", f.portStr)
 
@@ -467,24 +517,26 @@ func (f *Flasher) connect() error {
 		switch f.opts.ResetMode {
 		case ResetDefault:
 			// On Unix systems (darwin, linux), use the esptool sequence:
-			// unixTightReset with 50ms, then 550ms, then fallback to classic resets
+			// unixTightReset with 50ms, then 550ms, then fallback to classic resets.
+			// For the ESP32-P4 the helper routes to forceP4Download, which latches
+			// the native USB-Serial-JTAG peripheral into download mode.
 			if runtime.GOOS == "darwin" || runtime.GOOS == "linux" {
 				switch attempt % 4 {
 				case 0:
-					unixTightReset(f.port, defaultResetDelay)
+					f.enterBootloaderReset(f.port, defaultResetDelay)
 				case 1:
-					unixTightReset(f.port, extraResetDelay)
+					f.enterBootloaderReset(f.port, extraResetDelay)
 				case 2:
-					classicReset(f.port, defaultResetDelay)
+					f.enterBootloaderReset(f.port, defaultResetDelay)
 				case 3:
-					classicReset(f.port, extraResetDelay)
+					f.enterBootloaderReset(f.port, extraResetDelay)
 				}
 			} else {
 				// On other systems, use classic and tight reset alternation
 				if attempt%2 == 0 {
-					classicReset(f.port, defaultResetDelay)
+					f.enterBootloaderReset(f.port, defaultResetDelay)
 				} else {
-					tightReset(f.port, defaultResetDelay)
+					f.enterBootloaderReset(f.port, defaultResetDelay)
 				}
 			}
 		case ResetUSBJTAG:
@@ -493,6 +545,8 @@ func (f *Flasher) connect() error {
 			// connecting; otherwise fall through to the standard reset + sync
 			// sequence on the next attempt.
 			if f.connectViaUSBJTAG() {
+				f.LastConnectAttempt = attempt
+				LastConnectAttempts = append(LastConnectAttempts, attempt)
 				return f.finishConnect()
 			}
 			continue
@@ -507,7 +561,7 @@ func (f *Flasher) connect() error {
 			// reset — matching esptool.py's bridge reset strategy — and confirm
 			// the chip actually entered download mode via its boot log.
 			if f.opts.ResetBridge {
-				unixTightReset(f.port, defaultResetDelay)
+				f.enterBootloaderReset(f.port, defaultResetDelay)
 				f.probeBootLog()
 				break
 			}
@@ -527,7 +581,7 @@ func (f *Flasher) connect() error {
 			// docs/flashing-implementation.md, "Intermittent Flash Failure").
 			switch attempt % 3 {
 			case 0:
-				unixTightReset(f.port, defaultResetDelay)
+				f.enterBootloaderReset(f.port, defaultResetDelay)
 			case 1:
 				// Second attempt: try the USB-JTAG/Serial reset path. When it
 				// succeeds we're done connecting; otherwise fall through to the
@@ -550,6 +604,12 @@ func (f *Flasher) connect() error {
 			return err
 		}
 		if connected {
+			// Measurement hook: remember which attempt won, so the
+			// reset-reliability sweep can distinguish a working first-attempt
+			// reset from one that only succeeds because a later attempt
+			// falls through.
+			f.LastConnectAttempt = attempt
+			LastConnectAttempts = append(LastConnectAttempts, attempt)
 			return f.finishConnect()
 		}
 	}
@@ -594,13 +654,28 @@ func (f *Flasher) finishConnect() error {
 	}
 
 	// Upload the stub loader to enable advanced features (erase, compression, etc.).
-	if s, ok := stubFor(f.chip.ChipType); ok {
-		f.logf("Loading stub loader...")
-		if err := f.conn.loadStub(s); err != nil {
-			f.logf("Warning: could not load stub: %v", err)
-		} else {
-			f.logf("Stub running.")
+	// The revision is honoured here: some chips (notably ESP32-P4) ship
+	// revision-specific stub flashers whose OCRAM load address differs, so the
+	// stub selected without the detected revision would load at the wrong
+	// address and fail to start (no OHAI greeting).
+	//
+	// On the ESP32-P4 the compressed stub path stalls at FLASH_DEFL_END (command
+	// 0x12): the chip ACKs the begin/data blocks but never answers the flash
+	// end, so the finish times out. espflash's working path for the P4 is ROM
+	// mode (--no-stub), where the ROM bootloader handles the flash with the
+	// uncompressed FlashBegin/FlashData/FlashEnd sequence. When SkipStub is set
+	// we skip the stub loader and let the ROM bootloader flash directly.
+	if !f.opts.SkipStub {
+		if s, ok := stubForRevision(f.chip.ChipType, f.revision); ok {
+			f.logf("Loading stub loader...")
+			if err := f.conn.loadStub(s); err != nil {
+				f.logf("Warning: could not load stub: %v", err)
+			} else {
+				f.logf("Stub running.")
+			}
 		}
+	} else {
+		f.logf("Stub loading skipped (ROM mode).")
 	}
 
 	return nil
@@ -1389,6 +1464,20 @@ func (f *Flasher) Reset() {
 		// Tell the stub to cleanly exit flash mode and reboot.
 		f.conn.flashBegin(0, 0, false, false) //nolint:errcheck
 		f.conn.flashEnd(true)                 //nolint:errcheck
+	} else {
+		// ROM bootloader: send FLASH_END with reboot=true to finalize the
+		// write and exit download mode. This mirrors espflash's
+		// finish() (flash_target/esp32.rs), where
+		// flash_end_reboot = secure_download_mode || reboot; for a P4 in
+		// normal (non-SDM) mode that is reboot=true.
+		//
+		// Without this the ROM never receives the end-of-download command in
+		// ROM mode, so the last flash page is left uncommitted (the app at
+		// 0x10000 boots into an Illegal-instruction panic) and the chip
+		// stays latched in download mode after the flash. Sending it is safe
+		// for other chips too: their ROM also accepts FLASH_END and simply
+		// reboots.
+		f.conn.flashEnd(true) //nolint:errcheck
 	}
 
 	// For ROM bootloaders, skip flash_begin/flash_end — sending

@@ -16,6 +16,8 @@ const (
 	ChipESP32C5
 	ChipESP32C61
 	ChipESP32P4
+	ChipESP32H4
+	ChipESP32S31
 )
 
 // String returns the chip name as a string
@@ -41,6 +43,10 @@ func (c Chip) String() string {
 		return "esp32c61"
 	case ChipESP32P4:
 		return "esp32p4"
+	case ChipESP32H4:
+		return "esp32h4"
+	case ChipESP32S31:
+		return "esp32s31"
 	default:
 		return "unknown"
 	}
@@ -69,6 +75,7 @@ var chipKeyIndex = func() map[string]Chip {
 	known := []Chip{
 		ChipESP32, ChipESP32S2, ChipESP32S3, ChipESP32C3, ChipESP32C6,
 		ChipESP32H2, ChipESP32C2, ChipESP32C5, ChipESP32C61, ChipESP32P4,
+		ChipESP32H4, ChipESP32S31,
 	}
 	for _, c := range known {
 		m[chipKey(c.String())] = c
@@ -90,15 +97,19 @@ func (c Chip) ESPChipID() uint16 {
 	case ChipESP32C6:
 		return 13
 	case ChipESP32H2:
-		return 12
-	case ChipESP32C2:
-		return 10
-	case ChipESP32C5:
-		return 6
-	case ChipESP32C61:
-		return 19
-	case ChipESP32P4:
 		return 16
+	case ChipESP32C2:
+		return 12
+	case ChipESP32C5:
+		return 23
+	case ChipESP32C61:
+		return 20
+	case ChipESP32P4:
+		return 18
+	case ChipESP32H4:
+		return 28
+	case ChipESP32S31:
+		return 32
 	default:
 		return 0
 	}

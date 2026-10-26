@@ -18,6 +18,12 @@ type Registry struct {
 	wg         sync.WaitGroup
 	interval   time.Duration
 	paused     bool
+	// firstScanDone is closed once the initial scan in watch() completes.
+	// Callers that must observe freshly-discovered cameras (e.g. the leader
+	// before its first discoverCameras) wait on this instead of sleeping a
+	// fixed duration. It is closed at most once.
+	firstScanDone chan struct{}
+	firstScanOnce sync.Once
 }
 
 var (
@@ -39,11 +45,12 @@ func GetRegistry() *Registry {
 func NewRegistry() *Registry {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Registry{
-		discoverer: NewDiscoverer(),
-		cameras:    make(map[string]*CameraInfo),
-		ctx:        ctx,
-		cancel:     cancel,
-		interval:   5 * time.Second,
+		discoverer:    NewDiscoverer(),
+		cameras:       make(map[string]*CameraInfo),
+		ctx:           ctx,
+		cancel:        cancel,
+		interval:      5 * time.Second,
+		firstScanDone: make(chan struct{}),
 	}
 }
 
@@ -57,8 +64,25 @@ func (r *Registry) Start() {
 // Stop stops the camera watcher
 func (r *Registry) Stop() {
 	r.cancel()
+	// Unblock any callers waiting on the initial scan in case Stop() races the
+	// first scan completing.
+	r.firstScanOnce.Do(func() { close(r.firstScanDone) })
 	r.wg.Wait()
 	log.Info().Msg("Camera registry stopped")
+}
+
+// WaitForInitialScan blocks until the registry's initial camera scan completes,
+// or the timeout elapses if the scan has not finished in time. It returns true
+// if the initial scan completed and false if the timeout was hit. Callers that
+// must observe freshly-discovered cameras should call this (instead of sleeping)
+// before reading the registry.
+func (r *Registry) WaitForInitialScan(timeout time.Duration) bool {
+	select {
+	case <-r.firstScanDone:
+		return true
+	case <-time.After(timeout):
+		return false
+	}
 }
 
 // watch periodically scans for camera changes
@@ -67,6 +91,11 @@ func (r *Registry) watch() {
 
 	// Initial scan
 	r.scan()
+
+	// Signal that the initial scan has completed so callers waiting on
+	// WaitForInitialScan can proceed as soon as the scan finishes rather than
+	// after a fixed delay.
+	r.firstScanOnce.Do(func() { close(r.firstScanDone) })
 
 	ticker := time.NewTicker(r.interval)
 	defer ticker.Stop()

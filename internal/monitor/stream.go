@@ -12,12 +12,39 @@ import (
 	"go.bug.st/serial"
 )
 
+// DeviceReservation is the subset of the cluster device reservation the stream
+// session couples to the OS serial-port lifecycle. It is an interface so the
+// monitor package can hold a reservation without importing the cluster
+// package (which would create an import cycle). The concrete adapter, wired in
+// the http package, delegates to the leader's *cluster.DeviceRegistry.
+//
+// The contract is simple: Reserve must succeed before the OS port is opened
+// and Release must run after it is closed, so the reservation is held for the
+// whole session lifetime. This makes the cluster-level lock track the exact
+// port the OS mutex protects, instead of leaking until the 30-minute TTL
+// cleanup. The server session is the sole holder of the reservation: the
+// remote CLI no longer reserves the device over HTTP, so there is a single
+// owner and the lock is freed the instant the port closes.
+type DeviceReservation interface {
+	// Reserve claims the reservation for owner before the port opens. It
+	// reports whether the claim succeeded; a false result means another
+	// owner already holds it.
+	Reserve(path, owner string) bool
+	// Release frees the reservation after the port closes.
+	Release(path, owner string)
+	// Owner reports who currently holds the reservation, for error messages.
+	Owner(path string) string
+}
+
 type StreamConfig struct {
 	Port       string
 	BaudRate   int
 	ExitOn     string
 	Timeout    time.Duration
 	TimeoutCtx context.Context // Parent context for timeout
+	// Reservation, when set, is acquired before the port opens and released
+	// after it closes (see StreamSession.Start / StreamManager.Remove).
+	Reservation DeviceReservation
 }
 
 type StreamSession struct {
@@ -31,6 +58,11 @@ type StreamSession struct {
 	ctx       context.Context
 	cancel    context.CancelFunc
 	parentCtx context.Context // Parent context for timeout
+	// reservation couples the session to the cluster reservation lock. When
+	// set, the reservation is acquired before the port opens and released
+	// after it closes, so a concurrent flash is blocked while a monitor holds
+	// the port (and freed the moment the monitor detaches).
+	reservation DeviceReservation
 }
 
 type ControlMessage struct {
@@ -45,14 +77,15 @@ func NewStreamSession(id string, cfg StreamConfig) *StreamSession {
 		parentCtx = context.Background()
 	}
 	return &StreamSession{
-		id:        id,
-		config:    cfg,
-		dataCh:    make(chan []byte, 256),
-		errorCh:   make(chan error, 1),
-		control:   make(chan *ControlMessage, 10),
-		ctx:       ctx,
-		cancel:    cancel,
-		parentCtx: parentCtx,
+		id:          id,
+		config:      cfg,
+		reservation: cfg.Reservation,
+		dataCh:      make(chan []byte, 256),
+		errorCh:     make(chan error, 1),
+		control:     make(chan *ControlMessage, 10),
+		ctx:         ctx,
+		cancel:      cancel,
+		parentCtx:   parentCtx,
 	}
 }
 
@@ -61,8 +94,23 @@ func (s *StreamSession) Start() error {
 		BaudRate: s.config.BaudRate,
 	}
 
+	// Reserve the cluster device reservation before touching the OS serial
+	// port, so the reservation lock tracks the same port the OS mutex
+	// protects. A concurrent flash is blocked while a monitor holds the port,
+	// and the reservation is held for the whole session lifetime.
+	if s.reservation != nil {
+		if !s.reservation.Reserve(s.config.Port, s.id) {
+			owner := s.reservation.Owner(s.config.Port)
+			return fmt.Errorf("device reserved by: %s", owner)
+		}
+	}
+
 	port, err := serialheal.Open(s.config.Port, mode)
 	if err != nil {
+		// A failed open must not leak the reservation until the TTL cleanup.
+		if s.reservation != nil {
+			s.reservation.Release(s.config.Port, s.id)
+		}
 		return fmt.Errorf("open serial: %w", err)
 	}
 	s.port = port
@@ -265,6 +313,12 @@ func (m *StreamManager) Remove(id string) {
 
 	if s, exists := m.sessions[id]; exists {
 		_ = s.Close()
+		// Release the reservation now that the OS port is closed, coupling the
+		// cluster lock to the serial-port lifecycle so a waiting flash can
+		// proceed the instant the monitor detaches.
+		if s.reservation != nil {
+			s.reservation.Release(s.config.Port, s.id)
+		}
 		delete(m.sessions, id)
 	}
 }

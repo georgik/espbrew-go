@@ -2,6 +2,28 @@
 
 This document describes the internal implementation of the flashing system, including fixes for common issues and platform-specific considerations.
 
+## Download-Mode Confirmation (Boot-Log Parsing)
+
+Forcing the chip into bootloader mode is only half the job — we must confirm the
+reset actually landed it in *download* mode and not let it fall through to the
+user application. espflash (the Rust reference tool) reads the serial line
+immediately after the reset and matches the pattern
+
+```
+boot:(0x<addr>)([\s\S]*waiting for download)?
+```
+
+- `boot:0x...` **without** `waiting for download` → the chip booted the user app
+  (`WrongBootMode`); the reset missed the download window and we must retry.
+- `boot:0x...` **with** `waiting for download` → the chip is in download mode and
+  ready to take a flash.
+
+Our tool has a lighter version of this in `probeBootLog()` / `readBootLog()`
+(`internal/espflash/flasher.go`): after the reset it captures the serial output
+and logs whether it saw `waiting for download`. The sync loop is the real gate —
+not seeing the banner is not fatal — but a marginal reset now surfaces early as a
+clear signal instead of a late, confusing SLIP timeout.
+
 ## ESP32-S3 USB-JTAG/Serial Support
 
 ESP32-S3, ESP32-C3, ESP32-C5, ESP32-C6, and ESP32-H2 chips support USB-JTAG/Serial mode, which presents itself as a USB CDC device (/dev/ttyACM* on Linux, /dev/cu.usb* on macOS). This requires different reset handling than classic DTR/RTS reset.
@@ -92,6 +114,121 @@ job stops retrying instead of spinning.
 **Impact**: A flash no longer fails if the boot-log probe is running or if the
 USB device detaches and re-enumerates mid-operation — the open waits out the
 busy window and the flash proceeds, so the board is never left blocked.
+
+## Reservation Lock-Coupling (Single Owner Across Flash + Monitor)
+
+**Problem.** A device can be driven by two clients at once: a `flash` job and a
+`monitor` session (or a re-flashing client). Each of these opens the same serial
+port, and the OS grants an exclusive open — the second `serialheal.Open` fails
+with `Serial port busy`. The cluster models this with a `DeviceRegistry` /
+`DeviceLock` (states `available` / `reserved` / `busy` / `error`, keyed on the
+`/dev/serial/by-id/…` path). A client calls `Reserve(path, owner)` before it
+touches the port and `Release(path, owner)` when it is done.
+
+The first attempt held the reservation from **both** ends — the client reserved
+over HTTP *and* the server reserved when it opened the port. Two owners meant a
+race: a `flash` retry could submit while the previous job still held the
+reservation, and the server answered with `409 device not available`. A monitor
+opened right after a flash could also win the race against a still-unreleased
+flash job.
+
+**Solution (lock coupling).** The reservation is now held by exactly **one**
+owner for the whole lifetime of the OS serial handle, and released the instant
+that handle closes. This mirrors the OS mutex itself: `serialheal.Open` is an
+exclusive open, so the reservation must be coupled to it.
+
+- **Flash job** (`internal/cluster/leader.go`, `EnqueueJobWithOffsetAndErase`):
+  the server reserves with `owner = job.ID` right before flashing and releases it
+  in `handleJobResults` when the job reaches a terminal state. A concurrent
+  submit returns `409 device not available: <path>` (owner reported) instead of
+  opening a second handle.
+- **Monitor session** (`internal/monitor/stream.go`, `Start()`): the monitor
+  reserves `path` → `id` *before* `serialheal.Open`, and releases it immediately
+  if the open fails. It never holds the reservation without an open handle.
+- **Client** (`cmd/espbrew/monitor.go`): the client-side HTTP reservation was
+  **removed** — the client no longer reserves before connecting. The server
+  session is the sole holder, so there is only ever one owner to reason about.
+
+Because the reservation and the OS exclusive open are now the same lifecycle, two
+clients can never both hold the device, and a monitor can attach the moment a
+flash job releases the port.
+
+### The 409 flash-retry race (client side)
+
+Even with a single owner, a **retrying** client could still hit `409`: the
+`flash` command re-submits the job on certain transient errors, but if the
+previous submit is still running it still holds the reservation, so the retry's
+`SubmitFlash` fails with `device not available` immediately.
+
+**Solution** (`cmd/espbrew/flash.go`): the retry loop tracks the most recent
+`jobID`. When a submit fails with `device not available` and there is a
+previously submitted job, it polls `GetJob(jobID)` until that job reaches a
+terminal state (`complete` / `failed` / `cancelled` / `timedout`) — which is
+exactly when the server releases the reservation — then retries the submit
+**once**. It never spins re-submitting against a still-held device, and it never
+waits longer than `jobReleaseTimeout` (3 min), polling every `jobReleasePollInterval`
+(2 s).
+
+## Secure Download Mode (SDM) and the Wedged-Chip Scenario
+
+### Secure Download Mode
+
+Some chips ship with **Secure Download Mode** enabled. SDM is a hardware/efuse
+state that restricts certain bootloader operations (notably register writes and
+flash reads). When SDM is active:
+
+- espflash prints `WARN Secure Download Mode is enabled on this chip` and
+  disables `--verify` / `--skip` (flash reads are restricted).
+- The stub loader is not used; flashing falls back to the ROM bootloader.
+- Chip identification relies on `GetSecurityInfo`, and on older chips on a
+  fallback `ReadReg(0x40001000)` magic-register read.
+
+We detect SDM the same way. `detectChip()` (`internal/espflash/flasher.go`)
+reads security info and sets `chipDef.SecureDownloadMode`; the P4 target uses it
+to select the correct revision-aware bootloader (v0 vs v3).
+
+### The wedged chip
+
+The most alarming failure mode we have seen is a **stable, wedged chip**:
+
+- The USB-JTAG/Serial peripheral still **enumerates** (`/dev/ttyACM0` present,
+  `lsusb` shows the `303a:1001` device, no bus errors).
+- The CPU, however, is hung and emits **no serial output at all** and **no SLIP
+  response**. `monitor` shows nothing; `board-info` / `flash` hang on
+  "Connecting…".
+- `ttyACM0`'s mtime is **stable** (unlike the ~7–8 s re-enumeration churn our
+  reset calls produce), ruling out a reboot loop.
+
+**Root cause:** a partial/corrupt application at `0x10000` (e.g. a flash that was
+interrupted) crashes the CPU on boot. The chip never recovers on its own and
+refuses the SLIP handshake. The USB peripheral stays up, which is why a plain
+power cycle does not clear it.
+
+**Recovery:** the chip must be pulled into download mode *bypassing* the app and
+then given a valid image. `espflash`'s `UsbJtagSerialReset` reliably forces
+download mode (its debug log shows `Download Mode: true` right after the reset),
+so a power-cycle followed immediately by an `espflash flash` (or `write-bin` to a
+clean image) is the way back. A wedged CPU only clears on a hard EN reset or
+power cycle — software resets alone are insufficient.
+
+### Why espflash connects where our tool hung
+
+We byte-compared the two reset implementations and they are equivalent, so the
+gap is in the connect *flow*, not the reset pulses:
+
+1. espflash uses `UsbJtagSerialReset` as the **primary** reset for native USB
+   boards and syncs immediately from a **single** port handle.
+2. It parses the boot log to confirm download mode before trusting the sync.
+3. Chip identification (`detect_chip`) falls back to `ReadReg(0x40001000)` when
+   `GetSecurityInfo` yields no chip id; on a wedged/SDM chip that read fails
+   intermittently, which is where espflash's connect loop stalls.
+
+Our `connectViaUSBJTAG()` reopens the port (`reopenPort()`) between the reset and
+the sync loop. On a marginal chip that reopen can drop the connection right as
+the chip is finishing its USB re-enumeration, so the sync misses. The lesson:
+**reset once, sync several times from the same handle, and let the boot log tell
+us whether the reset won** — rather than reopening and re-resetting on every
+attempt.
 
 ## Multi-Part Flashing
 

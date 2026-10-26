@@ -110,9 +110,9 @@ func (c *ClusterConfig) DeviceByPath(path string) *DeviceConfig {
 
 // DeviceConfigsByPath returns every device config registered for a given port,
 // in file order. A single physical port can be exposed under several aliases
-// (e.g. "waveshare-esp32-s3-touch-lcd-1.28" and its "_" form) by listing it
-// more than once under [[devices]] with the same path; each entry's alias is
-// stamped onto the device record so the board is addressable by any of them.
+// (e.g. "my-board" and its "my_board" form) by listing it more than once under
+// [[devices]] with the same path; each entry's alias is stamped onto the
+// device record so the board is addressable by any of them.
 func (c *ClusterConfig) DeviceConfigsByPath(path string) []DeviceConfig {
 	var out []DeviceConfig
 	for i := range c.Devices {

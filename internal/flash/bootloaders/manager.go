@@ -104,12 +104,39 @@ func NewManager(config ManagerConfig) (*Manager, error) {
 	}, nil
 }
 
-// GetBootloader returns the bootloader binary for the specified chip
+// GetBootloader returns the bootloader binary for the specified chip.
+//
+// The ESP32-P4 is revision-aware silicon: silicon rev >= 3.0 must boot from the
+// esp32p4-v3 bootloader (built with CONFIG_ESP32P4_REV_MIN_300) while rev < 3.0
+// uses esp32p4-v0. We embed both and select by revision, mirroring espflash's
+// default_bootloader(). For every other chip the revision is ignored.
+//
 // It checks in this order:
 // 1. Custom path (if set via SetCustomPath)
-// 2. Local cache
-// 3. Downloads from GitHub
-func (m *Manager) GetBootloader(chip chips.Chip) ([]byte, *BootloaderInfo, error) {
+// 2. Embedded P4 variant (rev-aware)
+// 3. Local cache
+// 4. Downloads from GitHub
+func (m *Manager) GetBootloader(chip chips.Chip, revision int) ([]byte, *BootloaderInfo, error) {
+	// ESP32-P4: use the embedded, revision-aware variant. This avoids a network
+	// fetch entirely and guarantees the correct v0/v3 selection for the silicon.
+	if chip == chips.ChipESP32P4 {
+		if data, ok := embeddedP4Bootloader(revision); ok {
+			name := "esp32p4-v0-bootloader.bin"
+			if revision >= 300 {
+				name = "esp32p4-v3-bootloader.bin"
+			}
+			info := &BootloaderInfo{
+				Name:        name,
+				Chip:        chipToString(chip),
+				Source:      "embedded",
+				Size:        int64(len(data)),
+				LastUpdated: timestamp(),
+			}
+			return data, info, nil
+		}
+		return nil, nil, fmt.Errorf("no embedded ESP32-P4 bootloader for revision %d", revision)
+	}
+
 	m.mu.RLock()
 	customPath, hasCustom := m.customPaths[chip]
 	m.mu.RUnlock()
@@ -162,6 +189,21 @@ func (m *Manager) GetBootloader(chip chips.Chip) ([]byte, *BootloaderInfo, error
 	m.saveMetadata(filename, info)
 
 	return data, info, nil
+}
+
+// embeddedP4Bootloader returns the embedded ESP32-P4 bootloader selected by
+// chip revision: rev >= 300 uses the v3 variant, rev < 300 uses v0. The second
+// return value reports whether a variant was found.
+func embeddedP4Bootloader(revision int) ([]byte, bool) {
+	name := "esp32p4-v0-bootloader.bin"
+	if revision >= 300 {
+		name = "esp32p4-v3-bootloader.bin"
+	}
+	data, err := P4Bootloaders.ReadFile(name)
+	if err != nil {
+		return nil, false
+	}
+	return data, true
 }
 
 // SetCustomPath sets a custom path for a specific chip's bootloader

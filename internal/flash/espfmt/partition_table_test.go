@@ -3,6 +3,7 @@ package espfmt
 import (
 	"bytes"
 	"crypto/md5"
+	"strings"
 	"testing"
 )
 
@@ -42,7 +43,10 @@ func TestDefaultPartitionTableFormat(t *testing.T) {
 	}
 
 	// The three real partitions must be present, 32 bytes each, with the
-	// expected offsets.
+	// expected offsets. The factory partition is sized per espflash's
+	// default_partition_table: min(flash - 0x10000, MAX_PARTITION_SIZE).
+	// MAX_PARTITION_SIZE = 16*1000*1024 = 0xfa0000, which caps the 0xff0000
+	// available on a 16 MB chip, so the factory is 0xfa0000.
 	want := []struct {
 		label string
 		off   uint32
@@ -50,7 +54,7 @@ func TestDefaultPartitionTableFormat(t *testing.T) {
 	}{
 		{"nvs", 0x9000, 0x6000},
 		{"phy_init", 0xF000, 0x1000},
-		{"factory", 0x10000, 0x100000},
+		{"factory", 0x10000, 0xfa0000},
 	}
 	for i, w := range want {
 		off := i * ESP_PARTITION_ENTRY_SIZE
@@ -80,10 +84,67 @@ func TestDefaultPartitionTableFormat(t *testing.T) {
 // TestDefaultPartitionTableBootloaderVerify confirms the table passes the same
 // MD5 walk the ESP32 bootloader performs.
 func TestDefaultPartitionTableBootloaderVerify(t *testing.T) {
-	for _, chip := range []Chip{ChipESP32, ChipESP32S2, ChipESP32S3, ChipESP32C3} {
+	for _, chip := range []Chip{ChipESP32, ChipESP32S2, ChipESP32S3, ChipESP32C3, ChipESP32P4} {
 		table := DefaultPartitionTable(chip, 16*1024*1024)
 		if !verifyPartitionTableMD5(table) {
 			t.Fatalf("chip %d: partition table failed MD5 verification", chip)
 		}
 	}
+}
+
+// TestDefaultPartitionTableP4MatchesEspflash pins the P4 factory partition to
+// espflash's default_partition_table formula:
+//
+//	min(flash_size - 0x10000, MAX_PARTITION_SIZE)   // MAX = 16 * 1000 * 1024
+//
+// which is what the ESP32-P4 bootloader expects (the old code fell into the
+// 3 MB default branch and produced a 0x300000 factory partition).
+func TestDefaultPartitionTableP4MatchesEspflash(t *testing.T) {
+	const (
+		appAddr = uint32(0x10000)
+	)
+
+	cases := []struct {
+		name     string
+		chip     Chip
+		flashMB  uint32
+		wantSize uint32
+	}{
+		// min(flash - 0x10000, MAX=0xfa0000): 16 MiB is capped at MAX.
+		{"p4_16mb", ChipESP32P4, 16, 0xfa0000},
+		{"p4_4mb", ChipESP32P4, 4, 0x3f0000},
+		{"p4_8mb", ChipESP32P4, 8, 0x7f0000},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			table := DefaultPartitionTable(tc.chip, tc.flashMB*1024*1024)
+			gotOff, gotSize := factoryEntry(t, table)
+			if gotOff != appAddr {
+				t.Errorf("factory offset = 0x%x, want 0x%x", gotOff, appAddr)
+			}
+			if gotSize != tc.wantSize {
+				t.Errorf("factory size = 0x%x, want 0x%x (espflash formula)", gotSize, tc.wantSize)
+			}
+			if !verifyPartitionTableMD5(table) {
+				t.Error("partition table failed MD5 verification")
+			}
+		})
+	}
+}
+
+// factoryEntry returns the offset and size of the factory partition entry.
+func factoryEntry(t *testing.T, table []byte) (uint32, uint32) {
+	t.Helper()
+	for off := 0; off+ESP_PARTITION_ENTRY_SIZE <= len(table); off += ESP_PARTITION_ENTRY_SIZE {
+		// The 16-byte label field is null-padded; compare the trimmed name.
+		label := strings.TrimRight(string(table[off+12:off+12+16]), "\x00")
+		if label != "factory" {
+			continue
+		}
+		size := uint32(table[off+8]) | uint32(table[off+9])<<8 | uint32(table[off+10])<<16 | uint32(table[off+11])<<24
+		return uint32(table[off+4]) | uint32(table[off+5])<<8 | uint32(table[off+6])<<16 | uint32(table[off+7])<<24, size
+	}
+	t.Fatal("factory partition entry not found")
+	return 0, 0
 }
