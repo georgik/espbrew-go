@@ -3,7 +3,6 @@ package flash
 import (
 	"context"
 	"encoding/hex"
-	"os"
 	"testing"
 	"time"
 
@@ -15,11 +14,12 @@ import (
 // image magic byte (0xE9). The boot log shows "invalid magic byte at 0x10000"
 // when this write does not persist, so this is the end-to-end reproduction.
 func TestE2E_RealFlashWriteback(t *testing.T) {
-	elfPath := "/home/juraj/research/espbrew/repos/esp32-conways-game-of-life-rs/esp32-p4-function-ev-board/target/riscv32imafc-unknown-none-elf/release/esp32-p4-function-ev-board-conways-game-of-life"
-	data, err := os.ReadFile(elfPath)
-	if err != nil {
-		t.Fatalf("read elf: %v", err)
+	// Hardware e2e test: skip in CI (no board attached) and when the fixture
+	// ELF is not built, so it never blocks on a timeout or fails the suite.
+	if !hasHardwarePort("/dev/ttyACM0") {
+		t.Skip("no /dev/ttyACM0 attached, skipping hardware e2e test")
 	}
+	data := readFixtureOrSkip(t, investigationFixture)
 	t.Logf("elf size: %d bytes", len(data))
 
 	f := NewFlasher(&FlasherOptions{

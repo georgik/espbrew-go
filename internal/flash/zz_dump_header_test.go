@@ -9,11 +9,7 @@ import (
 )
 
 func TestDumpEspbrewAppHeader(t *testing.T) {
-	elfPath := "/home/juraj/research/espbrew/repos/esp32-conways-game-of-life-rs/esp32-p4-function-ev-board/target/riscv32imafc-unknown-none-elf/release/esp32-p4-function-ev-board-conways-game-of-life"
-	elfData, err := os.ReadFile(elfPath)
-	if err != nil {
-		t.Fatal(err)
-	}
+	elfData := readFixtureOrSkip(t, investigationFixture)
 	bin, err := ConvertELFToESPImage(elfData, chips.ChipESP32P4, 301)
 	if err != nil {
 		t.Fatal(err)

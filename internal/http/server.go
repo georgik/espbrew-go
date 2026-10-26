@@ -137,6 +137,9 @@ func (s *Server) setupRoutes(store *persistence.Store) {
 		// Wokwi simulations run on the leader through this shared session
 		// manager so flash and monitor share a single simulation.
 		s.monitor.sessions = leader.WokwiSessions()
+		// Couple the serial monitor to the cluster reservation lock so a
+		// flash and a monitor never both grab the same port.
+		s.monitor.reservation = registryReservation{devices: leader.GetDevices()}
 	}
 	s.monitor.RegisterRoutes(s.router)
 

@@ -2,7 +2,6 @@ package flash
 
 import (
 	"context"
-	"os"
 	"testing"
 	"time"
 
@@ -28,11 +27,12 @@ import (
 // exactly what surfaces in the logs as
 // "timeout waiting for response to SLIP read" followed by a retry.
 func TestResetReliabilitySweep(t *testing.T) {
-	elfPath := "/home/juraj/research/espbrew/repos/esp32-conways-game-of-life-rs/esp32-p4-function-ev-board/target/riscv32imafc-unknown-none-elf/release/esp32-p4-function-ev-board-conways-game-of-life"
-	data, err := os.ReadFile(elfPath)
-	if err != nil {
-		t.Fatalf("read elf: %v", err)
+	// Hardware sweep test: skip in CI (no board attached) and when the fixture
+	// ELF is not built, so it never blocks on a timeout or fails the suite.
+	if !hasHardwarePort("/dev/ttyACM0") {
+		t.Skip("no /dev/ttyACM0 attached, skipping hardware sweep test")
 	}
+	data := readFixtureOrSkip(t, investigationFixture)
 	t.Logf("elf size: %d bytes", len(data))
 
 	strategies := []struct {
