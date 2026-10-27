@@ -22,6 +22,7 @@ type ProgressMessage struct {
 	JobID    string `json:"job_id,omitempty"`
 	Progress int    `json:"progress,omitempty"`
 	Status   string `json:"status,omitempty"`
+	Message  string `json:"message,omitempty"`
 	Error    string `json:"error,omitempty"`
 }
 
@@ -101,6 +102,7 @@ func (h *ProgressHub) BroadcastProgress(jobID string, progress int, status strin
 		JobID:    jobID,
 		Progress: progress,
 		Status:   status,
+		Message:  status,
 	}
 }
 
@@ -156,13 +158,15 @@ func (h *ProgressHandler) handleProgressWebSocket(w http.ResponseWriter, r *http
 	sub := h.hub.Subscribe(jobID, conn)
 	defer h.hub.Unsubscribe(sub)
 
-	// Send initial state
+	// Send initial state. Both fields come from the same locked ToMap() snapshot
+	// so we never read a Job field (e.g. Status) outside job.mu, which would race
+	// with JobQueue.Complete() stamping the terminal state.
 	jobData := job.ToMap()
 	conn.WriteJSON(ProgressMessage{
 		Type:     "init",
 		JobID:    jobID,
 		Progress: jobData["progress"].(int),
-		Status:   string(job.Status),
+		Status:   string(jobData["status"].(cluster.JobStatus)),
 	})
 
 	// Send pings and handle outgoing messages
@@ -207,16 +211,26 @@ func (h *ProgressHandler) StartProgressStreamer(jobID string) {
 		case <-ticker.C:
 			job.RLock()
 			progress := job.Progress
+			// The job's authoritative terminal state drives completion. The
+			// flasher-derived phase is only a display hint while running, so a
+			// slow connect surfaces as "connecting" instead of "running". The
+			// phase must never hide the terminal state: a completed job still
+			// carries its last phase, so gating the phase on the running state
+			// keeps the completion signal visible.
+			terminal := job.Status == cluster.JobComplete || job.Status == cluster.JobFailed
 			status := string(job.Status)
+			if job.Phase != "" && !terminal {
+				status = job.Phase
+			}
 			job.RUnlock()
 
 			h.hub.BroadcastProgress(jobID, progress, status)
 
-			if status == "completed" || status == "failed" {
+			if terminal {
 				job.RLock()
 				errMsg := job.Error
 				job.RUnlock()
-				h.hub.BroadcastComplete(jobID, status, errMsg)
+				h.hub.BroadcastComplete(jobID, string(job.Status), errMsg)
 				return
 			}
 		}

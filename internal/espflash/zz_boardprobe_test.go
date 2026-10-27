@@ -10,6 +10,7 @@ import (
 // strategy. connect() succeeds only if the chip enters download mode and syncs,
 // so this directly measures which reset makes flashing possible.
 func TestZzConnectSweep(t *testing.T) {
+	requireHardware(t)
 	const reps = 3
 	base := DefaultOptions()
 	base.Logger = &captureLogger{}
@@ -42,7 +43,7 @@ func TestZzConnectSweep(t *testing.T) {
 		fails := map[string]int{}
 		for i := 0; i < reps; i++ {
 			ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
-			f, err := New(ctx, "/dev/ttyACM0", opts)
+			f, err := New(ctx, hardwarePort(), opts)
 			if err == nil {
 				f.Close()
 				ok++

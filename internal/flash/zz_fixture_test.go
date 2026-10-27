@@ -40,3 +40,23 @@ func hasHardwarePort(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
 }
+
+// hardwareTestEnabled reports whether hardware-backed tests are permitted to
+// run. They require an explicit opt-in (EB_HARDWARE_TEST set) so they never
+// block on a stale or absent board node by default. A device node existing is
+// not enough: a node alone does not mean a responding board is attached, and
+// the tests must not hang waiting on it. Set EB_HARDWARE_TEST=1 to run them
+// against a real board.
+func hardwareTestEnabled() bool {
+	return os.Getenv("EB_HARDWARE_TEST") != ""
+}
+
+// hardwarePort returns the board port for hardware-backed tests. It defaults to
+// /dev/ttyACM0 but can be overridden with EB_HARDWARE_PORT so the same tests run
+// on a different lab machine whose board is on e.g. /dev/ttyUSB0.
+func hardwarePort() string {
+	if p := os.Getenv("EB_HARDWARE_PORT"); p != "" {
+		return p
+	}
+	return "/dev/ttyACM0"
+}

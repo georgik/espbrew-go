@@ -8,6 +8,7 @@ import (
 
 // TestZzConnectModes measures full connect() success per ResetMode.
 func TestZzConnectModes(t *testing.T) {
+	requireHardware(t)
 	const reps = 4
 	base := DefaultOptions()
 	base.Logger = &captureLogger{}
@@ -25,7 +26,7 @@ func TestZzConnectModes(t *testing.T) {
 		fails := map[string]int{}
 		for i := 0; i < reps; i++ {
 			ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
-			f, err := New(ctx, "/dev/ttyACM0", opts)
+			f, err := New(ctx, hardwarePort(), opts)
 			if err == nil {
 				f.Close()
 				ok++

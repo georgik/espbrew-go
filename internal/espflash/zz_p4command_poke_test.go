@@ -94,7 +94,7 @@ func TestCommandSendsSyncPokeAndDrainsInROM(t *testing.T) {
 			slipResp(cmdReadReg, 0x1234), // matching response we wait for
 		},
 	}
-	c := &conn{port: m, reader: newSlipReader(m, context.Background()), stub: false}
+	c := &conn{port: m, reader: newSlipReader(m, context.Background()), post: p4CommandPost{}, stub: false}
 
 	resp, err := c.command(cmdReadReg, []byte{0x00, 0x00, 0x00, 0x00}, 0, defaultTimeout, true)
 	if err != nil {
@@ -129,7 +129,7 @@ func TestCommandSkipsDrainInStubMode(t *testing.T) {
 			slipResp(cmdReadReg, 0xABCD),
 		},
 	}
-	c := &conn{port: m, reader: newSlipReader(m, context.Background()), stub: true}
+	c := &conn{port: m, reader: newSlipReader(m, context.Background()), post: p4CommandPost{}, stub: true}
 
 	if _, err := c.command(cmdReadReg, []byte{0, 0, 0, 0}, 0, defaultTimeout, true); err != nil {
 		t.Fatalf("command() failed: %v", err)
@@ -137,10 +137,13 @@ func TestCommandSkipsDrainInStubMode(t *testing.T) {
 	if m.drainSeen {
 		t.Errorf("Drain() must NOT be called in stub mode")
 	}
-	// The poke is still sent in stub mode (the P4 stub defers replies like the
-	// ROM), so we still expect 2 writes.
-	if len(m.writes) != 2 {
-		t.Errorf("expected 2 writes (command + poke) in stub mode, got %d", len(m.writes))
+	// No SYNC poke in stub mode: the RAM stub replies immediately, so the P4
+	// pipeline-lag poke is skipped. Only the command frame is written.
+	if len(m.writes) != 1 {
+		t.Errorf("expected 1 write (command only) in stub mode, got %d", len(m.writes))
+	}
+	if got := pokeOpcode(m.writes[0]); got != cmdReadReg {
+		t.Errorf("write[0] opcode = 0x%02X, want cmdReadReg", got)
 	}
 }
 
@@ -156,7 +159,7 @@ func TestCommandDrainsStaleBeforeMatching(t *testing.T) {
 	readQ = append(readQ, slipResp(cmdReadReg, 0x5678)) // the matching reply
 
 	m := &pokeMock{readQ: readQ}
-	c := &conn{port: m, reader: newSlipReader(m, context.Background()), stub: false}
+	c := &conn{port: m, reader: newSlipReader(m, context.Background()), post: p4CommandPost{}, stub: false}
 
 	start := time.Now()
 	resp, err := c.command(cmdReadReg, []byte{0, 0, 0, 0}, 0, defaultTimeout, true)
@@ -178,9 +181,10 @@ func TestCommandDrainsStaleBeforeMatching(t *testing.T) {
 }
 
 // TestCommandSilentChipFailsFast verifies that when the chip never answers,
-// command() gives up after the wall-clock deadline instead of looping forever.
-// The deadline is temporarily shortened so the test stays fast instead of
-// blocking for the full 8 s production value.
+// command() gives up quickly instead of looping forever. A silent chip only
+// produces read timeouts, so command() bails after a few back-to-back timeouts
+// (p4MaxSilentReads); the deadline is shortened here only so the test stays
+// fast instead of blocking on the full 5 s production value.
 func TestCommandSilentChipFailsFast(t *testing.T) {
 	// Temporarily shorten the deadline and always restore it.
 	saved := p4CommandDeadline
@@ -188,7 +192,7 @@ func TestCommandSilentChipFailsFast(t *testing.T) {
 	defer func() { p4CommandDeadline = saved }()
 
 	m := &pokeMock{} // readQ empty -> every Read reports timeout (n==0)
-	c := &conn{port: m, reader: newSlipReader(m, context.Background()), stub: false}
+	c := &conn{port: m, reader: newSlipReader(m, context.Background()), post: p4CommandPost{}, stub: false}
 
 	start := time.Now()
 	_, err := c.command(cmdReadReg, []byte{0, 0, 0, 0}, 0, defaultTimeout, true)

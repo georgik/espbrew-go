@@ -14,10 +14,10 @@ import (
 // image magic byte (0xE9). The boot log shows "invalid magic byte at 0x10000"
 // when this write does not persist, so this is the end-to-end reproduction.
 func TestE2E_RealFlashWriteback(t *testing.T) {
-	// Hardware e2e test: skip in CI (no board attached) and when the fixture
-	// ELF is not built, so it never blocks on a timeout or fails the suite.
-	if !hasHardwarePort("/dev/ttyACM0") {
-		t.Skip("no /dev/ttyACM0 attached, skipping hardware e2e test")
+	// Hardware e2e test: gated behind EB_HARDWARE_TEST so it never blocks on a
+	// stale/absent board node, and skips when the fixture ELF is not built.
+	if !hardwareTestEnabled() || !hasHardwarePort(hardwarePort()) {
+		t.Skipf("hardware test disabled (set EB_HARDWARE_TEST=1) or no %s attached", hardwarePort())
 	}
 	data := readFixtureOrSkip(t, investigationFixture)
 	t.Logf("elf size: %d bytes", len(data))
@@ -36,13 +36,13 @@ func TestE2E_RealFlashWriteback(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 
 		res := f.Flash(ctx, &FlashRequest{
-			Port:     "/dev/ttyACM0",
+			Port:     hardwarePort(),
 			Firmware: data,
 			Chip:     chips.ChipESP32P4,
 		})
 
 		// Read back the first 4 bytes at 0x10000.
-		rbRes := f.ReadFlash(ctx, &ReadFlashRequest{Port: "/dev/ttyACM0", Address: 0x10000, Size: 4})
+		rbRes := f.ReadFlash(ctx, &ReadFlashRequest{Port: hardwarePort(), Address: 0x10000, Size: 4})
 		cancel()
 
 		if !res.Success {

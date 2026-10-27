@@ -12,6 +12,7 @@ import (
 // probe: if USB-JTAG wins while DTR/RTS (ResetAuto attempt 0) loses, that
 // tells us the native USB-JTAG reset must be the PRIMARY strategy.
 func TestZzProbeReconnect(t *testing.T) {
+	requireHardware(t)
 	modes := []struct {
 		name string
 		mode ResetMode
@@ -23,7 +24,7 @@ func TestZzProbeReconnect(t *testing.T) {
 	for _, m := range modes {
 		LastConnectAttempts = nil
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-		f, err := New(ctx, "/dev/ttyACM0", &FlasherOptions{
+		f, err := New(ctx, hardwarePort(), &FlasherOptions{
 			BaudRate: 115200, ResetMode: m.mode, ConnectAttempts: 9, Logger: &captureLogger{},
 		})
 		if err != nil {

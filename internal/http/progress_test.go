@@ -322,3 +322,71 @@ func TestClient_ProgressStream(t *testing.T) {
 
 	fmt.Printf("Received %d progress messages\n", progressCount)
 }
+
+// Regression: a completed job still carries its last flasher phase (e.g.
+// "flashing"). StartProgressStreamer must drive completion from the job's
+// authoritative status, not the phase, or it would hang the client on
+// "100% flashing" forever.
+func TestProgressHandler_StartStreamer_CompletesWithPhase(t *testing.T) {
+	store, err := persistence.Open(persistence.DefaultConfig(t.TempDir() + "/test2.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	master := cluster.NewLeaderNode("test-master2", &cluster.LeaderConfig{
+		DisablemDNS:        true,
+		DisableMaintenance: true,
+		InitialMode:        "operational",
+	}, store)
+
+	hub := NewProgressHub()
+	progressHandler := NewProgressHandler(master, hub)
+
+	router := mux.NewRouter()
+	router.HandleFunc("/api/v1/flash/{job_id}/progress", progressHandler.handleProgressWebSocket).Methods("GET")
+	server := httptest.NewServer(router)
+	defer server.Close()
+
+	master.RegisterDevice(&protocol.DeviceInfo{
+		Path:   "/dev/ttyUSB0",
+		VID:    0x4348,
+		PID:    0x0028,
+		Status: "available",
+	})
+
+	job := master.GetJobQueue().EnqueueFlash(os.TempDir()+"/fw2.bin", "/dev/ttyUSB0", 0, false, "")
+	// Put the job in a running "flashing" phase, exactly as the flasher leaves
+	// it when the write is in progress.
+	job.Status = cluster.JobRunning
+	job.Phase = "flashing"
+
+	go progressHandler.StartProgressStreamer(job.ID)
+
+	client := cluster.NewClient(server.URL)
+	pc, err := client.ConnectProgress(job.ID)
+	if err != nil {
+		t.Fatalf("connect progress: %v", err)
+	}
+	defer pc.Close()
+
+	// Complete the job (as the executor does on success). The job still
+	// carries Phase="flashing" until Complete clears it.
+	master.GetJobQueue().Complete(job.ID, nil)
+
+	gotComplete := make(chan cluster.ProgressMessage, 1)
+	_ = pc.Stream(func(msg cluster.ProgressMessage) {
+		if msg.Type == "complete" {
+			gotComplete <- msg
+		}
+	})
+
+	select {
+	case msg := <-gotComplete:
+		if msg.Status != "completed" {
+			t.Errorf("expected completed, got %q", msg.Status)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("did not receive complete: lingering phase blocked completion")
+	}
+}

@@ -27,10 +27,10 @@ import (
 // exactly what surfaces in the logs as
 // "timeout waiting for response to SLIP read" followed by a retry.
 func TestResetReliabilitySweep(t *testing.T) {
-	// Hardware sweep test: skip in CI (no board attached) and when the fixture
-	// ELF is not built, so it never blocks on a timeout or fails the suite.
-	if !hasHardwarePort("/dev/ttyACM0") {
-		t.Skip("no /dev/ttyACM0 attached, skipping hardware sweep test")
+	// Hardware sweep test: gated behind EB_HARDWARE_TEST so it never blocks on
+	// a stale/absent board node, and skips when the fixture ELF is not built.
+	if !hardwareTestEnabled() || !hasHardwarePort(hardwarePort()) {
+		t.Skipf("hardware test disabled (set EB_HARDWARE_TEST=1) or no %s attached", hardwarePort())
 	}
 	data := readFixtureOrSkip(t, investigationFixture)
 	t.Logf("elf size: %d bytes", len(data))
@@ -62,7 +62,7 @@ func TestResetReliabilitySweep(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 
 			res := f.Flash(ctx, &FlashRequest{
-				Port:     "/dev/ttyACM0",
+				Port:     hardwarePort(),
 				Firmware: data,
 				Chip:     chips.ChipESP32P4,
 			})
