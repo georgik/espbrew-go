@@ -11,6 +11,7 @@ import (
 //	A) connect + single attachFlash   (the "standalone" measurement)
 //	B) connect + 4x attachFlash        (the "multi-image" measurement)
 func TestZzCompareAttach(t *testing.T) {
+	requireHardware(t)
 	base := DefaultOptions()
 	base.Logger = &captureLogger{}
 	base.ConnectAttempts = 2
@@ -20,7 +21,7 @@ func TestZzCompareAttach(t *testing.T) {
 	aOk, aErr := 0, ""
 	for i := 0; i < 6; i++ {
 		ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
-		f, err := New(ctx, "/dev/ttyACM0", base)
+		f, err := New(ctx, hardwarePort(), base)
 		if err != nil {
 			cancel()
 			time.Sleep(100 * time.Millisecond)
@@ -42,7 +43,7 @@ func TestZzCompareAttach(t *testing.T) {
 	bAll := []int{}
 	for i := 0; i < 6; i++ {
 		ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
-		f, err := New(ctx, "/dev/ttyACM0", base)
+		f, err := New(ctx, hardwarePort(), base)
 		if err != nil {
 			cancel()
 			time.Sleep(100 * time.Millisecond)

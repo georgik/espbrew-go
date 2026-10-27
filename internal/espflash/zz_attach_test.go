@@ -9,6 +9,7 @@ import (
 // TestZzAttachReliability connects (current P4 default ResetAuto) and then issues
 // the SPI attach command, the exact operation that times out in the logs.
 func TestZzAttachReliability(t *testing.T) {
+	requireHardware(t)
 	const reps = 6
 	base := DefaultOptions()
 	base.Logger = &captureLogger{}
@@ -19,7 +20,7 @@ func TestZzAttachReliability(t *testing.T) {
 	attachFails := map[string]int{}
 	for i := 0; i < reps; i++ {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		f, err := New(ctx, "/dev/ttyACM0", base)
+		f, err := New(ctx, hardwarePort(), base)
 		if err != nil {
 			attachFails["connect:"+err.Error()]++
 			cancel()

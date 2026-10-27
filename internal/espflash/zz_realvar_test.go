@@ -9,6 +9,7 @@ import (
 // TestZzRealFlowVars tests FastMode and re-open reuse — variables present in the
 // real flow but not in the plain connect sweep.
 func TestZzRealFlowVars(t *testing.T) {
+	requireHardware(t)
 	base := DefaultOptions()
 	base.Logger = &captureLogger{}
 	base.ConnectAttempts = 2
@@ -21,7 +22,7 @@ func TestZzRealFlowVars(t *testing.T) {
 	fastOk, fastTotal := 0, 6
 	for i := 0; i < fastTotal; i++ {
 		ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
-		f, err := New(ctx, "/dev/ttyACM0", &fm)
+		f, err := New(ctx, hardwarePort(), &fm)
 		cancel()
 		if err == nil {
 			f.Close()
@@ -33,7 +34,7 @@ func TestZzRealFlowVars(t *testing.T) {
 
 	// Reuse one flasher: connect, attach, connect again on same port (no reopen)
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	f, err := New(ctx, "/dev/ttyACM0", base)
+	f, err := New(ctx, hardwarePort(), base)
 	cancel()
 	if err != nil {
 		t.Logf("reuse: first connect failed: %v", err)

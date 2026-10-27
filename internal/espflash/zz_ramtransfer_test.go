@@ -11,6 +11,7 @@ import (
 // flashBegin/flashData/flashEnd command->data->verify SLIP path, the exact path
 // that surfaces in the logs as "attach SPI flash timeout" when the chip drops.
 func TestZzFlashPathReliability(t *testing.T) {
+	requireHardware(t)
 	const reps = 6
 	base := DefaultOptions()
 	base.Logger = &captureLogger{}
@@ -22,7 +23,7 @@ func TestZzFlashPathReliability(t *testing.T) {
 
 	for i := 0; i < reps; i++ {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		f, err := New(ctx, "/dev/ttyACM0", base)
+		f, err := New(ctx, hardwarePort(), base)
 		if err != nil {
 			dist["connect-fail"]++
 			cancel()

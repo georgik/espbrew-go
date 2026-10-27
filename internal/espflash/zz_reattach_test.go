@@ -9,6 +9,7 @@ import (
 // TestZzRepeatedAttach connects ONCE and issues attachFlash repeatedly, like a
 // multi-image flash that re-attaches per part, to see whether attach degrades.
 func TestZzRepeatedAttach(t *testing.T) {
+	requireHardware(t)
 	base := DefaultOptions()
 	base.Logger = &captureLogger{}
 	base.ConnectAttempts = 2
@@ -16,7 +17,7 @@ func TestZzRepeatedAttach(t *testing.T) {
 
 	for trial := 0; trial < 3; trial++ {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		f, err := New(ctx, "/dev/ttyACM0", base)
+		f, err := New(ctx, hardwarePort(), base)
 		cancel()
 		if err != nil {
 			t.Logf("trial %d: connect failed: %v", trial, err)

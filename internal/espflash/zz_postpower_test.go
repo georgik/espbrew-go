@@ -9,6 +9,7 @@ import (
 // TestZzPostPowerCycle connects after a real hub power-cycle to confirm the
 // board is fully responsive on a cold boot (the "does it talk to us" check).
 func TestZzPostPowerCycle(t *testing.T) {
+	requireHardware(t)
 	base := DefaultOptions()
 	base.Logger = &captureLogger{}
 	base.ConnectAttempts = 3
@@ -16,7 +17,7 @@ func TestZzPostPowerCycle(t *testing.T) {
 	ok, total := 0, 5
 	for i := 0; i < total; i++ {
 		ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
-		f, err := New(ctx, "/dev/ttyACM0", base)
+		f, err := New(ctx, hardwarePort(), base)
 		cancel()
 		if err == nil {
 			f.Close()

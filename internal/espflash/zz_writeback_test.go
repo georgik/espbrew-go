@@ -13,6 +13,7 @@ import (
 // byte (the image magic 0xE9). This is the definitive "does the write persist"
 // test that the boot log is failing.
 func TestZzWritebackFlips(t *testing.T) {
+	requireHardware(t)
 	const reps = 6
 	base := DefaultOptions()
 	base.Logger = &captureLogger{}
@@ -23,7 +24,7 @@ func TestZzWritebackFlips(t *testing.T) {
 	dist := map[string]int{}
 	for i := 0; i < reps; i++ {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		f, err := New(ctx, "/dev/ttyACM0", base)
+		f, err := New(ctx, hardwarePort(), base)
 		if err != nil {
 			dist["connect-fail"]++
 			cancel()

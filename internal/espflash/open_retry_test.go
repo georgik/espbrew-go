@@ -12,7 +12,7 @@ import (
 // TestOpenPortWithRetries verifies that a busy port is retried (not failed
 // immediately) and that the retry succeeds once the other holder releases it.
 func TestOpenPortWithRetries(t *testing.T) {
-	const port = "/dev/ttyACM0"
+	port := hardwarePort()
 	if _, err := os.Stat(port); err != nil {
 		t.Skipf("board %s not present: %v", port, err)
 	}
