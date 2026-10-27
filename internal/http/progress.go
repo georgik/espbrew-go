@@ -158,13 +158,15 @@ func (h *ProgressHandler) handleProgressWebSocket(w http.ResponseWriter, r *http
 	sub := h.hub.Subscribe(jobID, conn)
 	defer h.hub.Unsubscribe(sub)
 
-	// Send initial state
+	// Send initial state. Both fields come from the same locked ToMap() snapshot
+	// so we never read a Job field (e.g. Status) outside job.mu, which would race
+	// with JobQueue.Complete() stamping the terminal state.
 	jobData := job.ToMap()
 	conn.WriteJSON(ProgressMessage{
 		Type:     "init",
 		JobID:    jobID,
 		Progress: jobData["progress"].(int),
-		Status:   string(job.Status),
+		Status:   string(jobData["status"].(cluster.JobStatus)),
 	})
 
 	// Send pings and handle outgoing messages
