@@ -108,6 +108,13 @@ func (e *JobExecutor) executeJob(workerID int, job *Job) {
 
 	job.mu.Lock()
 	job.Status = JobRunning
+	// Surface the initial phase so a slow connect (e.g. a stalled board) is
+	// reported as "connecting" rather than a bare 0% "running".
+	if job.Type == JobTypeErase {
+		job.Phase = flash.PhaseErase
+	} else {
+		job.Phase = flash.PhaseConnecting
+	}
 	job.mu.Unlock()
 
 	var err error
@@ -177,6 +184,7 @@ func (e *JobExecutor) executeFlash(job *Job) error {
 		Offset:   job.Offset,
 		Chip:     job.Chip,
 		Progress: make(chan int, 10),
+		Phase:    make(chan string, 10),
 	}
 
 	// Progress goroutine
@@ -196,9 +204,28 @@ func (e *JobExecutor) executeFlash(job *Job) error {
 		}
 	}()
 
+	// Phase goroutine: forwards connecting/flashing markers from the flasher so
+	// the client can display the flasher's state instead of a bare 0% bar.
+	phaseDone := make(chan struct{})
+	go func() {
+		defer close(phaseDone)
+		for phase := range req.Phase {
+			job.mu.Lock()
+			job.Phase = phase
+			job.mu.Unlock()
+			log.Debug().Str("job_id", job.ID).Str("phase", phase).Msg("Flash phase")
+
+			if e.progressCB != nil {
+				e.progressCB(job.ID, job.Progress, phase)
+			}
+		}
+	}()
+
 	result := e.flasher.Flash(ctx, req)
 	close(req.Progress)
 	<-done
+	close(req.Phase)
+	<-phaseDone
 
 	if result.Error != nil {
 		if ctx.Err() == context.DeadlineExceeded {
@@ -221,6 +248,7 @@ func (e *JobExecutor) executeErase(job *Job) error {
 		Size:     job.EraseSize,
 		EraseAll: job.EraseAll,
 		Progress: make(chan int, 10),
+		Phase:    make(chan string, 10),
 	}
 
 	// Progress goroutine
@@ -240,9 +268,27 @@ func (e *JobExecutor) executeErase(job *Job) error {
 		}
 	}()
 
+	// Phase goroutine: forwards connecting/erasing markers from the flasher.
+	phaseDone := make(chan struct{})
+	go func() {
+		defer close(phaseDone)
+		for phase := range req.Phase {
+			job.mu.Lock()
+			job.Phase = phase
+			job.mu.Unlock()
+			log.Debug().Str("job_id", job.ID).Str("phase", phase).Msg("Erase phase")
+
+			if e.progressCB != nil {
+				e.progressCB(job.ID, job.Progress, phase)
+			}
+		}
+	}()
+
 	result := e.flasher.EraseFlash(ctx, req)
 	close(req.Progress)
 	<-done
+	close(req.Phase)
+	<-phaseDone
 
 	if result.Error != nil {
 		if ctx.Err() == context.DeadlineExceeded {

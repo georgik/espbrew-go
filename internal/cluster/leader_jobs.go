@@ -82,16 +82,9 @@ func (l *LeaderNode) handleJobResults() {
 	for result := range l.executor.Results() {
 		job := result.Job
 
-		// Release device lock
+		// Release device lock. The release hook keeps the API-facing status in
+		// sync, so no manual "available" stamp is needed here.
 		l.devices.Release(job.DevicePath, job.ID)
-
-		// Update device status
-		l.mu.Lock()
-		if dev, exists := l.state.Devices[job.DevicePath]; exists {
-			dev.Status = "available"
-			l.state.Devices[job.DevicePath] = dev
-		}
-		l.mu.Unlock()
 
 		// Complete job in queue
 		l.queue.Complete(job.ID, result.Error)
@@ -128,16 +121,9 @@ func (l *LeaderNode) CancelJob(jobID string) error {
 		return err
 	}
 
-	// Release device if it was reserved
+	// Release device if it was reserved. The release hook keeps the API-facing
+	// status in sync, so no manual "available" stamp is needed here.
 	l.devices.Release(devicePath, jobID)
-
-	// Update device status
-	l.mu.Lock()
-	if dev, exists := l.state.Devices[devicePath]; exists {
-		dev.Status = "available"
-		l.state.Devices[devicePath] = dev
-	}
-	l.mu.Unlock()
 
 	log.Info().Str("job_id", jobID).Msg("Job cancelled")
 

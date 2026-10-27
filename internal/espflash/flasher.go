@@ -192,6 +192,7 @@ type connection interface {
 	isStub() bool
 	setUSB(v bool)
 	setSupportsEncryptedFlash(v bool)
+	setCommandPost(p commandPost)
 	loadStub(s *stub) error
 }
 
@@ -333,9 +334,16 @@ func New(ctx context.Context, portName string, opts *FlasherOptions) (*Flasher, 
 		return nil, fmt.Errorf("open serial port %s: %w", portName, err)
 	}
 
+	// Select the per-chip command follow-up from the forced chip type before the
+	// initial sync runs. This is what keeps the ESP32-S3 from draining (which
+	// would hang) while giving the ESP32-P4 its poke + ROM-mode drain. See
+	// command_p4.go / command_s3.go.
+	c := newConn(port, childCtx)
+	c.setCommandPost(commandPostFor(opts.ChipType))
+
 	f := &Flasher{
 		port:        port,
-		conn:        newConn(port, childCtx),
+		conn:        c,
 		opts:        opts,
 		portStr:     portName,
 		currentBaud: opts.BaudRate,
@@ -396,6 +404,9 @@ func (f *Flasher) reopenPort() error {
 		if err == nil {
 			f.port = port
 			f.conn = newConn(port, f.ctx)
+			// reopenPort rebuilds the conn, so re-apply the per-chip follow-up
+			// chosen from the forced chip type.
+			f.conn.setCommandPost(commandPostFor(f.opts.ChipType))
 			return nil
 		}
 		lastErr = err
@@ -489,6 +500,23 @@ func (f *Flasher) enterBootloaderReset(port serial.Port, delay time.Duration) {
 	unixTightReset(port, delay)
 }
 
+// isNativeUSBJTAG reports whether a chip family has a native USB-JTAG/Serial
+// peripheral and therefore enters download mode through the USB-JTAG reset
+// path (usbJTAGSerialReset) rather than a USB-UART-bridge DTR/RTS pulse.
+//
+// The ESP32-S3/C3/C5/C6/H2 families are native USB-JTAG/Serial. The ESP32-P4
+// has its own dedicated reset (forceP4Download, see enterBootloaderReset) and
+// the legacy ESP32/ESP8266 families use the classic DTR/RTS bridge reset, so
+// they fall through to the default case below.
+func isNativeUSBJTAG(chip ChipType) bool {
+	switch chip {
+	case ChipESP32S3, ChipESP32C3, ChipESP32C5, ChipESP32C6, ChipESP32H2:
+		return true
+	default:
+		return false
+	}
+}
+
 func (f *Flasher) connect() error {
 	f.logf("Connecting to %s...", f.portStr)
 
@@ -566,12 +594,26 @@ func (f *Flasher) connect() error {
 				break
 			}
 
-			// Uniform reset cycle for every port. A UART-bridge board
-			// (CH340, CH9102, CP210x) also enumerates as /dev/ttyACM* but has
-			// no USB-JTAG peripheral, so the first attempt must be the DTR/RTS
-			// reset. Native-USB boards (ESP32-S3/C3/C5/C6/H2 USB-JTAG) fall
-			// through to attempt 1, which tries the USB-JTAG reset.
-			//
+			// Native USB-JTAG/Serial boards (ESP32-S3/C3/C5/C6/H2) enter
+			// download mode through their native USB-JTAG/Serial peripheral,
+			// not through a USB-UART-bridge DTR/RTS line. The atomic
+			// `unixTightReset` used below is tuned for CH340/CP210x bridges
+			// and is unreliable for these chips, so the USB-JTAG path ran
+			// only on attempt 1 — adding a whole failed sync cycle before
+			// connect (the "0% connecting" window seen on ESP32-S3-box-3).
+			// Drive the native reset on the very first attempt so we connect
+			// immediately. P4 keeps its dedicated forceP4Download path (see
+			// enterBootloaderReset), and UART-bridge boards are handled by
+			// the ResetBridge branch above.
+			if isNativeUSBJTAG(f.opts.ChipType) {
+				if f.connectViaUSBJTAG() {
+					return f.finishConnect()
+				}
+				continue
+			}
+
+			// UART-bridge board (CH340, CH9102, CP210x, FTDI): no native
+			// USB-JTAG peripheral, so the reset is driven purely with DTR/RTS.
 			// The first attempt uses the atomic `unixTightReset` (DTR + RTS
 			// toggled in a single ioctl) rather than the sequential
 			// `classicReset`. This matches espflash's `UnixTightReset`-first
@@ -583,9 +625,9 @@ func (f *Flasher) connect() error {
 			case 0:
 				f.enterBootloaderReset(f.port, defaultResetDelay)
 			case 1:
-				// Second attempt: try the USB-JTAG/Serial reset path. When it
-				// succeeds we're done connecting; otherwise fall through to the
-				// standard sync on the next attempt.
+				// Second attempt: try the USB-JTAG/Serial reset path in case
+				// this /dev/ttyACM* port is actually a native-USB board whose
+				// ChipType slipped past detection.
 				if f.connectViaUSBJTAG() {
 					return f.finishConnect()
 				}

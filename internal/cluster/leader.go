@@ -118,7 +118,7 @@ func NewLeaderNode(id string, cfg *LeaderConfig, store *persistence.Store) *Lead
 	deviceConfigs := make([]config.DeviceConfig, len(cfg.Devices))
 	copy(deviceConfigs, cfg.Devices)
 
-	return &LeaderNode{
+	l := &LeaderNode{
 		id:            id,
 		config:        cfg,
 		state:         NewClusterState(),
@@ -130,6 +130,59 @@ func NewLeaderNode(id string, cfg *LeaderConfig, store *persistence.Store) *Lead
 		configPath:    cfg.ConfigPath,
 		wokwiSessions: wokwi.NewSessionManager(),
 	}
+
+	// Keep the API-facing device status derived from the reservation so every
+	// consumer (flash job, monitor session, read-flash) reports a consistent
+	// "busy"/"available" state. Without this a reserved device still reported
+	// "available" and a concurrent operation could race the open (the
+	// "port still busy" read-flash failure).
+	l.devices.SetStatusHooks(
+		func(path, owner string) { l.setDeviceStatus(path, "busy") },
+		func(path, owner string) { l.setDeviceStatus(path, "available") },
+	)
+
+	return l
+}
+
+// setDeviceStatus stamps the API-facing status onto the live device record. It
+// is wired as the DeviceRegistry reserve/release hook so the reservation is the
+// single source of truth for whether a board is busy. Safe to call before any
+// device is registered (it is a no-op when the path is unknown).
+func (l *LeaderNode) setDeviceStatus(path, status string) {
+	l.mu.Lock()
+	if dev, exists := l.state.Devices[path]; exists {
+		dev.Status = status
+		l.state.Devices[path] = dev
+	}
+	l.mu.Unlock()
+}
+
+// reserveDeviceForJob claims the reservation for a flash/erase job and returns
+// true on success. On failure it completes the job with an error that reports
+// which job currently holds the board and for how long, so the client can
+// surface "blocked by <owner> for <duration>" instead of a bare
+// "device not available". The device status is kept in sync by the reserve hook.
+func (l *LeaderNode) reserveDeviceForJob(job *Job) bool {
+	if l.devices.Reserve(job.DevicePath, job.ID) {
+		return true
+	}
+
+	owner, held, locked := l.devices.Info(job.DevicePath)
+	msg := fmt.Sprintf("device not available: %s", job.DevicePath)
+	if locked {
+		msg = fmt.Sprintf("device busy: reserved by %s for %s", owner, held.Round(time.Second))
+		// Surface the blocked state so the client can display it (and the
+		// blocking owner/duration) instead of a bare "device not available".
+		job.mu.Lock()
+		job.Phase = PhaseBlocked
+		job.mu.Unlock()
+	}
+
+	l.queue.Complete(job.ID, fmt.Errorf("%s", msg))
+	log.Warn().Str("job_id", job.ID).Str("device", job.DevicePath).
+		Str("owner", owner).Dur("held", held).Bool("locked", locked).
+		Msg("Device reservation failed")
+	return false
 }
 
 func (l *LeaderNode) Start(ctx context.Context) error {
@@ -606,22 +659,28 @@ func (l *LeaderNode) EnqueueJobWithOffsetAndErase(firmwarePath, devicePath strin
 	// (e.g. ESP32-C3 boards boot with "Invalid chip id. Expected 5 read 9").
 	// The registry is the authoritative source for chip identity, so this
 	// matches whatever alias/selector the client used to pick the device.
+	persisted, _ := l.store.GetDeviceByPath(devicePath)
+	log.Info().Str("device", devicePath).Str("state_chip", dev.ChipType).Str("persisted_chip", func() string {
+		if persisted != nil {
+			return persisted.ChipType
+		}
+		return ""
+	}()).Msg("Flash job chip resolution")
 	if chip, ok := chips.ParseChip(dev.ChipType); ok {
 		job.Chip = chip
 		log.Debug().Str("device", devicePath).Str("chip", chip.String()).Msg("Flash job chip resolved from device")
+	} else if persisted != nil && persisted.ChipType != "" {
+		if chip, ok := chips.ParseChip(persisted.ChipType); ok {
+			job.Chip = chip
+			log.Info().Str("device", devicePath).Str("chip", chip.String()).Msg("Flash job chip resolved from persisted record")
+		}
 	}
 
-	// Reserve device for this job
-	if !l.devices.Reserve(devicePath, job.ID) {
-		l.queue.Complete(job.ID, fmt.Errorf("device reservation failed"))
-		return nil, fmt.Errorf("device not available: %s", devicePath)
+	// Reserve device for this job. The reserve hook keeps the API-facing
+	// status in sync, so the manual "busy" stamp below is no longer needed.
+	if !l.reserveDeviceForJob(job) {
+		return nil, fmt.Errorf("%s", job.Error)
 	}
-
-	l.mu.Lock()
-	dev = l.state.Devices[devicePath]
-	dev.Status = "busy"
-	l.state.Devices[devicePath] = dev
-	l.mu.Unlock()
 
 	// Keep the idle sweeper from powering the board off while this job runs.
 	if l.sleeper != nil {
@@ -656,17 +715,11 @@ func (l *LeaderNode) EnqueueEraseJob(devicePath string, eraseAll bool, address, 
 
 	job := l.queue.EnqueueErase(devicePath, eraseAll, address, size)
 
-	// Reserve device for this job
-	if !l.devices.Reserve(devicePath, job.ID) {
-		l.queue.Complete(job.ID, fmt.Errorf("device reservation failed"))
-		return nil, fmt.Errorf("device not available: %s", devicePath)
+	// Reserve device for this job. The reserve hook keeps the API-facing
+	// status in sync, so the manual "busy" stamp below is no longer needed.
+	if !l.reserveDeviceForJob(job) {
+		return nil, fmt.Errorf("%s", job.Error)
 	}
-
-	l.mu.Lock()
-	dev = l.state.Devices[devicePath]
-	dev.Status = "busy"
-	l.state.Devices[devicePath] = dev
-	l.mu.Unlock()
 
 	// Keep the idle sweeper from powering the board off while this job runs.
 	if l.sleeper != nil {

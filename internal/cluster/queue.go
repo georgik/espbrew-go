@@ -34,6 +34,11 @@ const (
 	DefaultJobTTL     = 24 * time.Hour
 )
 
+// PhaseBlocked is the job phase set when a flash/erase job cannot reserve the
+// device because another job already holds it. It lets the client surface
+// "blocked by <owner> for <duration>" instead of a bare "device not available".
+const PhaseBlocked = "blocked"
+
 type Job struct {
 	ID           string
 	Type         JobType
@@ -55,6 +60,7 @@ type Job struct {
 	// board-specific diagram is used even for the generic wokwi:<chip> devices.
 	Diagram     string
 	Status      JobStatus
+	Phase       string // Human-readable current phase (connecting/flashing/erasing/blocked); "" => use Status
 	Progress    int
 	CreatedAt   time.Time
 	StartedAt   *time.Time
@@ -218,10 +224,15 @@ func (q *JobQueue) Complete(jobID string, err error) {
 	if err != nil {
 		job.Status = JobFailed
 		job.Error = err.Error()
+		// Drop the display phase: a terminal job reports its status, not the
+		// last flasher phase (which would otherwise linger as "flashing").
+		job.Phase = ""
 		// status = "failed"
 		log.Error().Str("job_id", jobID).Err(err).Msg("Job failed")
 	} else {
 		job.Status = JobComplete
+		// Drop the display phase for the same reason as the failure path.
+		job.Phase = ""
 		// status = "completed"
 		log.Info().Str("job_id", jobID).Msg("Job completed")
 	}
@@ -347,6 +358,7 @@ func (j *Job) ToMap() map[string]interface{} {
 		"device_path": j.DevicePath,
 		"device_node": j.DeviceNode,
 		"status":      j.Status,
+		"phase":       j.Phase,
 		"progress":    j.Progress,
 		"created_at":  j.CreatedAt,
 	}

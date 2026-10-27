@@ -105,15 +105,59 @@ var syncPokePayload = func() []byte {
 	return p
 }()
 
+// commandPost is the per-chip follow-up applied after a command frame is sent
+// and before its response is read. Keeping it a small interface means each chip
+// family expresses its own wire discipline in isolation: adding a new MCU is a
+// new type, not a new branch inside command().
+type commandPost interface {
+	apply(c *conn) error
+}
+
+// plainCommandPost is the follow-up for chips that reply immediately
+// (ESP32, ESP32-S2/S3/C3/C5/C6/H2, ESP8266). It does nothing: the reply is
+// already in the buffer and is read first by command()'s loop, so no poke and
+// no Drain are needed. This is the historical behavior that works for the
+// ESP32-S3.
+type plainCommandPost struct{}
+
+func (plainCommandPost) apply(*conn) error { return nil }
+
+// commandPostRegistry maps a forced chip type to its command follow-up. Families
+// register themselves through registerCommandPost (usually from an init in their
+// own file), so adding a new MCU is a new file, not a change to the selection
+// logic here. This keeps the per-family discipline isolated and free of
+// if/switch spaghetti.
+var commandPostRegistry = map[ChipType]commandPost{}
+
+// registerCommandPost records the command follow-up for a chip type. It is
+// called once per family (typically from init) so each family lives in its own
+// file. See command_p4.go.
+func registerCommandPost(chip ChipType, post commandPost) {
+	commandPostRegistry[chip] = post
+}
+
+// commandPostFor selects the command follow-up for a forced chip type. Chips
+// that have not registered a family follow-up (including ChipAuto) fall back to
+// the plain no-op, which is the safe default.
+func commandPostFor(chip ChipType) commandPost {
+	if post, ok := commandPostRegistry[chip]; ok {
+		return post
+	}
+	return plainCommandPost{}
+}
+
 // conn wraps the serial port and provides the low-level protocol operations.
 type conn struct {
 	port    serial.Port
 	reader  *slipReader
 	stub    bool
 	usesUSB bool // set for USB-OTG and USB-JTAG/Serial connections
-	// supportsEncryptedFlash indicates the ROM supports the 5th parameter
-	// (encrypted flag) in flash_begin/flash_defl_begin commands.
-	// Set based on chip type after detection.
+	// post is the per-chip command follow-up. It defaults to the plain no-op
+	// (the pre-P4 behavior that works for S3 and every chip that replies
+	// immediately). Production selects the discipline explicitly from the forced
+	// opts.ChipType via setCommandPost, in New() and again after reopenPort()
+	// rebuilds the conn. See commandPost / plainCommandPost / command_p4.go.
+	post                   commandPost
 	supportsEncryptedFlash bool
 	ctx                    context.Context
 }
@@ -133,13 +177,24 @@ func (c *conn) setSupportsEncryptedFlash(v bool) {
 	c.supportsEncryptedFlash = v
 }
 
-// newConn creates a new protocol connection over the given serial port.
+// newConn creates a new protocol connection over the given serial port. The
+// command follow-up defaults to the plain no-op; production overrides it from
+// the forced chip type via setCommandPost (see New / reopenPort).
 func newConn(port serial.Port, ctx context.Context) *conn {
 	return &conn{
 		port:   port,
 		reader: newSlipReader(port, ctx),
+		post:   plainCommandPost{},
 		ctx:    ctx,
 	}
+}
+
+// setCommandPost selects the per-chip command follow-up. The Flasher calls it
+// from New() and again from reopenPort() (which rebuilds the conn), so the
+// correct discipline is in place during the initial sync that runs before chip
+// detection.
+func (c *conn) setCommandPost(p commandPost) {
+	c.post = p
 }
 
 // checksum calculates the ESP bootloader checksum (XOR of all bytes).
@@ -220,32 +275,17 @@ func (c *conn) command(opcode byte, data []byte, chk uint32, timeout time.Durati
 		return nil, nil
 	}
 
-	if os.Getenv("EB_DEBUG") != "" {
-		fmt.Printf("[DBG command] sending sync poke for 0x%02X\n", opcode)
-	}
-
-	// Send a SYNC poke so the P4 ROM flushes the queued reply for the command
-	// we just sent. Harmless for other chips: their reply already arrived and
-	// is read first, so the poke's own reply is simply drained as stale.
-	if err := c.sendCommand(cmdSync, syncPokePayload, 0); err != nil {
-		return nil, fmt.Errorf("send sync poke: %w", err)
-	}
-
-	// In ROM mode Drain() so the command is fully transmitted before we read.
-	// In stub mode we must NOT Drain(): right after the OHAI handshake the RAM
-	// flash stub is not yet reading commands, so Drain() (the tcdrain
-	// equivalent) blocks forever waiting for the chip to consume the write.
-	// The poke write itself is fine. See
+	// Per-chip follow-up. The ESP32-P4 ROM defers each reply until the next
+	// command (one-command pipeline lag), so in ROM mode it needs a SYNC poke to
+	// flush the queued reply and a Drain() to fully transmit the command before
+	// reading; in stub mode the RAM stub replies immediately, so both are
+	// skipped. Every other chip family uses a plain no-op follow-up, so it
+	// never pokes or drains — this is what keeps the ESP32-S3 from hanging on
+	// tcdrain during the initial sync. An unset post is treated as plain. See
 	// wiki/esp32-p4-flash-solution.md.
-	if !c.isStub() {
-		if os.Getenv("EB_DEBUG") != "" {
-			fmt.Printf("[DBG command] draining for 0x%02X (start)\n", opcode)
-		}
-		if err := c.port.Drain(); err != nil {
-			return nil, fmt.Errorf("drain: %w", err)
-		}
-		if os.Getenv("EB_DEBUG") != "" {
-			fmt.Printf("[DBG command] draining for 0x%02X (done)\n", opcode)
+	if c.post != nil {
+		if err := c.post.apply(c); err != nil {
+			return nil, err
 		}
 	}
 

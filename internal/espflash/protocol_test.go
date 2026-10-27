@@ -453,6 +453,7 @@ type mockConnection struct {
 	stubMode                    bool
 	usbMode                     bool
 	supportsEncryptedFlashValue bool
+	post                        commandPost
 }
 
 func (m *mockConnection) sync() (uint32, error) {
@@ -597,6 +598,10 @@ func (m *mockConnection) setUSB(v bool) {
 
 func (m *mockConnection) setSupportsEncryptedFlash(v bool) {
 	m.supportsEncryptedFlashValue = v
+}
+
+func (m *mockConnection) setCommandPost(p commandPost) {
+	m.post = p
 }
 
 func (m *mockConnection) loadStub(s *stub) error {
