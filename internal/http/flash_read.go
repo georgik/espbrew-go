@@ -37,7 +37,10 @@ type ReadJob struct {
 	DataPath   string
 	Error      string
 	CreatedAt  time.Time
-	mu         sync.Mutex
+	// reserved is true when this job claimed the board reservation, so
+	// processJob releases it on completion.
+	reserved bool
+	mu       sync.Mutex
 }
 
 // ReadFlashRequest represents a read job submission
@@ -108,23 +111,46 @@ func (h *ReadFlashHandler) handleSubmit(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// Check if device is available
+	// Find the device by path.
 	state := h.node.State()
-	deviceAvailable := false
-	for _, dev := range state.Devices {
-		if dev.Path == req.DevicePath && dev.Status == "available" {
-			deviceAvailable = true
+	var status string
+	found := false
+	for _, d := range state.Devices {
+		if d.Path == req.DevicePath {
+			found = true
+			status = d.Status
 			break
 		}
 	}
 
-	if !deviceAvailable {
-		respondError(w, http.StatusNotFound, fmt.Sprintf("device not found or not available: %s", req.DevicePath))
+	if !found {
+		respondError(w, http.StatusNotFound, fmt.Sprintf("device not found: %s", req.DevicePath))
+		return
+	}
+
+	// Reserve the board before opening the port so a concurrent flash/monitor
+	// cannot race us onto a busy port. When the leader owns the reservation
+	// we fail fast with "blocked by job X for Ys" instead of spinning on the
+	// open for the full retry budget.
+	jobID := "read-" + uuid.New().String()
+	reserved := false
+	if h.leader != nil {
+		if !h.leader.GetDevices().Reserve(req.DevicePath, jobID) {
+			owner, held, locked := h.leader.GetDevices().Info(req.DevicePath)
+			msg := fmt.Sprintf("device not available: %s", req.DevicePath)
+			if locked {
+				msg = fmt.Sprintf("device busy: reserved by %s for %s", owner, held.Round(time.Second))
+			}
+			respondError(w, http.StatusConflict, msg)
+			return
+		}
+		reserved = true
+	} else if status != "available" {
+		respondError(w, http.StatusConflict, fmt.Sprintf("device not available: %s", req.DevicePath))
 		return
 	}
 
 	// Create job
-	jobID := "read-" + uuid.New().String()
 	job := &ReadJob{
 		ID:         jobID,
 		DevicePath: req.DevicePath,
@@ -133,6 +159,7 @@ func (h *ReadFlashHandler) handleSubmit(w http.ResponseWriter, r *http.Request) 
 		Chip:       req.Chip,
 		Status:     "pending",
 		CreatedAt:  time.Now(),
+		reserved:   reserved,
 	}
 
 	h.mu.Lock()
@@ -257,6 +284,14 @@ func (h *ReadFlashHandler) processJob(job *ReadJob) {
 
 	ctx := context.Background()
 	result := flasher.ReadFlash(ctx, req)
+
+	// Free the board the instant the read is done so a waiting flash/monitor can
+	// take it, instead of leaking the reservation until the 30-minute cleanup.
+	if job.reserved {
+		if h.leader != nil {
+			h.leader.GetDevices().Release(job.DevicePath, job.ID)
+		}
+	}
 
 	job.mu.Lock()
 	defer job.mu.Unlock()

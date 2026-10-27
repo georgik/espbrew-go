@@ -14,10 +14,10 @@ import (
 // image magic byte (0xE9). The boot log shows "invalid magic byte at 0x10000"
 // when this write does not persist, so this is the end-to-end reproduction.
 func TestE2E_RealFlashWriteback(t *testing.T) {
-	// Hardware e2e test: skip in CI (no board attached) and when the fixture
-	// ELF is not built, so it never blocks on a timeout or fails the suite.
-	if !hasHardwarePort("/dev/ttyACM0") {
-		t.Skip("no /dev/ttyACM0 attached, skipping hardware e2e test")
+	// Hardware e2e test: gated behind EB_HARDWARE_TEST so it never blocks on a
+	// stale/absent board node, and skips when the fixture ELF is not built.
+	if !hardwareTestEnabled() || !hasHardwarePort("/dev/ttyACM0") {
+		t.Skip("hardware test disabled (set EB_HARDWARE_TEST=1) or no /dev/ttyACM0 attached")
 	}
 	data := readFixtureOrSkip(t, investigationFixture)
 	t.Logf("elf size: %d bytes", len(data))

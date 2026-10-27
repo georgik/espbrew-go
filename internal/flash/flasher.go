@@ -41,6 +41,28 @@ type FlashResult struct {
 	Bytes   int
 }
 
+// Phase markers describe what the flasher is currently doing. They are
+// forwarded to the client through FlashRequest.Phase / EraseRequest.Phase so the
+// UI can display the flasher's state (connecting vs. flashing) instead of a
+// bare 0% bar while the board is being brought up.
+const (
+	PhaseConnecting = "connecting"
+	PhaseFlashing   = "flashing"
+	PhaseErase      = "erasing"
+)
+
+// emitPhase forwards a phase marker to the client. It never blocks: a nil or
+// full channel simply drops the marker.
+func emitPhase(ch chan string, phase string) {
+	if ch == nil {
+		return
+	}
+	select {
+	case ch <- phase:
+	default:
+	}
+}
+
 func NewFlasher(opts *FlasherOptions) *Flasher {
 	if opts == nil {
 		opts = &FlasherOptions{
@@ -76,6 +98,7 @@ type FlashRequest struct {
 	Firmware []byte
 	Offset   int
 	Progress chan int
+	Phase    chan string
 	Chip     chips.Chip // Optional: specify chip for ELF conversion
 }
 
@@ -153,6 +176,8 @@ func (f *Flasher) Flash(ctx context.Context, req *FlashRequest) *FlashResult {
 		if req.Chip == chips.ChipESP32P4 {
 			espOpts.SkipStub = true
 		}
+
+		emitPhase(req.Phase, PhaseConnecting)
 
 		flasher, err := espflash.New(ctx, port, espOpts)
 		if err != nil {
@@ -232,6 +257,7 @@ func (f *Flasher) Flash(ctx context.Context, req *FlashRequest) *FlashResult {
 		}
 
 		// Flash the whole image in one session.
+		emitPhase(req.Phase, PhaseFlashing)
 		if err := flasher.FlashImages(allParts, nil); err != nil {
 			log.Error().Err(err).Msg("Flash parts failed")
 			return &FlashResult{Success: false, Error: err}
@@ -261,6 +287,8 @@ func (f *Flasher) Flash(ctx context.Context, req *FlashRequest) *FlashResult {
 	// USB-JTAG path. Detected from the board's USB vendor id.
 	espOpts.ResetBridge = detectBridgeBoard(port)
 
+	emitPhase(req.Phase, PhaseConnecting)
+
 	flasher, err := espflash.New(ctx, port, espOpts)
 	if err != nil {
 		log.Error().Err(err).Str("port", port).Str("original", req.Port).Msg("Failed to create flasher")
@@ -289,6 +317,10 @@ func (f *Flasher) Flash(ctx context.Context, req *FlashRequest) *FlashResult {
 			}
 		}
 	}
+
+	// Begin the write phase so the client switches from "connecting" to
+	// "flashing" the moment the chip accepts the flash.
+	emitPhase(req.Phase, PhaseFlashing)
 
 	if err := flasher.FlashImage(firmware, uint32(req.Offset), progressFunc); err != nil {
 		log.Error().Err(err).Msg("Flash write failed")
@@ -482,6 +514,7 @@ type EraseRequest struct {
 	Size     uint32
 	EraseAll bool
 	Progress chan int
+	Phase    chan string
 	Chip     chips.Chip
 }
 
@@ -522,6 +555,8 @@ func (f *Flasher) EraseFlash(ctx context.Context, req *EraseRequest) *EraseResul
 	// never enters download mode under the classic reset.
 	espOpts.ChipType = espflashChipType(req.Chip)
 	// Open connection
+	emitPhase(req.Phase, PhaseConnecting)
+
 	flasher, err := espflash.New(ctx, port, espOpts)
 	if err != nil {
 		return &EraseResult{Success: false, Error: fmt.Errorf("connect: %w", err)}
@@ -538,6 +573,8 @@ func (f *Flasher) EraseFlash(ctx context.Context, req *EraseRequest) *EraseResul
 		default:
 		}
 	}
+
+	emitPhase(req.Phase, PhaseErase)
 
 	var eraseSize int
 	if req.EraseAll {
