@@ -32,7 +32,7 @@ func TestResetReliabilitySweep(t *testing.T) {
 	if !hardwareTestEnabled() || !hasHardwarePort(hardwarePort()) {
 		t.Skipf("hardware test disabled (set EB_HARDWARE_TEST=1) or no %s attached", hardwarePort())
 	}
-	data := readFixtureOrSkip(t, investigationFixture)
+	data := readFixtureOrSkip(t, investigationFixture())
 	t.Logf("elf size: %d bytes", len(data))
 
 	strategies := []struct {

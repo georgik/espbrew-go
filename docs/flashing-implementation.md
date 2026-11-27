@@ -244,6 +244,63 @@ Each part is flashed separately. The device must remain in bootloader mode betwe
 
 The flasher maintains a single connection throughout the multi-part flash operation. The context lives for the entire flasher lifetime, not just during initial connection.
 
+## Client-Side ELF → Flash-Image Conversion (S31 cluster node)
+
+For flashing a **remote peer node** (e.g. the S31 cluster node relaying to the C3 ROM), the
+conversion from ELF to the contiguous flash image happens **on the client**, not on the relay.
+
+**Why client-side.** The relay only forwards a byte stream to the target ROM; it does not know
+how to split an ELF into bootloader + partition-table + app, and uploading the raw ELF is also
+large (debug info / symbol tables, often several MB) and can exceed the server's upload-size
+guard. The client, however, knows the project type and chip, so it does the conversion.
+
+**What happens** (`internal/flash/convert.go` → `ConvertELFToFlashImage`, wired through
+`cmd/espbrew/flash.go`'s `resolveFlashImage` and `internal/cluster/client.go`'s
+`UploadFirmwareBytes`):
+
+1. The multi-part ESP image is built with the existing `ConvertELFToESPImage`.
+2. The parts are **flattened** into one contiguous, `0xFF`-padded blob:
+
+   ```
+   bootloader  @ 0x00000
+   ... 0xFF padding ...
+   partitions  @ 0x08000
+   ... 0xFF padding ...
+   app         @ 0x10000
+   ```
+
+3. The converted bytes are uploaded as a single `.bin` at offset **0** (the blob already carries
+   absolute offsets), with the target region **erased first** (`erase: true`).
+
+Multi-image flashes (`--bootloader … --partitions … --app …`) convert each part the same way and
+upload them individually. **Hash-based flash optimization is skipped for converted ELFs** because
+it compares raw on-flash bytes, which differ from the source ELF after conversion.
+
+### Single-attempt mode
+
+`flash-retries` defaults to 3, and each attempt runs its own reset cycle. When diagnosing *where*
+a flash fails (e.g. a target ROM hang), auto-retry spins up another flashing process after the
+first failure, hiding the real failure point. The **`--single-attempt`** flag forces a single
+attempt (`maxAttempts = 1`) in both the single-image and multi-image paths, disabling auto-retry
+so the operator sees the exact failure.
+
+### Node-log streaming
+
+The peer node's detailed `[flash]` trace previously lived only in its ring buffer. It is now
+streamed back over the progress WebSocket: the client's progress callback handles the `"log"`
+message type and prints `msg.Line` verbatim (it already carries its level prefix and newline),
+interleaved with the progress bar exactly where it happened on the node. Applies to both single
+and multi-image flash paths, and to erase.
+
+### Emulated-target harness (`NewWithPort` / `espemu_probe`)
+
+Production flashing uses `espflash.New()` (a real device node). For host-side debugging,
+`espflash.NewWithPort(ctx, port, opts)` runs the identical ROM-bootloader protocol over any
+caller-supplied `serial.Port`, so an **emulated target reached over TCP** can be driven. The
+`cmd/espemu_probe` host tool uses this (with `ResetNoReset` + `SkipStub`, mirroring the Rust
+`flasher.rs`) to reproduce the C3 ROM `FLASH_DATA` hang on esp-emu and confirm the uncompressed
+ROM flash protocol is healthy over a reliable transport.
+
 ## Port Reopen Strategy
 
 After a reset, USB CDC devices may briefly disappear. The reopenPort() function:
@@ -307,6 +364,9 @@ Flash functionality is tested via:
 
 - Unit tests for port detection (isUSBPort)
 - Integration tests for ELF conversion
+- `convert_flash_image_test.go` — asserts `ConvertELFToFlashImage` produces a contiguous,
+  `0xFF`-padded blob with each part at its real flash offset (bootloader @ 0x0, partitions
+  @ 0x8000, app @ 0x10000), i.e. that the flattening matches what the relay expects.
 - Virtual device tests (no hardware required)
 - Hardware tests (require ESP ELF, skipped gracefully)
 

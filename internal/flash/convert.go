@@ -141,6 +141,68 @@ type ImagePart struct {
 	Data   []byte
 }
 
+// ConvertELFToFlashImage turns an ELF into a single contiguous "flash blob" that
+// can be written to flash at offset 0 in one shot.
+//
+// It reuses ConvertELFToESPImage to build the bootloader + partition-table +
+// app parts (each at its real flash offset), then flattens those parts into one
+// contiguous buffer, padding the gaps between parts with 0xFF (the erased flash
+// state). The result is exactly what espflash/esptool would write to the chip:
+//
+//	bootloader  @ 0x00000
+//	... 0xFF padding ...
+//	partitions  @ 0x08000
+//	... 0xFF padding ...
+//	app         @ 0x10000
+//
+// This is deliberately what the spi-slave S31 expects: it relays a single byte
+// stream to the C3's ROM bootloader via the serial-flash protocol at a fixed
+// offset, with no knowledge of the multi-part container format. Sending this
+// blob instead of the raw ELF also sidesteps the server's upload-size guard —
+// the blob is only the flashable bytes (a few hundred KB) rather than the whole
+// ELF, which is dominated by debug info and symbol tables (several MB).
+func ConvertELFToFlashImage(elfData []byte, chip chips.Chip, revision int) ([]byte, error) {
+	multi, err := ConvertELFToESPImage(elfData, chip, revision)
+	if err != nil {
+		return nil, err
+	}
+
+	parts, err := ParseMultiPartImage(multi)
+	if err != nil {
+		return nil, err
+	}
+	if len(parts) == 0 {
+		return nil, fmt.Errorf("ELF produced no flashable parts")
+	}
+
+	// Find the highest end address across all parts so the blob is big enough
+	// to hold every part at its real offset.
+	var end uint32
+	for _, p := range parts {
+		e := p.Offset + uint32(len(p.Data))
+		if e > end {
+			end = e
+		}
+	}
+	if end == 0 {
+		return nil, fmt.Errorf("ELF produced an empty flash image")
+	}
+
+	// Build a contiguous, 0xFF-padded blob and copy each part into place.
+	blob := make([]byte, end)
+	for i := range blob {
+		blob[i] = 0xFF
+	}
+	for _, p := range parts {
+		if uint32(len(p.Data)) == 0 {
+			continue
+		}
+		copy(blob[p.Offset:p.Offset+uint32(len(p.Data))], p.Data)
+	}
+
+	return blob, nil
+}
+
 // ParseMultiPartImage parses the multi-part image format returned by ConvertELFToESPImage
 // Format: [offset(4) + length(4) + data] repeated for each part
 func ParseMultiPartImage(data []byte) ([]ImagePart, error) {

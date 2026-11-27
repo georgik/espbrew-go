@@ -872,9 +872,14 @@ Request body:
   "status": "running",
   "progress": 50,
   "node_id": "peer-node-1",
-  "error": "optional error message"
+  "error": "optional error message",
+  "line": "optional: a node log line relayed verbatim to the client"
 }
 ```
+
+- `line` (optional): a line from the node's own log trace. When present it is relayed
+  verbatim to the client over the progress WebSocket (see [Flash Progress WebSocket](#flash-progress-websocket)),
+  interleaved with the progress bar. Used to stream the peer node's detailed `[flash]` trace.
 
 Status values:
 - `running` - Job is in progress (progress is updated)
@@ -983,6 +988,12 @@ Content-Type: multipart/form-data
 
 Form fields:
 - `firmware`: Binary file (max 32MB)
+
+> **Note (client-side conversion).** When the source image is an **ELF** (not a pre-converted
+> `.bin`), the espbrew client converts it into the contiguous, `0xFF`-padded flash image
+> (bootloader @ 0x0, partitions @ 0x8000, app @ 0x10000) *before* uploading — the relay only
+> forwards a byte stream and does not know how to split an ELF. The uploaded bytes are therefore
+> already the final flash image. Hash-based flash optimization is skipped for converted ELFs.
 
 Response:
 ```json
@@ -1093,6 +1104,20 @@ Progress update:
   "status": "running"
 }
 ```
+
+Node log line (relayed from the peer node; optional, interleaved with progress):
+```json
+{
+  "type": "progress",
+  "job_id": "job-xyz789",
+  "progress": 45,
+  "status": "running",
+  "line": "[flash] wrote 0x400 bytes at 0x10000"
+}
+```
+
+The `line` carries its own level prefix and trailing newline and is printed verbatim by the
+client. It is emitted exactly where the corresponding progress value was reached on the node.
 
 Complete:
 ```json
