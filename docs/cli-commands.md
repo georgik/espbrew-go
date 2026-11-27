@@ -77,7 +77,54 @@ idf.py build
 # Device selection by identity (shared with `monitor`); no --port needed
 ./espbrew --cluster http://leader:8080 flash --filter-alias esp32-c3-lcdkit
 ./espbrew --cluster http://leader:8080 flash --filter-chip ESP32-S3
+
+# Single-attempt mode (see [Flash behaviour](#flash-behaviour) below)
+./espbrew --cluster http://leader:8080 flash firmware.bin --single-attempt
 ```
+
+### ELF & remote-node flashing
+
+`flash` accepts either a **raw `.bin`** (already at its flash offset) or an **ELF**
+(`.elf` / unextensioned build output). When the image is an ELF, espbrew converts it
+client-side into the contiguous, `0xFF`-padded flash image that the flash target expects:
+
+```
+bootloader  @ 0x00000
+... 0xFF padding ...
+partitions  @ 0x08000
+... 0xFF padding ...
+app         @ 0x10000
+```
+
+The conversion reuses the existing multi-part ESP-image builder and then flattens the parts
+into one blob, so the offsets are already absolute. Consequences for the upload:
+
+- The converted image is uploaded as a single **`.bin`** at offset **`0`** (the blob already
+  carries its own absolute offsets — do not add `--offset`).
+- The target region is **erased first** (`erase: true`), giving a clean slate.
+- For multi-image flashes (`--bootloader … --partitions … --app …`) each part is converted the
+  same way and uploaded individually.
+- **Hash-based flash optimization is skipped for converted ELFs** — it compares raw on-flash
+  bytes, which differ from the source ELF after conversion. To force a re-flash of a target
+  that already holds the same ELF, use `--single-attempt` or flash the raw `.bin`.
+
+This matters when flashing a **remote node** (e.g. the S31 cluster node relaying to the C3 ROM):
+the relay only forwards a byte stream, so the client must do the ELF→flash conversion itself
+because it is the side that knows the project type and chip.
+
+### Node log streaming
+
+During a flash/erase the peer node streams its own detailed `[flash]` trace back over the
+progress WebSocket. espbrew prints each line **verbatim** (it already carries its level prefix
+and newline), interleaved with the progress bar exactly where it happened on the node — so you
+see both the espbrew client output and the node's own log in one console.
+
+### Flash behaviour
+
+- `flash-retries` defaults to **3**; each attempt runs its own reset cycle. Use
+  **`--single-attempt`** to force a single attempt (`flash-retries 1`), disabling auto-retry so
+  you can see the exact failure point when diagnosing a flash.
+- `--monitor` attaches the serial monitor after flashing.
 
 ### Flash Batch (multi-board manifest)
 
@@ -122,6 +169,8 @@ boards:
 - Images come from the board's `build/flash_args` (real offsets honoured) or ESP-IDF
   project detection — no `--chip` needed.
 - Boards flash in parallel; images within a board flash one at a time.
+- Each board honours the same `flash` flags, including `--single-attempt` (single attempt,
+  no auto-retry) — useful for CI where a retry would mask the real failure.
 - Exits **non-zero** if any non-`optional` board fails, so the CI step fails.
 - Optional boards (`optional: true`) that fail are skipped and never fail the batch.
 

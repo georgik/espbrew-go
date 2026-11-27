@@ -13,12 +13,24 @@ import (
 // readFixtureOrSkip, which skips (instead of failing) when the file is
 // absent, so the investigation suite stays green in CI while still running
 // locally where the fixture exists.
-const investigationFixture = "/home/juraj/research/espbrew/repos/esp32-conways-game-of-life-rs/esp32-p4-function-ev-board/target/riscv32imafc-unknown-none-elf/release/esp32-p4-function-ev-board-conways-game-of-life"
+// investigationFixture resolves the P4 investigation ELF from the
+// EB_INVESTIGATION_ELF environment variable. It lives in a sibling example
+// project and is only present on the developer's machine, not in CI.
+func investigationFixture() string { return fixtureFromEnv("EB_INVESTIGATION_ELF") }
 
-// espflashReferenceELF is a reference P4 ELF shipped with espflash, used by
-// TestP4Compare to diff espbrew-go's image output against espflash's. It is in
-// a sibling repo, so it is likewise absent from the espbrew-go CI checkout.
-const espflashReferenceELF = "/home/juraj/research/espbrew/repos/espflash/espflash/tests/data/esp32p4"
+// espflashReferenceELF resolves the reference P4 ELF from the
+// EB_ESPFLASH_REFERENCE_ELF environment variable. It ships with espflash in a
+// sibling repo, so it is likewise absent from the espbrew-go CI checkout.
+func espflashReferenceELF() string { return fixtureFromEnv("EB_ESPFLASH_REFERENCE_ELF") }
+
+// fixtureFromEnv resolves a developer-only fixture path from the named
+// environment variable, returning "" when it is unset. Test files use it to
+// locate prebuilt ELFs that live in sibling example projects (and are therefore
+// absent from the espbrew-go checkout and from CI). An empty result makes
+// readFixtureOrSkip skip the test instead of failing, so the suite stays green
+// in CI while still running locally where the developer exports the variable.
+// No developer's absolute path is hardcoded anywhere.
+func fixtureFromEnv(name string) string { return os.Getenv(name) }
 
 // readFixtureOrSkip reads an ELF/binary fixture for the investigation tests.
 // When the file is missing (e.g. in CI, where the full example project is not

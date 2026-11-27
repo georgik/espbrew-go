@@ -361,6 +361,57 @@ func New(ctx context.Context, portName string, opts *FlasherOptions) (*Flasher, 
 	return f, nil
 }
 
+// NewWithPort constructs a Flasher over a caller-supplied serial.Port instead of
+// opening a device node. It exists so tests and host-side harnesses can drive the
+// real espflash-go ROM-bootloader protocol against any transport implementing
+// serial.Port (e.g. an emulated target reached over a TCP socket). Production entry
+// points use New, which opens a real serial device.
+func NewWithPort(ctx context.Context, port serial.Port, opts *FlasherOptions) (*Flasher, error) {
+	if opts == nil {
+		opts = DefaultOptions()
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	// Child context lives for the whole flasher lifetime (see New).
+	childCtx, cancel := context.WithCancel(ctx)
+
+	mode := &serial.Mode{
+		BaudRate: opts.BaudRate,
+		Parity:   serial.NoParity,
+		DataBits: 8,
+		StopBits: serial.OneStopBit,
+	}
+	if err := port.SetMode(mode); err != nil {
+		cancel()
+		return nil, fmt.Errorf("set serial mode: %w", err)
+	}
+
+	// Same connection setup as New(): per-chip command follow-up + context.
+	c := newConn(port, childCtx)
+	c.setCommandPost(commandPostFor(opts.ChipType))
+
+	f := &Flasher{
+		port:        port,
+		conn:        c,
+		opts:        opts,
+		portStr:     "injected-port",
+		currentBaud: opts.BaudRate,
+		ctx:         childCtx,
+		cancel:      cancel,
+		closed:      false,
+	}
+
+	// Connect to the bootloader. The caller is responsible for the target being
+	// in download mode (e.g. esp-emu started with --strap-mode).
+	if err := f.connect(); err != nil {
+		port.Close() //nolint:errcheck
+		return nil, err
+	}
+
+	return f, nil
+}
+
 // Close releases the serial port and associated resources.
 func (f *Flasher) Close() error {
 	if f.closed {

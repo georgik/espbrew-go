@@ -128,7 +128,7 @@ go test -tags=e2e -short -v ./cmd/espbrew
 - Response validation (snap_id, status, duration)
 - Server shutdown via API
 
-**Test Project:** By default uses `/home/georgik/projects/esp32-conways-game-of-life-rs/esp32-s3-box-3`. Modify `e2eProjectDir` in `cmd/espbrew/snap_e2e_test.go` for your setup.
+**Test Project:** Resolved from the `EB_E2E_PROJECT_DIR` environment variable (see `e2eProjectDir` in `cmd/espbrew/snap_e2e_test.go`). The project lives in a sibling example repo and is only present on the developer's machine; leave it unset to skip the E2E test, or point it at any built esp32-s3-box-3 project directory.
 
 ### Stub Loaders
 

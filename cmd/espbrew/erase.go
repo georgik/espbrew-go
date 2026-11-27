@@ -179,6 +179,9 @@ func runEraseRemote() error {
 			} else {
 				fmt.Printf("Erasing region: 0x%08x - 0x%08x\n", address, address+size)
 			}
+		case "log":
+			// S31 node's own log trace, streamed live over the WS.
+			emitNodeLog(msg.Line)
 		case "progress":
 			if msg.Progress > lastProgress {
 				displayProgressBar(msg.Progress, msg.Status)

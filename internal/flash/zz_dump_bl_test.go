@@ -8,7 +8,7 @@ import (
 )
 
 func TestDumpBootloaderHeader(t *testing.T) {
-	elfData := readFixtureOrSkip(t, investigationFixture)
+	elfData := readFixtureOrSkip(t, investigationFixture())
 	bin, err := ConvertELFToESPImage(elfData, chips.ChipESP32P4, 301)
 	if err != nil {
 		t.Fatal(err)

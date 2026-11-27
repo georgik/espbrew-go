@@ -17,10 +17,14 @@ import (
 	"time"
 )
 
-const (
-	e2eProjectDir = "/home/georgik/projects/esp32-conways-game-of-life-rs/esp32-s3-box-3"
-	e2eServerPort = 18080 // Use non-standard port to avoid conflicts
-)
+const e2eServerPort = 18080 // Use non-standard port to avoid conflicts
+
+// e2eProjectDir resolves the E2E test project from the EB_E2E_PROJECT_DIR
+// environment variable. The project lives in a sibling example repo and is only
+// present on the developer's machine, not in CI; an empty value makes
+// TestE2E_SnapWithCluster skip via the os.Stat check below. No developer's
+// absolute path is hardcoded anywhere.
+var e2eProjectDir = os.Getenv("EB_E2E_PROJECT_DIR")
 
 var (
 	e2eServerAddr  = fmt.Sprintf("localhost:%d", e2eServerPort)

@@ -11,7 +11,7 @@ import (
 // TestP4Compare writes espbrew-go's app image for the P4 ELF so it can be
 // diffed against an espflash-generated reference image.
 func TestP4Compare(t *testing.T) {
-	elfData := readFixtureOrSkip(t, espflashReferenceELF)
+	elfData := readFixtureOrSkip(t, espflashReferenceELF())
 
 	out, err := ConvertELFToESPImage(elfData, chips.ChipESP32P4, 301)
 	if err != nil {

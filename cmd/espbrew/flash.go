@@ -64,6 +64,10 @@ var flashOpts struct {
 	// (CH340/CH9102/CP210x) can cascade into a stuck-SPI state at high baud;
 	// each new attempt runs its own reset cycle, which clears the hang.
 	flashRetries int
+	// singleAttempt forces exactly one flash attempt (disables auto-retry).
+	// Useful when diagnosing where a flash fails, so the tool does not spin up
+	// another flashing process after the first failure.
+	singleAttempt bool
 }
 
 func init() {
@@ -72,6 +76,7 @@ func init() {
 	flashCmd.Flags().StringVarP(&flashOpts.port, "port", "p", "", "Serial port (auto-detect if empty)")
 	flashCmd.Flags().IntVar(&flashOpts.baud, "baud", 460800, "Flash baud rate")
 	flashCmd.Flags().IntVar(&flashOpts.flashRetries, "flash-retries", 3, "Number of flash attempts on failure (a reset cycle clears the UART-bridge cascade)")
+	flashCmd.Flags().BoolVar(&flashOpts.singleAttempt, "single-attempt", false, "Make only one flash attempt (disables auto-retry) — useful to see exactly where a flash fails")
 	flashCmd.Flags().IntVar(&flashOpts.offset, "offset", 0, "Flash offset (default 0x0, ignored with --preset)")
 	flashCmd.Flags().StringVar(&flashOpts.preset, "preset", "app", "Offset preset: bootloader, partitions, app")
 	flashCmd.Flags().StringVar(&flashOpts.chip, "chip", "auto", "Chip type (auto, esp8266, esp32, esp32s2, esp32s3, esp32c3, esp32c6, esp32h2, esp32p4)")
@@ -361,6 +366,56 @@ func resolveFlashChip() chips.Chip {
 	return detectedChip
 }
 
+// flashImagePayload is the resolved upload payload for a single flash image. For
+// a plain binary it carries the file bytes unchanged; for an ELF it carries the
+// compact flash image produced by client-side conversion.
+type flashImagePayload struct {
+	data      []byte
+	name      string
+	offset    int
+	erase     bool
+	converted bool
+}
+
+// resolveFlashImage reads an image file and, when it is an ELF, converts it to a
+// compact flash image so we upload only the flashable bytes instead of the whole
+// ELF (dominated by debug info and symbol tables, and often larger than the
+// server's upload-size limit). Conversion runs on the client, not the constrained
+// spi-slave S31 server, because the client is the one that knows the project type
+// and chip.
+func resolveFlashImage(path string) (flashImagePayload, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return flashImagePayload{}, fmt.Errorf("read %s: %w", filepath.Base(path), err)
+	}
+	payload := flashImagePayload{data: data, name: filepath.Base(path), offset: 0, erase: true}
+	if flashlib.DetectFileType(data) != flashlib.FileTypeELF {
+		return payload, nil
+	}
+	chip := resolveFlashChip()
+	if chip == 0 {
+		// The spi-slave only relays to a C3, so default to C3 when the project
+		// could not be auto-detected. Chip revision is irrelevant for C3.
+		chip = chips.ChipESP32C3
+	}
+	converted, err := flashlib.ConvertELFToFlashImage(data, chip, 0)
+	if err != nil {
+		return flashImagePayload{}, fmt.Errorf("convert %s to flash image: %w", filepath.Base(path), err)
+	}
+	payload.data = converted
+	payload.name = strings.TrimSuffix(payload.name, filepath.Ext(payload.name)) + ".bin"
+	payload.offset = 0   // the flattened image already carries absolute offsets
+	payload.erase = true // full image (bootloader+partitions+app): clean slate
+	payload.converted = true
+	log.Info().
+		Int("original_bytes", len(data)).
+		Int("converted_bytes", len(converted)).
+		Int("size_reduction_x", len(data)/len(converted)).
+		Str("chip", chip.String()).
+		Msg("Converted ELF to compact flash image")
+	return payload, nil
+}
+
 func runFlashRemote(args []string) error {
 	// Auto-detect project if no paths specified.
 	detectAndPopulate(args)
@@ -383,6 +438,45 @@ func runFlashRemote(args []string) error {
 
 	// Single image mode
 	firmwarePath := args[0]
+
+	// Read the firmware once. If it is an ELF, convert it to a compact flash
+	// image so we upload only the flashable bytes instead of the whole ELF,
+	// which is dominated by debug info and symbol tables and can exceed the
+	// server's upload-size limit. The conversion runs here (on the client)
+	// rather than on the constrained server (spi-slave S31), because the client
+	// is the one that knows the project type and chip.
+	firmwareData, err := os.ReadFile(firmwarePath)
+	if err != nil {
+		return fmt.Errorf("read firmware: %w", err)
+	}
+	uploadName := filepath.Base(firmwarePath)
+	uploadData := firmwareData
+	uploadOffset := flashOpts.offset
+	flashErase := flashOpts.erase
+	isELF := flashlib.DetectFileType(firmwareData) == flashlib.FileTypeELF
+	if isELF {
+		chip := resolveFlashChip()
+		if chip == 0 {
+			// The spi-slave only relays to a C3, so default to C3 when the
+			// project could not be auto-detected (e.g. an explicit path was
+			// given). Chip revision is irrelevant for C3.
+			chip = chips.ChipESP32C3
+		}
+		converted, err := flashlib.ConvertELFToFlashImage(firmwareData, chip, 0)
+		if err != nil {
+			return fmt.Errorf("convert ELF to flash image: %w", err)
+		}
+		uploadData = converted
+		uploadName = strings.TrimSuffix(uploadName, filepath.Ext(uploadName)) + ".bin"
+		uploadOffset = 0  // the flattened image already carries absolute offsets
+		flashErase = true // full image (bootloader+partitions+app): start from a clean slate
+		log.Info().
+			Int("original_bytes", len(firmwareData)).
+			Int("converted_bytes", len(converted)).
+			Int("size_reduction_x", len(firmwareData)/len(converted)).
+			Str("chip", chip.String()).
+			Msg("Converted ELF to compact flash image")
+	}
 
 	// Resolve device from inventory if --device specified
 	if flashOpts.deviceID != "" {
@@ -439,9 +533,11 @@ func runFlashRemote(args []string) error {
 
 	log.Info().Str("cluster", flashOpts.clusterURL).Str("device", devicePath).Msg("Uploading firmware to cluster")
 
-	// Hash-based flash detection (skip if disabled). Address the board by the
-	// selector (alias preferred) so the server can resolve it to the real path.
-	if !flashOpts.skipHashCheck {
+	// Hash-based flash detection (skip if disabled). This compares the raw
+	// firmware bytes against what is already in flash, so it only makes sense
+	// for a plain flash image; for a converted ELF the on-flash bytes differ
+	// from the source file, so the optimization is skipped.
+	if !flashOpts.skipHashCheck && !isELF {
 		if err := checkFlashStatusOptimization(client, selector, firmwarePath); err != nil {
 			log.Warn().Err(err).Msg("Hash-based optimization failed, proceeding with full flash")
 		}
@@ -453,7 +549,12 @@ func runFlashRemote(args []string) error {
 	// answering, and the in-session reconnect() cannot clear it. Each new
 	// attempt runs its own reset cycle (via the server), which clears the hang,
 	// so retrying the whole command is what makes flashing reliable.
+	// `--single-attempt` overrides this and forces exactly one attempt, which is
+	// useful when diagnosing where a flash fails.
 	maxAttempts := flashOpts.flashRetries
+	if flashOpts.singleAttempt {
+		maxAttempts = 1
+	}
 	if maxAttempts < 1 {
 		maxAttempts = 1
 	}
@@ -470,20 +571,23 @@ func runFlashRemote(args []string) error {
 			time.Sleep(2 * time.Second) // let the chip settle after the cascade
 		}
 
-		uploadResp, err := client.UploadFirmware(firmwarePath)
+		uploadResp, err := client.UploadFirmwareBytes(uploadName, uploadData)
 		if err != nil {
 			return fmt.Errorf("upload firmware: %w", err)
 		}
 
-		log.Info().Str("file_id", uploadResp.FileID).Int64("size", uploadResp.Size).Msg("Firmware uploaded")
+		log.Info().Str("file_id", uploadResp.FileID).Int64("size", int64(len(uploadData))).Msg("Firmware uploaded")
 
 		// Submit flash job. Address the board by alias when one is available so the
 		// server remains the single source of truth for the real /dev path;
 		// otherwise fall back to the explicit path/port.
 		submitReq := cluster.FlashSubmitRequest{
+			// For a converted ELF the image already carries its absolute
+			// offsets, so flash at 0; otherwise honour the preset offset.
+			Offset:   uploadOffset,
 			FileID:   uploadResp.FileID,
 			ClientID: "espbrew-cli",
-			Erase:    flashOpts.erase,
+			Erase:    flashErase,
 			Diagram:  detectedDiagram,
 			// Forward the flash baud so the executor can honor it (see
 			// parseFlashBaud). 460800 is a reliable, fast default for CH-bridge
@@ -544,6 +648,9 @@ func runFlashRemote(args []string) error {
 			case "init":
 				fmt.Printf("\nJob ID: %s\n", msg.JobID)
 				fmt.Printf("Device: %s\n\n", devicePath)
+			case "log":
+				// S31 node's own [flash] trace, streamed live over the WS.
+				emitNodeLog(msg.Line)
 			case "progress":
 				if msg.Progress > lastProgress {
 					displayProgressBar(msg.Progress, msg.Status)
@@ -628,6 +735,18 @@ func isTerminalJobStatus(status string) bool {
 	default:
 		return false
 	}
+}
+
+// emitNodeLog prints a slice of the S31 node's own log output (its `[flash]`
+// trace) that is streamed over the progress WebSocket. Each line already carries
+// its own level prefix and trailing newline, so it is written verbatim and
+// interleaves with the progress bar exactly where it happened on the node. This
+// is how the operator sees both the espbrew client and the S31 in one console.
+func emitNodeLog(line string) {
+	if line == "" {
+		return
+	}
+	fmt.Fprint(os.Stdout, line)
 }
 
 func displayProgressBar(progress int, status string) {
@@ -1141,13 +1260,19 @@ func runFlashRemoteMultiImage() error {
 	flashAllImages := func() error {
 		// Flash each image sequentially
 		for i, img := range images {
-			log.Info().Str("image", img.name).Str("path", img.path).Int("offset", img.offset).
+			payload, err := resolveFlashImage(img.path)
+			if err != nil {
+				ciFlashFail(flashAlias, img.name, err)
+				return fmt.Errorf("read %s: %w", img.name, err)
+			}
+
+			log.Info().Str("image", img.name).Str("path", img.path).Int("offset", payload.offset).
 				Int("index", i+1).Int("total", len(images)).Msg("Uploading to cluster")
 
 			ciFlashLine(flashAlias, img.name, "flashing…")
 			imageStart := time.Now()
 
-			uploadResp, err := client.UploadFirmware(img.path)
+			uploadResp, err := client.UploadFirmwareBytes(payload.name, payload.data)
 			if err != nil {
 				ciFlashFail(flashAlias, img.name, err)
 				return fmt.Errorf("upload %s: %w", img.name, err)
@@ -1160,9 +1285,11 @@ func runFlashRemoteMultiImage() error {
 			submitReq := cluster.FlashSubmitRequest{
 				FileID:   uploadResp.FileID,
 				ClientID: "espbrew-cli",
-				Offset:   img.offset,
-				Erase:    flashOpts.erase,
-				Diagram:  detectedDiagram,
+				// For a converted ELF the image already carries its absolute
+				// offsets, so flash at 0; otherwise honour the preset offset.
+				Offset:  payload.offset,
+				Erase:   payload.erase,
+				Diagram: detectedDiagram,
 			}
 			if flashOpts.filterAlias != "" {
 				submitReq.DeviceAlias = flashOpts.filterAlias
@@ -1197,6 +1324,9 @@ func runFlashRemoteMultiImage() error {
 						displayProgressBar(0, fmt.Sprintf("%s: pending", img.name))
 						showedWaiting = true
 					}
+				case "log":
+					// S31 node's own [flash] trace, streamed live over the WS.
+					emitNodeLog(msg.Line)
 				case "progress":
 					showedWaiting = true
 					if ciModeEnabled() {
@@ -1237,7 +1367,12 @@ func runFlashRemoteMultiImage() error {
 	}
 
 	// Retry the whole multi-image flash on failure.
+	// `--single-attempt` overrides this and forces exactly one attempt, which is
+	// useful when diagnosing where a flash fails.
 	maxAttempts := flashOpts.flashRetries
+	if flashOpts.singleAttempt {
+		maxAttempts = 1
+	}
 	if maxAttempts < 1 {
 		maxAttempts = 1
 	}

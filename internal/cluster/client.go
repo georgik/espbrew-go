@@ -468,6 +468,54 @@ func (c *Client) UploadFirmware(filePath string) (*FlashUploadResponse, error) {
 	return &uploadResp, nil
 }
 
+// UploadFirmwareBytes uploads an in-memory firmware blob to the cluster's flash
+// upload endpoint. It is the byte-level counterpart to UploadFirmware and lets
+// callers (e.g. the ELF path in runFlashRemote) convert a file on the fly and
+// upload the converted bytes instead of the raw file. `name` is the form-field
+// filename reported to the server.
+func (c *Client) UploadFirmwareBytes(name string, data []byte) (*FlashUploadResponse, error) {
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+
+	part, err := writer.CreateFormFile("firmware", name)
+	if err != nil {
+		return nil, fmt.Errorf("create form file: %w", err)
+	}
+
+	if _, err := part.Write(data); err != nil {
+		return nil, fmt.Errorf("copy firmware: %w", err)
+	}
+
+	if err := writer.Close(); err != nil {
+		return nil, fmt.Errorf("close writer: %w", err)
+	}
+
+	req, err := http.NewRequest("POST", c.baseURL+"/api/v1/flash/upload", &body)
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+
+	resp, err := c.doWithRetry(req)
+	if err != nil {
+		return nil, fmt.Errorf("upload failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var uploadResp FlashUploadResponse
+	if err := json.NewDecoder(resp.Body).Decode(&uploadResp); err != nil {
+		return nil, fmt.Errorf("decode response: %w", err)
+	}
+
+	return &uploadResp, nil
+}
+
 func (c *Client) SubmitFlash(req FlashSubmitRequest) (*FlashSubmitResponse, error) {
 	body, err := json.Marshal(req)
 	if err != nil {
@@ -720,6 +768,10 @@ type ProgressMessage struct {
 	Progress int    `json:"progress,omitempty"`
 	Status   string `json:"status,omitempty"`
 	Error    string `json:"error,omitempty"`
+	// Line carries a slice of the S31 node's own log output (its `[flash]`
+	// trace), streamed over the same progress WebSocket so the operator sees
+	// both the espbrew client and the S31 in one console.
+	Line string `json:"line,omitempty"`
 }
 
 type ProgressClient struct {
